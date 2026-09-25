@@ -9,6 +9,7 @@ import CoreTransferable
 import Foundation
 import Observation
 import UniformTypeIdentifiers
+import UserNotifications
 
 extension UTType {
     /// Locations dragged within Blit (declared in Support/Info.plist).
@@ -49,6 +50,12 @@ final class TransferJob: Identifiable {
     var fileCount = 0
     var filesFinished = 0
     var filesVerified = 0
+    var filesAlreadyPresent = 0
+    /// Brought back from a previous run (Blit quit or the Mac restarted).
+    var restored = false
+    /// Per-connection (download) or per-stream (copy) throughput, MB/s.
+    var connectionRates: [Double] = []
+    @ObservationIgnored var connectionCounters: [ByteCounter] = []
     var failures: [String] = []
     var connections = 0
     var link = ""
@@ -103,12 +110,16 @@ final class TransferManager {
         self.verifier = verifier
     }
 
+    /// The full HUD is open (click the count in the condensed strip).
+    var isExpanded = false
+
     /// The job the strip shows: the running one, else the most recent.
     var featured: TransferJob? { jobs.first(where: \.isActive) ?? jobs.last(where: { $0.status != .queued }) ?? jobs.first }
     var queuedCount: Int { jobs.filter { $0.status == .queued }.count }
 
     func dismissFinished() {
         jobs.removeAll { !$0.isActive && $0.status != .queued }
+        if jobs.isEmpty { isExpanded = false }
     }
 
     /// Queues a transfer of `sources` into `destination`. Returns a message
@@ -136,8 +147,81 @@ final class TransferManager {
             jobs.append(TransferJob(kind: .copy, sources: local.map { .local($0) }, destination: folder,
                                     title: Self.title(local.map(\.lastPathComponent)), destinationName: destinationName))
         }
+        saveQueue()
         runNext()
         return nil
+    }
+
+    // MARK: Durable queue (PRD R5.1)
+
+    private struct SavedJob: Codable {
+        var serverID: UUID?
+        var sources: [BrowseLocation]
+        var destination: URL
+        var title: String
+        var destinationName: String
+        var includeHidden: Bool
+    }
+
+    private static var queueURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Blit/queue.json")
+    }
+
+    /// Saves unfinished jobs, so a quit or restart doesn't lose them.
+    private func saveQueue() {
+        let pending = jobs.filter { $0.status == .queued || $0.isActive }.map { job -> SavedJob in
+            var serverID: UUID?
+            if case .download(let server) = job.kind { serverID = server.id }
+            return SavedJob(serverID: serverID, sources: job.sources, destination: job.destination, title: job.title,
+                            destinationName: job.destinationName, includeHidden: job.includeHidden)
+        }
+        let url = Self.queueURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(pending) { try? data.write(to: url, options: .atomic) }
+    }
+
+    /// Brings back jobs that hadn't finished when Blit last quit. Downloads resume
+    /// from their .blitpart files; files already complete are skipped.
+    func restoreQueue() {
+        guard jobs.isEmpty, let data = try? Data(contentsOf: Self.queueURL),
+              let saved = try? JSONDecoder().decode([SavedJob].self, from: data), !saved.isEmpty else { return }
+        for s in saved {
+            let kind: TransferJob.Kind
+            if let id = s.serverID {
+                guard let server = servers.server(id) else { continue }
+                kind = .download(server)
+            } else {
+                kind = .copy
+            }
+            let job = TransferJob(kind: kind, sources: s.sources, destination: s.destination, title: s.title,
+                                  destinationName: s.destinationName)
+            job.includeHidden = s.includeHidden
+            job.restored = true
+            job.note("RESTORED FROM LAST SESSION · RESUMING")
+            jobs.append(job)
+        }
+        saveQueue()
+        runNext()
+    }
+
+    // MARK: Notifications (PRD R5.5)
+
+    private func notify(_ job: TransferJob) async {
+        let center = UNUserNotificationCenter.current()
+        guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
+        let content = UNMutableNotificationContent()
+        let size = job.totalBytes.formatted(.byteCount(style: .file))
+        if job.failures.isEmpty {
+            content.title = "\(job.title) → \(job.destinationName)"
+            var body = "\(job.filesVerified) of \(job.fileCount) files verified · \(size)"
+            if job.filesAlreadyPresent > 0 { body += " · \(job.filesAlreadyPresent) already there" }
+            content.body = body
+        } else {
+            content.title = "\(job.failures.count) problem\(job.failures.count == 1 ? "" : "s"): \(job.title)"
+            content.body = job.failures.prefix(3).joined(separator: "\n")
+            content.sound = .default
+        }
+        try? await center.add(UNNotificationRequest(identifier: job.id.uuidString, content: content, trigger: nil))
     }
 
     private static func title(_ names: [String]) -> String {
@@ -151,7 +235,9 @@ final class TransferManager {
         Task {
             await run(job)
             running = false
+            saveQueue()
             onFinished?(job.destination)
+            await notify(job)
             runNext()
         }
     }
@@ -159,6 +245,7 @@ final class TransferManager {
     private func run(_ job: TransferJob) async {
         job.status = .preparing
         job.startedAt = Date()
+        saveQueue()
         let sampler = Task { await sample(job) }
         defer { sampler.cancel() }
         do {
@@ -178,12 +265,19 @@ final class TransferManager {
     /// Samples throughput once a second for the rate and histogram.
     private func sample(_ job: TransferJob) async {
         var last = (time: Date(), bytes: 0)
+        var lastPer: [Int] = []
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(1))
             let now = Date()
             let bytes = job.counter.total
-            let rate = Double(bytes - last.bytes) / max(now.timeIntervalSince(last.time), 0.001) / 1e6
+            let seconds = max(now.timeIntervalSince(last.time), 0.001)
+            let rate = Double(bytes - last.bytes) / seconds / 1e6
             last = (now, bytes)
+            let per = job.connectionCounters.map(\.total)
+            if lastPer.count == per.count {
+                job.connectionRates = zip(per, lastPer).map { Double($0 - $1) / seconds / 1e6 }
+            }
+            lastPer = per
             guard job.status == .running else { continue }
             job.rate = rate
             job.peakRate = max(job.peakRate, rate)
@@ -230,11 +324,14 @@ final class TransferManager {
         job.status = .running
 
         let hasher = RemoteHasher(connection: clients[0].connection)
-        let summary = await BlitRemote.download(files, into: job.destination.path, clients: clients, hasher: hasher,
-                                                counter: job.counter) { event in
+        var options = TransferOptions()
+        options.skipExistingSameSize = true
+        job.connectionCounters = clients.map { _ in ByteCounter() }
+        _ = await BlitRemote.download(files, into: job.destination.path, clients: clients, hasher: hasher,
+                                      options: options, counter: job.counter,
+                                      connectionCounters: job.connectionCounters) { event in
             Task { @MainActor in job.handle(event) }
         }
-        job.filesFinished = summary.finished.count
     }
 
     private func copy(_ job: TransferJob) async throws {
@@ -282,10 +379,13 @@ final class TransferManager {
         defer { if let nasConnection { Task { await nasConnection.close() } } }
 
         job.status = .running
-        let summary = try await BlitLocal.copy(files, into: job.destination.path, nas: nas, counter: job.counter) { event in
+        var options = CopyOptions()
+        options.skipExistingSameSize = true
+        job.connectionCounters = (0..<options.concurrentFiles).map { _ in ByteCounter() }
+        _ = try await BlitLocal.copy(files, into: job.destination.path, nas: nas, options: options, counter: job.counter,
+                                     streamCounters: job.connectionCounters) { event in
             Task { @MainActor in job.handle(event) }
         }
-        job.filesFinished = summary.finished.count
     }
 }
 
@@ -308,6 +408,9 @@ extension TransferJob {
                 note("✓ SHA256 \(hash.prefix(8).uppercased())… VERIFIED · \(f.relativePath.uppercased())\(cached ? " · SERVER CACHE" : "")")
             case .sizeOnly(let why): note("✓ SIZE ONLY · \(f.relativePath.uppercased()) · \(why.uppercased())")
             case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
+            case .alreadyPresent:
+                filesAlreadyPresent += 1
+                note("= ALREADY PRESENT · \(f.relativePath.uppercased())")
             }
         case .fileFailed(let f, let reason):
             verifying[f.relativePath] = nil
@@ -334,6 +437,9 @@ extension TransferJob {
                 note("✓ SHA256 \(hash.prefix(8).uppercased())… READ-BACK · \(f.relativePath.uppercased())")
             case .cloned: note("✓ CLONED · \(f.relativePath.uppercased())")
             case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
+            case .alreadyPresent:
+                filesAlreadyPresent += 1
+                note("= ALREADY PRESENT · \(f.relativePath.uppercased())")
             }
         case .fileFailed(let f, let reason):
             verifying[f.relativePath] = nil

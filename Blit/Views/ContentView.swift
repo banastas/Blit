@@ -33,8 +33,14 @@ struct ContentView: View {
                 FileListView(browser: browser, onTransfer: startTransfer)
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if let job = transfers.featured {
-                            TransferStrip(job: job)
-                                .padding(8)
+                            Group {
+                                if transfers.isExpanded {
+                                    TransferHUD(job: job)
+                                } else {
+                                    TransferStrip(job: job)
+                                }
+                            }
+                            .padding(8)
                         }
                     }
             }
@@ -129,6 +135,7 @@ struct ContentView: View {
 
     private func start() {
         if browser == nil { browser = BrowserModel(servers: servers, connections: connections) }
+        transfers.restoreQueue()
         transfers.onFinished = { [weak browser] destination in
             if let browser, browser.current?.localURL?.standardizedFileURL == destination.standardizedFileURL {
                 browser.reload()

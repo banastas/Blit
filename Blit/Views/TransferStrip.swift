@@ -48,10 +48,16 @@ struct TransferStrip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 10) {
-                Text(countLabel)
-                    .font(HUDFont.label())
-                    .foregroundStyle(HUDColor.bright)
-                    .fixedSize()
+                Button {
+                    transfers.isExpanded = true
+                } label: {
+                    Text(countLabel)
+                        .font(HUDFont.label())
+                        .foregroundStyle(HUDColor.bright)
+                        .fixedSize()
+                }
+                .buttonStyle(.plain)
+                .help("Show the full transfer HUD")
                 HStack(spacing: 8) {
                     Text(job.title.uppercased())
                         .lineLimit(1)
@@ -184,6 +190,7 @@ struct TransferStrip: View {
         let size = TransferJob.bytes(job.totalBytes)
         if case .failed(let why) = job.status, job.fileCount == 0 { return "✕ \(why.uppercased())" }
         return "\(job.failures.isEmpty ? "✓" : "✕") \(verified) · \(size) → \(job.destinationName.uppercased())"
+            + (job.filesAlreadyPresent > 0 ? " · \(job.filesAlreadyPresent) ALREADY THERE" : "")
             + (job.failures.isEmpty ? "" : " · \(job.failures.count) FAILED")
     }
 }
@@ -192,12 +199,13 @@ struct TransferStrip: View {
 struct PixelCells: View {
     let fraction: Double
     let count: Int
+    var height: CGFloat = 10
 
     var body: some View {
-        let on = Int((fraction * Double(count)).rounded(.down))
+        let on = Int((max(0, min(1, fraction)) * Double(count)).rounded(.down))
         HStack(spacing: 2) {
             ForEach(0..<count, id: \.self) { i in
-                Rectangle().fill(i < on ? HUDColor.bright : HUDColor.off).frame(width: 4, height: 10)
+                Rectangle().fill(i < on ? HUDColor.bright : HUDColor.off).frame(width: 4, height: height)
             }
         }
         .accessibilityLabel("\(Int(fraction * 100)) percent")
@@ -208,10 +216,11 @@ struct PixelCells: View {
 struct PixelHistogram: View {
     let samples: [Double]
     let scale: Double
+    var columns = 30
 
     var body: some View {
         Canvas { context, size in
-            let columns = 30
+            let columns = self.columns
             let width = size.width / CGFloat(columns)
             let offset = columns - samples.count
             for (i, value) in samples.enumerated() {

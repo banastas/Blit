@@ -1,0 +1,268 @@
+// The expanded transfer HUD (PRD Transfer HUD): boxed Item, Throughput and
+// Link data panels, the log, and a Nostromo-style WARNING panel listing
+// failures. Always dark; opened from the condensed strip's count.
+
+import SwiftUI
+
+struct TransferHUD: View {
+    @Environment(TransferManager.self) private var transfers
+    let job: TransferJob
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+            HStack(alignment: .top, spacing: 10) {
+                itemPanel.frame(maxWidth: .infinity)
+                throughputPanel.frame(maxWidth: .infinity)
+                linkPanel.frame(width: 210)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 10) {
+                logPanel.frame(maxWidth: .infinity)
+                if !job.failures.isEmpty {
+                    warningPanel.frame(width: 260)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(HUDColor.bright)
+        .padding(14)
+        .background(HUDColor.background, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(HUDColor.border, lineWidth: 0.5))
+        .environment(\.colorScheme, .dark)
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack {
+            Button {
+                transfers.isExpanded = false
+            } label: {
+                Text("▼ TRANSFER · \(stateLabel)")
+                    .font(HUDFont.label())
+                    .foregroundStyle(HUDColor.bright)
+            }
+            .buttonStyle(.plain)
+            .help("Collapse")
+            Spacer()
+            if transfers.queuedCount > 0 {
+                Text("\(transfers.queuedCount) QUEUED").font(HUDFont.label()).foregroundStyle(HUDColor.dim)
+            }
+            Text("BLIT://HUD").font(HUDFont.label()).foregroundStyle(HUDColor.dim)
+            if !job.isActive {
+                Button {
+                    transfers.dismissFinished()
+                } label: {
+                    Image(systemName: "xmark").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(HUDColor.dim)
+                .help("Clear finished transfers")
+            }
+        }
+    }
+
+    private var stateLabel: String {
+        let route: String
+        switch job.kind {
+        case .download(let server): route = "\(server.displayName.uppercased()) → \(job.destinationName.uppercased())"
+        case .copy: route = "COPY → \(job.destinationName.uppercased())"
+        }
+        switch job.status {
+        case .queued: return "QUEUED · " + route
+        case .preparing: return "PREPARING · " + route
+        case .running: return route + (job.restored ? " · RESUMED" : "")
+        case .finished: return "DONE · " + route
+        case .failed: return "FAILED · " + route
+        }
+    }
+
+    // MARK: Panels
+
+    private var itemPanel: some View {
+        HUDPanel("Item") {
+            Text(job.title.uppercased())
+                .font(HUDFont.terminal(20))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(sourceLine)
+                .font(HUDFont.terminal(15))
+                .foregroundStyle(HUDColor.dim)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            GeometryReader { geo in
+                PixelCells(fraction: job.progress, count: max(16, Int(geo.size.width / 6)))
+            }
+            .frame(height: 10)
+            .padding(.vertical, 4)
+            HUDRow("\(TransferJob.bytes(job.transferred)) / \(TransferJob.bytes(job.totalBytes))",
+                   "\(Int((job.progress * 100).rounded()))%")
+            HUDRow("FILES \(job.filesFinished)/\(job.fileCount)", "VERIFIED \(job.filesVerified)")
+            if !job.connectionRates.isEmpty, job.isActive {
+                Text(isDownload ? "CONNECTIONS" : "STREAMS").font(HUDFont.label()).foregroundStyle(HUDColor.dim).padding(.top, 4)
+                let top = max(job.connectionRates.max() ?? 1, 1)
+                ForEach(Array(job.connectionRates.enumerated()), id: \.offset) { index, rate in
+                    HStack(spacing: 6) {
+                        Text("\(isDownload ? "C" : "S")\(index + 1)").foregroundStyle(HUDColor.dim).frame(width: 22, alignment: .leading)
+                        GeometryReader { geo in
+                            PixelCells(fraction: rate / top, count: max(8, Int(geo.size.width / 6)), height: 6)
+                        }
+                        .frame(height: 6)
+                        Text(String(format: "%.1f", rate)).frame(width: 40, alignment: .trailing)
+                    }
+                    .font(HUDFont.terminal(16))
+                }
+            }
+        }
+    }
+
+    private var throughputPanel: some View {
+        HUDPanel("Throughput · 60 s") {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                if job.isActive, !job.verifying.isEmpty, job.transferred >= job.totalBytes {
+                    Text("SHA256").font(HUDFont.terminal(40))
+                } else {
+                    Text(String(format: "%.1f", job.isActive ? job.rate : averageRate)).font(HUDFont.terminal(40))
+                    Text("MB/S").font(HUDFont.terminal(18)).foregroundStyle(HUDColor.dim)
+                }
+            }
+            PixelHistogram(samples: Array(job.history.suffix(60)), scale: max(job.peakRate, 1), columns: 60)
+                .frame(height: 64)
+            HUDRow(String(format: "PEAK %.1f", job.peakRate), eta)
+        }
+    }
+
+    private var linkPanel: some View {
+        HUDPanel("Link data") {
+            HUDRow("CONN", "\(job.connections)")
+            HUDRow("LINK", job.link.isEmpty ? "—" : job.link)
+            HUDRow("VERIFY", job.verificationMethod)
+            HUDRow("RESUMED", job.resumedBytes > 0 ? TransferJob.bytes(job.resumedBytes) : "—")
+            HUDRow("PRESENT", "\(job.filesAlreadyPresent)")
+            HUDRow("ELAPSED", elapsed)
+        }
+    }
+
+    private var logPanel: some View {
+        HUDPanel("Log") {
+            ForEach(job.log.suffix(6)) { line in
+                Text("\(line.time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))) \(line.text)")
+                    .foregroundStyle(line.isFailure ? Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255) : HUDColor.dim)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .textSelection(.enabled)
+            }
+        }
+        .font(HUDFont.terminal(16))
+    }
+
+    private var warningPanel: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(job.failures.count == 1 ? "1 FAILURE" : "\(job.failures.count) FAILURES").font(HUDFont.label())
+                Spacer()
+                Text("✕").font(HUDFont.terminal(16))
+            }
+            Text("WARNING").font(HUDFont.terminal(30))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(job.failures.enumerated()), id: \.offset) { _, failure in
+                        Text(failure.uppercased())
+                            .font(HUDFont.terminal(15))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .frame(maxHeight: 90)
+        }
+        .foregroundStyle(HUDColor.onFailure)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(HUDColor.failure)
+    }
+
+    // MARK: Values
+
+    private var isDownload: Bool {
+        if case .download = job.kind { return true }
+        return false
+    }
+
+    private var sourceLine: String {
+        let first = job.sources.first
+        let from: String
+        switch (job.kind, first) {
+        case (.download(let server), .remote(_, let bytes)?):
+            let parent = BrowseLocation.remote(server: server.id, path: bytes).parent
+            from = "\(server.displayName):" + (parent?.remotePath?.description ?? "~")
+        case (_, .local(let url)?):
+            from = (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+        default:
+            from = ""
+        }
+        return "\(from) → \(job.destination.path)".uppercased()
+    }
+
+    private var averageRate: Double {
+        guard let start = job.startedAt, let end = job.finishedAt, end > start else { return 0 }
+        return Double(job.counter.total) / end.timeIntervalSince(start) / 1e6
+    }
+
+    private var eta: String {
+        guard job.isActive, job.rate > 0.1 else { return "ETA --:--" }
+        let seconds = Int(Double(job.totalBytes - job.transferred) / (job.rate * 1e6))
+        return seconds >= 3600
+            ? String(format: "ETA %d:%02d:%02d", seconds / 3600, seconds % 3600 / 60, seconds % 60)
+            : String(format: "ETA %02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private var elapsed: String {
+        guard let start = job.startedAt else { return "—" }
+        let seconds = Int((job.finishedAt ?? Date()).timeIntervalSince(start))
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+/// A boxed HUD panel with a pixel label.
+private struct HUDPanel<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased()).font(HUDFont.label()).foregroundStyle(HUDColor.dim).padding(.bottom, 2)
+            content
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .overlay(Rectangle().strokeBorder(Color(white: 0.23), lineWidth: 1))
+    }
+}
+
+/// Key on the left (dim), value on the right.
+private struct HUDRow: View {
+    let key: String
+    let value: String
+
+    init(_ key: String, _ value: String) {
+        self.key = key
+        self.value = value
+    }
+
+    var body: some View {
+        HStack {
+            Text(key).foregroundStyle(HUDColor.dim)
+            Spacer(minLength: 6)
+            Text(value).lineLimit(1)
+        }
+        .font(HUDFont.terminal(18))
+    }
+}

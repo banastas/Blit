@@ -98,11 +98,17 @@ public enum Verification: Sendable, Equatable {
     /// Checksums unavailable (e.g. no shell access); sizes matched (PRD R4.1 fallback).
     case sizeOnly(reason: String)
     case skipped
+    /// A file of the same size was already at the destination; left as is.
+    case alreadyPresent
 }
 
 public struct TransferOptions: Sendable {
     public var verify = true
     public var overwrite = false
+    /// Treat an existing destination file of the same size as done (PRD R5.3),
+    /// e.g. when a queue restored after relaunch runs again. A different size
+    /// still fails unless `overwrite`.
+    public var skipExistingSameSize = false
     public var concurrentHashes = 2
     public init() {}
 }
@@ -358,6 +364,7 @@ public func download(
     hasher: RemoteHasher?,
     options: TransferOptions = TransferOptions(),
     counter: ByteCounter,
+    connectionCounters: [ByteCounter]? = nil,
     events: @escaping @Sendable (TransferEvent) -> Void
 ) async -> TransferSummary {
     let summary = Mutex(TransferSummary())
@@ -383,8 +390,15 @@ public func download(
         }
         let finalPath = directory + "/" + file.relativePath
         if fm.fileExists(atPath: finalPath), !options.overwrite {
-            events(.fileFailed(file, "already exists (use --overwrite)"))
-            summary.withLock { $0.failed.append((file, "already exists")) }
+            let size = (try? fm.attributesOfItem(atPath: finalPath)[.size] as? NSNumber)?.uint64Value
+            if options.skipExistingSameSize, size == file.size {
+                events(.fileFinished(file, verification: .alreadyPresent))
+                summary.withLock { $0.finished.append(file) }
+            } else {
+                let reason = options.skipExistingSameSize ? "already exists with a different size" : "already exists (use --overwrite)"
+                events(.fileFailed(file, reason))
+                summary.withLock { $0.failed.append((file, reason)) }
+            }
             continue
         }
         do {
@@ -447,7 +461,12 @@ public func download(
         // One worker per connection, all pulling from the same queue.
         group.addTask {
             await withTaskGroup(of: Void.self) { workers in
-                for client in clients {
+                for (index, client) in clients.enumerated() {
+                    let connectionCounter = connectionCounters.flatMap { index < $0.count ? $0[index] : nil }
+                    let progress: @Sendable (Int) -> Void = { n in
+                        counter.add(n)
+                        connectionCounter?.add(n)
+                    }
                     workers.addTask {
                         while let (job, range) = await queue.next() {
                             // The server starts hashing when the last range is handed out,
@@ -466,7 +485,7 @@ public func download(
                                         events(.fileStarted(job.file))
                                     }
                                     let stats = try await client.download(job.file.path, range: range, into: part,
-                                                                          progress: counter.add)
+                                                                          progress: progress)
                                     if stats.endedEarly {
                                         throw SFTPError.unexpected("file is shorter than listed (changed on the server?)")
                                     }

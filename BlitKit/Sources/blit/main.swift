@@ -263,6 +263,7 @@ do {
                 case .sha256(_, let cached): check = cached ? "✓ sha256 (cached on server)" : "✓ sha256"
                 case .sizeOnly(let why): check = "size only (\(why))"
                 case .skipped: check = "not verified"
+                case .alreadyPresent: check = "already present"
                 }
                 print("\r  \(f.relativePath)  \(formatBytes(Double(f.size)))  \(check)            ")
             case .fileFailed(let f, let reason):
@@ -428,6 +429,7 @@ func copyCommand(_ raw: [String]) async -> Never {
                 case .readBack(_, let why): check = "✓ read-back" + (why.map { " (\($0))" } ?? "")
                 case .cloned: check = "cloned (same volume)"
                 case .skipped: check = "not verified"
+                case .alreadyPresent: check = "already present"
                 }
                 print("\r  \(f.relativePath)  \(formatBytes(Double(f.size)))  \(check)            ")
             case .fileFailed(let f, let reason):

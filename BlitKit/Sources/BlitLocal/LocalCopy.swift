@@ -119,6 +119,8 @@ public enum CopyVerification: Sendable, Equatable {
     /// APFS clone within one volume; the data is shared, not copied.
     case cloned
     case skipped
+    /// A file of the same size was already at the destination; left as is.
+    case alreadyPresent
 }
 
 public struct CopyOptions: Sendable {
@@ -128,6 +130,8 @@ public struct CopyOptions: Sendable {
     public var concurrentFiles = 2
     /// Clone instead of copying when source and destination share an APFS volume.
     public var allowClone = true
+    /// Treat an existing destination file of the same size as done (PRD R5.3).
+    public var skipExistingSameSize = false
     public init() {}
 }
 
@@ -167,6 +171,7 @@ public func copy(
     nas: NASVerifier?,
     options: CopyOptions = CopyOptions(),
     counter: ByteCounter,
+    streamCounters: [ByteCounter]? = nil,
     events: @escaping @Sendable (CopyEvent) -> Void
 ) async throws -> CopySummary {
     let fm = FileManager.default
@@ -183,7 +188,13 @@ public func copy(
         if let other = collisions[i] {
             reason = "same local name as \(other) on this volume; skipped"
         } else if fm.fileExists(atPath: final), !options.overwrite {
-            reason = "already exists (use --overwrite)"
+            let size = (try? fm.attributesOfItem(atPath: final)[.size] as? NSNumber)?.uint64Value
+            if options.skipExistingSameSize, size == file.size {
+                events(.fileFinished(file, verification: .alreadyPresent))
+                summary.withLock { $0.finished.append(file) }
+                continue
+            }
+            reason = options.skipExistingSameSize ? "already exists with a different size" : "already exists (use --overwrite)"
         } else {
             reason = nil
         }
@@ -206,7 +217,12 @@ public func copy(
     let destinationDevice = deviceID(directory)
 
     await withTaskGroup(of: Void.self) { group in
-        for _ in 0..<max(1, options.concurrentFiles) {
+        for stream in 0..<max(1, options.concurrentFiles) {
+            let streamCounter = streamCounters.flatMap { stream < $0.count ? $0[stream] : nil }
+            let progress: @Sendable (Int) -> Void = { n in
+                counter.add(n)
+                streamCounter?.add(n)
+            }
             group.addTask {
                 while let file = queue.withLock({ $0.popFirst() }) {
                     let final = directory + "/" + file.relativePath
@@ -219,12 +235,12 @@ public func copy(
                             // Same volume: APFS clone (PRD R3.8).
                             unlink(part)
                             guard clonefile(file.path, part, 0) == 0 else { throw POSIXFailure("clone \(file.path)") }
-                            counter.add(Int(file.size))
+                            progress(Int(file.size))
                             events(.fileCopied(file))
                             verification = .cloned
                         } else {
                             let sourceHash = try await Task.detached {
-                                try StreamCopy.copy(from: file.path, to: part, progress: counter.add)
+                                try StreamCopy.copy(from: file.path, to: part, progress: progress)
                             }.value
                             events(.fileCopied(file))
                             verification = try await verify(part: part, sourceHash: sourceHash, size: file.size,

@@ -105,6 +105,30 @@ func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(forma
         #expect(replaced.failed.isEmpty)
     }
 
+    @Test func skipsIdenticalExistingFilesWhenAsked() async throws {
+        let (source, _) = try makeSource()
+        let dest = try tempDir("dst")
+        defer {
+            try? FileManager.default.removeItem(at: source.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: dest)
+        }
+        let files = try localFiles(at: source.path)
+        var options = CopyOptions()
+        options.allowClone = false
+        _ = try await copy(files, into: dest.path, nas: nil, options: options, counter: ByteCounter()) { _ in }
+        options.skipExistingSameSize = true
+        final class Seen: @unchecked Sendable { var v: [CopyVerification] = []; let lock = NSLock() }
+        let seen = Seen()
+        let counter = ByteCounter()
+        let again = try await copy(files, into: dest.path, nas: nil, options: options, counter: counter) { event in
+            if case .fileFinished(_, let v) = event { seen.lock.lock(); seen.v.append(v); seen.lock.unlock() }
+        }
+        #expect(again.failed.isEmpty)
+        #expect(again.finished.count == 3)
+        #expect(seen.v.allSatisfy { $0 == .alreadyPresent })
+        #expect(counter.total == 0)
+    }
+
     @Test func clonesWithinOneVolume() async throws {
         let (source, _) = try makeSource()
         let dest = try tempDir("dst")
