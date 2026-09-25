@@ -130,6 +130,16 @@ Native macOS first, with a restrained "dark hacker" touch:
 - **Black and grey only, no accent color.** Live activity is shown by brightness: active rows, transfer bars, the connected-server dot and drop targets in near-white; everything else in greys. The one exception is failures (hash mismatch, refused host key), in a muted red so a problem can't blend in. Status is never carried by color alone: every state also has a glyph or word. System window controls stay standard.
 - **A terminal-style log line** in the transfer strip (`09:43:07 ✓ sha256 ef61845e… verified`), expandable into the full log (PRD R4.4).
 
+### Transfer HUD
+
+The transfer strip expands into a 1-bit, pixel-terminal HUD (references: 1-bit pixel art, pixel icon sets, the *Alien* Nostromo interface). Collapsed, it's a single line: segmented progress, rate, and the latest log line.
+
+- **Type:** pixel uppercase for labels (Silkscreen) and large terminal numerals for readouts (VT323). Both are SIL Open Font License, so they can be bundled with the app. The file browser keeps the system font and SF Mono.
+- **Panels:** boxed readouts with 1-pixel borders: *Item* (name, route, segmented progress, per-connection chunk rows), *Throughput · 60 s* (big rate plus a pixel-column histogram, peak, ETA), *Link data* (connections, cipher, window, receive buffer, read size and depth, RTT, verification method), and *Log*.
+- **Progress** is drawn as discrete cells, never a smooth bar. Crisp edges, no anti-aliased gradients.
+- **Failures** appear as a Nostromo-style WARNING panel: muted red fill (#b35c5c) with near-black text, stating what failed, what was kept and what happens next (for example *SHA-256 mismatch · kept .blitpart · retry queued*).
+- **Icons:** a pixel icon set for statuses and sidebar items, drawn on a strict grid, is an M4 polish task.
+
 ### Finder integration
 
 Apple doesn't let third-party apps put their own interface in a Finder tab. What Blit does instead:
