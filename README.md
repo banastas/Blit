@@ -123,12 +123,14 @@ remote SFTP server ──(parallel SFTP, verified)──▶ external SSD ──(
 
 ### Visual language
 
-Native macOS first, with a restrained "dark hacker" touch:
+**Native macOS everywhere, with one instrument panel that has its own character.** Following Apple's Human Interface Guidelines matters more than a theme.
 
-- **Dark by default:** near-black surfaces, a very subtle alternating row stripe. Light mode still works.
-- **Monospace for anything technical:** paths, sizes, speeds, hashes, timestamps (SF Mono). Names stay in the system font.
-- **Black and grey only, no accent color.** Live activity is shown by brightness: active rows, transfer bars, the connected-server dot and drop targets in near-white; everything else in greys. The one exception is failures (hash mismatch, refused host key), in a muted red so a problem can't blend in. Status is never carried by color alone: every state also has a glyph or word. System window controls stay standard.
-- **A terminal-style log line** in the transfer strip (`09:43:07 ✓ sha256 ef61845e… verified`), expandable into the full log (PRD R4.4).
+- **Browser, sidebar, sheets and settings are standard macOS:** system controls, SF Pro and SF Symbols, standard row heights and native alternating row colors, as in the original layout.
+- **Follows the system appearance** (light or dark); nothing is forced.
+- **Selection and focus use the system accent color.** For an all-grey look, choose the *Graphite* accent in System Settings → Appearance and Blit follows it.
+- **Numbers use monospaced digits** (SF Pro, like Finder) so sizes and dates line up; SF Mono only for hashes and paths in the log.
+- **The transfer HUD is the one exception** (below): a bounded, always-dark, 1-bit pixel-terminal panel, like an instrument built into the window.
+- **Muted red (#b35c5c) only for failures,** in both the native UI and the HUD. Status is never carried by color alone: every state also has a glyph or word.
 
 ### Transfer HUD
 
