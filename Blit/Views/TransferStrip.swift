@@ -51,7 +51,7 @@ struct TransferStrip: View {
                 Button {
                     transfers.isExpanded = true
                 } label: {
-                    Text(countLabel)
+                    hudText(countLabel, glyphSize: 9)
                         .font(HUDFont.label())
                         .foregroundStyle(HUDColor.bright)
                         .fixedSize()
@@ -62,7 +62,7 @@ struct TransferStrip: View {
                     Text(job.title.uppercased())
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text("→ \(job.destinationName.uppercased())")
+                    hudText("→ \(job.destinationName.uppercased())", glyphSize: 12)
                         .foregroundStyle(HUDColor.dim)
                         .lineLimit(1)
                         .fixedSize()
@@ -78,7 +78,7 @@ struct TransferStrip: View {
                     PixelHistogram(samples: Array(job.history.suffix(30)), scale: max(job.peakRate, 1))
                         .frame(width: 60, height: 20)
                 } else {
-                    Text("✕ \(job.failures.count) WARNING\(job.failures.count == 1 ? "" : "S")")
+                    hudText("✕ \(job.failures.count) WARNING\(job.failures.count == 1 ? "" : "S")", glyphSize: 9)
                         .font(HUDFont.label())
                         .foregroundStyle(HUDColor.onFailure)
                         .padding(.horizontal, 6)
@@ -173,7 +173,7 @@ struct TransferStrip: View {
             Text("PREPARING · LISTING FILES…").foregroundStyle(HUDColor.dim)
         } else if !job.isActive, job.status != .queued {
             let queued = transfers.queuedCount
-            Text(summary + (queued > 0 ? " · \(queued) QUEUED" : ""))
+            hudText(summary + (queued > 0 ? " · \(queued) QUEUED" : ""))
                 .foregroundStyle(job.failures.isEmpty ? HUDColor.bright : Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
         } else if isVerifyingOnly, let (name, since) = job.verifying.min(by: { $0.value < $1.value }) {
             // Verification can take minutes on big files; show it's alive (elapsed time).
@@ -184,7 +184,7 @@ struct TransferStrip: View {
                     .foregroundStyle(HUDColor.bright)
             }
         } else if let last = job.log.last {
-            Text("\(last.time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))) \(last.text)")
+            hudText("\(last.time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))) \(last.text)")
                 .foregroundStyle(last.isFailure ? Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255) : HUDColor.dim)
         }
     }

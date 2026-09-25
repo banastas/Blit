@@ -39,7 +39,7 @@ struct TransferHUD: View {
             Button {
                 transfers.isExpanded = false
             } label: {
-                Text("▼ TRANSFER · \(stateLabel)")
+                hudText("▼ TRANSFER · \(stateLabel)", glyphSize: 9)
                     .font(HUDFont.label())
                     .foregroundStyle(HUDColor.bright)
             }
@@ -86,7 +86,7 @@ struct TransferHUD: View {
                 .font(HUDFont.terminal(20))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Text(sourceLine)
+            hudText(sourceLine)
                 .font(HUDFont.terminal(15))
                 .foregroundStyle(HUDColor.dim)
                 .lineLimit(1)
@@ -149,7 +149,7 @@ struct TransferHUD: View {
     private var logPanel: some View {
         HUDPanel("Log") {
             ForEach(job.log.suffix(6)) { line in
-                Text("\(line.time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))) \(line.text)")
+                hudText("\(line.time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))) \(line.text)")
                     .foregroundStyle(line.isFailure ? Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255) : HUDColor.dim)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -164,7 +164,7 @@ struct TransferHUD: View {
             HStack {
                 Text(job.failures.count == 1 ? "1 FAILURE" : "\(job.failures.count) FAILURES").font(HUDFont.label())
                 Spacer()
-                Text("✕").font(HUDFont.terminal(16))
+                hudText("✕", glyphSize: 11)
             }
             Text("WARNING").font(HUDFont.terminal(30))
             ScrollView {
