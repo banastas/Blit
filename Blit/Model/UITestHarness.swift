@@ -6,9 +6,30 @@
 
 #if DEBUG
 import AppKit
+import SwiftUI
 
 @MainActor
 enum UITestHarness {
+    /// `-BlitRenderStatusIcons out.png`: the sidebar status icons at 8×, light and dark.
+    static func renderStatusIconsIfRequested() {
+        guard let path = UserDefaults.standard.string(forKey: "BlitRenderStatusIcons") else { return }
+        let row = { (scheme: ColorScheme) in
+            HStack(spacing: 14) {
+                ForEach(0..<5) { PixelSignal(lit: $0) }
+                Image(nsImage: PixelGlyph.cross.image(size: 10.5)).foregroundStyle(Color.failure)
+            }
+            .padding(6)
+            .background(scheme == .dark ? Color(white: 0.16) : Color(white: 0.93))
+            .environment(\.colorScheme, scheme)
+        }
+        let renderer = ImageRenderer(content: VStack(spacing: 0) { row(.light); row(.dark) })
+        renderer.scale = 8
+        if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
     static func runIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitRightClickTest") else { return }
         var lines: [String] = ["started"] {

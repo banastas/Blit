@@ -243,20 +243,49 @@ private struct FavoriteRow: View {
     }
 }
 
+/// A server's browsing connection as pixel signal bars (the one pixel-art
+/// touch outside the HUD): all lit when connected, filling in a loop while
+/// connecting, dim when not connected, a pixel ✕ in muted red on failure.
 private struct StatusDot: View {
     let state: ConnectionState
 
     var body: some View {
         switch state {
         case .connected:
-            Circle().fill(.primary).frame(width: 6, height: 6).help("Connected")
+            PixelSignal(lit: 4).help("Connected")
         case .connecting:
-            ProgressView().controlSize(.mini).help("Connecting…")
+            TimelineView(.periodic(from: .now, by: 0.18)) { context in
+                PixelSignal(lit: Int(context.date.timeIntervalSinceReferenceDate / 0.18) % 5)
+            }
+            .help("Connecting…")
         case .failed(let why):
-            Image(systemName: "exclamationmark.circle").foregroundStyle(Color.failure).font(.caption).help(why)
+            Image(nsImage: PixelGlyph.cross.image(size: 10.5))
+                .foregroundStyle(Color.failure)
+                .help(why)
         case .idle:
-            EmptyView()
+            PixelSignal(lit: 0).help("Not connected · opens when you click the server")
         }
+    }
+}
+
+/// Four pixel bars (heights 1, 3, 5, 7 on a 7×7 grid), `lit` of them bright.
+struct PixelSignal: View {
+    let lit: Int
+    /// Points per pixel: 1.5 is 3 device pixels on Retina, so edges stay crisp.
+    var cell: CGFloat = 1.5
+
+    var body: some View {
+        Canvas { context, _ in
+            for bar in 0..<4 {
+                let height = bar * 2 + 1
+                for y in (7 - height)..<7 {
+                    let rect = CGRect(x: CGFloat(bar * 2) * cell, y: CGFloat(y) * cell, width: cell, height: cell)
+                    context.fill(Path(rect), with: bar < lit ? .style(.primary) : .style(.quaternary))
+                }
+            }
+        }
+        .frame(width: 7 * cell, height: 7 * cell)
+        .accessibilityLabel(lit == 4 ? "Connected" : "Not connected")
     }
 }
 

@@ -142,6 +142,8 @@ The transfer strip expands into a 1-bit, pixel-terminal HUD (references: 1-bit p
 
 A failure adds a compact red `✕ N warning` tag in the top line (in place of the histogram) and turns the log line muted red; clicking it opens the full HUD at the WARNING panel.
 
+**Sidebar status:** the one pixel-art touch outside the HUD. Each server's browsing connection shows as 7×7 pixel signal bars: all lit when connected, filling left to right in a loop while connecting, dim when not connected, and a pixel ✕ in muted red on failure (hover for the reason).
+
 **Expanded:** the full HUD described below. It opens by itself when a transfer starts (Settings; collapsing it keeps it collapsed until that batch finishes). File operations (delete, move…) only use the condensed strip. Switching between the two, or the HUD appearing and leaving, animates like a CRT: a bright line sweeps out, then opens vertically.
 
 **Verification progress:** the seedbox starts hashing each file when its first range is handed out, so the hash reads the file alongside the download instead of re-reading it cold afterwards. Where the server's `dd` supports `status=progress` (GNU coreutils), it reports bytes hashed about once a second. The HUD shows a *Server SHA256* row per file, the hash rate, and a verify ETA. Once only checksums remain, the strip's progress cells, percent and log line switch to verification progress, and the histogram shows the hash rate.

@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSUpdateDynamicServices()
         #if DEBUG
         UITestHarness.runIfRequested()
+        UITestHarness.renderStatusIconsIfRequested()
         #endif
         // Quick Look keys, as in Finder (PRD R2.17): Space opens and closes the
         // panel; while it's open, ↑/↓ preview the previous or next file. Left
