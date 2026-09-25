@@ -249,6 +249,8 @@ struct FileListView: View {
 
     /// → expands the selected folders, ← collapses them (or the folder a selected item is in).
     private func expandSelection(_ open: Bool) -> KeyPress.Result {
+        // While a name is being edited, arrows move the text cursor.
+        guard browser.renaming == nil else { return .ignored }
         let selected = browser.selectedItems
         guard !selected.isEmpty else { return .ignored }
         for item in selected {
@@ -462,8 +464,11 @@ private struct RenameField: View {
                 DispatchQueue.main.async {
                     focused = true
                     // Focusing selects everything; then narrow it to the name
-                    // without its extension (the field editor is AppKit's).
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { selectBaseName() }
+                    // without its extension (the field editor is AppKit's). The
+                    // editor can take a moment to appear, so try a few times.
+                    for delay in [0.05, 0.15, 0.3, 0.5] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { selectBaseName() }
+                    }
                 }
             }
             .onSubmit { browser.commitRename(item, to: text) }
@@ -474,9 +479,12 @@ private struct RenameField: View {
     }
 
     private func selectBaseName() {
-        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.string == item.name else { return }
-        let ext = (item.name as NSString).pathExtension
         let whole = (item.name as NSString).length
+        // Only while everything is still selected: never undo the user's own cursor moves.
+        // The field editor editing this name, in whichever window has it.
+        let editor = NSApp.windows.lazy.compactMap { $0.firstResponder as? NSTextView }.first { $0.string == item.name }
+        guard let editor, editor.selectedRange() == NSRange(location: 0, length: whole) else { return }
+        let ext = (item.name as NSString).pathExtension
         let length = item.isDirectory || ext.isEmpty || ext.contains(" ")
             ? whole
             : whole - (ext as NSString).length - 1

@@ -84,8 +84,15 @@ enum UITestHarness {
                 lines.append("no active browser or window")
                 return
             }
-            browser.open(.local(folder))
-            try? await Task.sleep(for: .seconds(1.5))
+            // Show the test folder (retrying: launch can restore another location over it).
+            for _ in 0..<20 {
+                if browser.current?.localURL?.standardizedFileURL.path != folder.standardizedFileURL.path {
+                    browser.open(.local(folder))
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+                if browser.rows.contains(where: { $0.name == "one.txt" }) { break }
+            }
+            lines.append("showing \(browser.current?.lastComponent ?? "nil") · \(browser.rows.count) rows")
             window.makeKeyAndOrderFront(nil)
 
             var opened: String?
@@ -139,7 +146,21 @@ enum UITestHarness {
                 let editor = window.firstResponder as? NSTextView
                 lines.append("rename: responder \(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") · text \(editor?.string ?? "-") · selected \(editor.map { NSStringFromRange($0.selectedRange()) } ?? "-")")
                 if let editor {
-                    editor.insertText("renamed", replacementRange: editor.selectedRange())
+                    // ← and → must move the cursor while editing (not expand/collapse rows).
+                    for (keyCode, arrow) in [(UInt16(124), "\u{F703}"), (UInt16(123), "\u{F702}")] {
+                        let before = editor.selectedRange()
+                        if let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.numericPad, .function],
+                                                      timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: window.windowNumber, context: nil,
+                                                      characters: arrow, charactersIgnoringModifiers: arrow,
+                                                      isARepeat: false, keyCode: keyCode) {
+                            NSApp.postEvent(key, atStart: false)
+                        }
+                        try? await Task.sleep(for: .milliseconds(400))
+                        lines.append("rename: \(keyCode == 124 ? "→" : "←") \(NSStringFromRange(before)) → \(NSStringFromRange(editor.selectedRange()))")
+                    }
+                    editor.selectAll(nil)
+                    editor.insertText("renamed", replacementRange: NSRange(location: 0, length: 3))
                     if let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
                                                     timestamp: ProcessInfo.processInfo.systemUptime,
                                                     windowNumber: window.windowNumber, context: nil,
