@@ -20,6 +20,8 @@ extension UTType {
 
 struct TransferPayload: Codable, Transferable {
     var locations: [BrowseLocation]
+    /// Which locations are folders (so Favorites can accept only folders).
+    var folders: [BrowseLocation]? = nil
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: .blitLocations)

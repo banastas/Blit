@@ -2,7 +2,10 @@
 // into local drives and network (NAS) shares. Volumes update as they mount.
 
 import AppKit
+import BlitLocal
+import Network
 import Observation
+import UniformTypeIdentifiers
 
 struct Favorite: Codable, Identifiable, Hashable {
     var id = UUID()
@@ -34,7 +37,28 @@ struct VolumeLocation: Identifiable, Hashable {
     var url: URL
     var name: String
     var isInternal: Bool
+    /// For network shares: the device serving it ("d1ll1N9eR"), from the mount.
+    var host: String?
     var id: URL { url }
+}
+
+/// A device on the network and the shares mounted from it.
+struct NetworkDevice: Identifiable, Hashable {
+    var name: String
+    /// Bonjour _device-info model ("Xserve" for a Synology NAS, "Macmini9,1"…), if advertised.
+    var model: String?
+    var shares: [VolumeLocation]
+    var id: String { name }
+
+    var symbol: String {
+        guard let model else { return "desktopcomputer" }
+        if model.hasPrefix("Xserve") || model.contains("RackMac") { return "server.rack" }
+        if model.hasPrefix("Macmini") { return "macmini" }
+        if model.hasPrefix("MacBook") { return "laptopcomputer" }
+        if model.hasPrefix("MacPro") { return "macpro.gen3" }
+        if model.hasPrefix("Mac1") || model.hasPrefix("MacStudio") { return "macstudio" }
+        return "desktopcomputer"
+    }
 }
 
 @MainActor
@@ -43,6 +67,10 @@ final class SidebarModel {
     private(set) var favorites: [Favorite] = []
     private(set) var drives: [VolumeLocation] = []
     private(set) var networkShares: [VolumeLocation] = []
+    /// Network shares grouped by the device serving them.
+    private(set) var networkDevices: [NetworkDevice] = []
+    @ObservationIgnored private var models: [String: String] = [:]
+    @ObservationIgnored private var modelBrowser: NWBrowser?
 
     private static let favoritesKey = "favorites"
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -73,7 +101,50 @@ final class SidebarModel {
         }
         // Boot volume first, then alphabetical.
         drives = local.sorted { ($0.url.path == "/" ? 0 : 1, $0.name) < ($1.url.path == "/" ? 0 : 1, $1.name) }
-        networkShares = network.sorted { $0.name < $1.name }
+        networkShares = network.map { share in
+            var s = share
+            s.host = Self.deviceName(forMount: share.url.path)
+            return s
+        }.sorted { $0.name < $1.name }
+        regroupDevices()
+        if modelBrowser == nil, !networkShares.isEmpty { browseDeviceModels() }
+    }
+
+    private func regroupDevices() {
+        let groups = Dictionary(grouping: networkShares) { $0.host ?? $0.name }
+        networkDevices = groups.map { NetworkDevice(name: $0.key, model: models[$0.key.lowercased()], shares: $0.value) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// "//user@d1ll1N9eR._smb._tcp.local/Media" → "d1ll1N9eR"; "//user@192.168.20.111/Media" → "192.168.20.111".
+    static func deviceName(forMount path: String) -> String? {
+        guard let source = MountInfo.of(path)?.source,
+              let host = source.split(separator: "@").last?.split(separator: "/").first else { return nil }
+        var name = String(host).removingPercentEncoding ?? String(host)
+        for suffix in ["._smb._tcp.local", "._smb._tcp", "._afpovertcp._tcp.local", ".local"] where name.hasSuffix(suffix) {
+            name.removeLast(suffix.count)
+        }
+        return name
+    }
+
+    /// Learns device models from Bonjour (_device-info._tcp) for sidebar icons.
+    private func browseDeviceModels() {
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_device-info._tcp", domain: "local."), using: .tcp)
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
+            var found: [String: String] = [:]
+            for result in results {
+                guard case .service(let name, _, _, _) = result.endpoint,
+                      case .bonjour(let txt) = result.metadata, let model = txt["model"] else { continue }
+                found[name.lowercased()] = model
+            }
+            Task { @MainActor in
+                guard let self else { return }
+                self.models.merge(found) { _, new in new }
+                self.regroupDevices()
+            }
+        }
+        browser.start(queue: .main)
+        modelBrowser = browser
     }
 
     /// The volume a URL lives on, for the favorite's badge ("Media", "SSD").
@@ -106,11 +177,31 @@ final class SidebarModel {
         saveFavorites()
     }
 
+    /// Adds favorites from a drop onto the Favorites section: Finder folder URLs
+    /// or Blit's own drag payload (local or server folders).
+    func addDropped(_ providers: [NSItemProvider], at index: Int? = nil) {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.blitLocations.identifier) {
+                _ = provider.loadDataRepresentation(for: .blitLocations) { data, _ in
+                    guard let data, let payload = try? JSONDecoder().decode(TransferPayload.self, from: data) else { return }
+                    Task { @MainActor in
+                        for location in payload.folders ?? [] { self.addFavorite(location, at: index) }
+                    }
+                }
+            } else if provider.canLoadObject(ofClass: URL.self) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in self.addFavorites([url], at: index) }
+                }
+            }
+        }
+    }
+
     /// Adds any location (a local folder or a folder on a server), e.g. from ⌘D.
-    func addFavorite(_ location: BrowseLocation) {
-        if case .local(let url) = location { return addFavorites([url]) }
+    func addFavorite(_ location: BrowseLocation, at index: Int? = nil) {
+        if case .local(let url) = location { return addFavorites([url], at: index) }
         guard !isFavorite(location) else { return }
-        favorites.append(Favorite(location: location))
+        favorites.insert(Favorite(location: location), at: min(index ?? favorites.count, favorites.count))
         saveFavorites()
     }
 

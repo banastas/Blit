@@ -190,7 +190,7 @@ struct ContentView: View {
             add(.local(drive.url), drive.name, drive.url.path, drive.isInternal ? "internaldrive" : "externaldrive", .drive)
         }
         for share in sidebar.networkShares {
-            add(.local(share.url), share.name, share.url.path, "externaldrive.connected.to.line.below", .nas)
+            add(.local(share.url), share.name, "\(share.host ?? "Network") · \(share.url.path)", "externaldrive.connected.to.line.below", .nas)
         }
         for recent in active?.recents ?? [] {
             let d = describe(recent)

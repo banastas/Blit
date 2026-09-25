@@ -4,7 +4,7 @@
 import SwiftUI
 
 struct PaletteEntry: Identifiable, Hashable {
-    enum Group: String { case favorite = "Favorite", server = "Server", drive = "Drive", nas = "NAS", recent = "Recent" }
+    enum Group: String { case favorite = "Favorite", server = "Server", drive = "Drive", nas = "Network", recent = "Recent" }
     let location: BrowseLocation
     let name: String
     let detail: String

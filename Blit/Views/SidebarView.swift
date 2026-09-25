@@ -9,6 +9,8 @@ struct SidebarView: View {
     @Environment(ServerStore.self) private var servers
     @Environment(ConnectionManager.self) private var connections
     @Binding var selection: BrowseLocation?
+    @State private var favoritesTargeted = false
+    @State private var collapsedDevices = Set<String>()
     var onAddServer: () -> Void
     var onEditServer: (ServerConfig) -> Void
     var onRemoveServer: (ServerConfig) -> Void
@@ -31,14 +33,20 @@ struct SidebarView: View {
                         }
                 }
                 .onMove { sidebar.moveFavorites(from: $0, to: $1) }
-                .dropDestination(for: URL.self) { urls, index in
-                    sidebar.addFavorites(urls, at: index)
+                .onInsert(of: [.blitLocations, .fileURL]) { index, providers in
+                    sidebar.addDropped(providers, at: index)
                 }
                 if sidebar.favorites.isEmpty {
-                    Text("Drag folders here")
+                    Text(favoritesTargeted ? "Drop to add to Favorites" : "Drag folders here")
                         .font(.callout)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(favoritesTargeted ? .primary : .tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                         .selectionDisabled()
+                        .onDrop(of: [.blitLocations, .fileURL], isTargeted: $favoritesTargeted) { providers in
+                            sidebar.addDropped(providers)
+                            return true
+                        }
                 }
             }
 
@@ -82,35 +90,57 @@ struct SidebarView: View {
                 }
             }
 
-            if !sidebar.networkShares.isEmpty {
-                Section("NAS") {
-                    ForEach(sidebar.networkShares) { share in
-                        let login = servers.nasLogin(forMount: share.url.path)
-                        HStack {
-                            Label(share.name, systemImage: "externaldrive.connected.to.line.below")
-                            Spacer(minLength: 4)
-                            if login != nil {
-                                Image(systemName: "checkmark.shield")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                                    .help("Copies here are verified with sha256sum on the NAS")
+            if !sidebar.networkDevices.isEmpty {
+                Section("Network") {
+                    ForEach(sidebar.networkDevices) { device in
+                        DisclosureGroup(isExpanded: expansion(for: device)) {
+                            ForEach(device.shares) { share in
+                                shareRow(share)
                             }
+                        } label: {
+                            Label(device.name, systemImage: device.symbol)
+                                .help(device.model.map { "\(device.name) (\($0))" } ?? device.name)
                         }
-                        .transferTarget(.local(share.url), name: share.name, onTransfer: onTransfer)
-                        .tag(BrowseLocation.local(share.url))
-                        .contextMenu {
-                            Button(login == nil ? "Verify Copies on NAS…" : "NAS Verification…") { onNASVerification(share) }
-                            if let login {
-                                Button("Turn Off NAS Verification") { servers.remove(login) }
-                            }
-                            Divider()
-                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([share.url]) }
-                        }
+                        .selectionDisabled()
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+    }
+
+    /// Network devices start expanded; collapsing is remembered for the session.
+    private func expansion(for device: NetworkDevice) -> Binding<Bool> {
+        Binding(get: { !collapsedDevices.contains(device.name) },
+                set: { expanded in
+                    if expanded { collapsedDevices.remove(device.name) } else { collapsedDevices.insert(device.name) }
+                })
+    }
+
+    @ViewBuilder private func shareRow(_ share: VolumeLocation) -> some View {
+        Group {
+            let login = servers.nasLogin(forMount: share.url.path)
+            HStack {
+                Label(share.name, systemImage: "externaldrive.connected.to.line.below")
+                Spacer(minLength: 4)
+                if login != nil {
+                    Image(systemName: "checkmark.shield")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .help("Copies here are verified with sha256sum on the NAS")
+                }
+            }
+            .transferTarget(.local(share.url), name: share.name, onTransfer: onTransfer)
+            .tag(BrowseLocation.local(share.url))
+            .contextMenu {
+                Button(login == nil ? "Verify Copies on NAS…" : "NAS Verification…") { onNASVerification(share) }
+                if let login {
+                    Button("Turn Off NAS Verification") { servers.remove(login) }
+                }
+                Divider()
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([share.url]) }
+            }
+        }
     }
 }
 

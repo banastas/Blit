@@ -102,8 +102,8 @@ struct FileListView: View {
 
     /// Dragging a selected row drags the whole selection, in list order.
     private func payload(for item: FileItem) -> TransferPayload {
-        guard selection.contains(item.id) else { return TransferPayload(locations: [item.location]) }
-        return TransferPayload(locations: browser.sortedItems.filter { selection.contains($0.id) }.map(\.location))
+        let items = selection.contains(item.id) ? browser.sortedItems.filter { selection.contains($0.id) } : [item]
+        return TransferPayload(locations: items.map(\.location), folders: items.filter(\.isDirectory).map(\.location))
     }
 }
 

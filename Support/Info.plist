@@ -3,6 +3,15 @@
 <plist version="1.0">
 <dict>
 	<!-- Merged with the generated Info.plist (GENERATE_INFOPLIST_FILE = YES). -->
+	<!-- Local Network privacy: SSH/SFTP to NAS devices and Bonjour device models for sidebar icons. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Blit connects to NAS devices and servers on your network to transfer and verify files, and reads device names and models to show them in the sidebar.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_device-info._tcp</string>
+		<string>_smb._tcp</string>
+		<string>_ssh._tcp</string>
+	</array>
 	<!-- Finder › right-click › Services › Send to Blit… (PRD R6.1) -->
 	<key>NSServices</key>
 	<array>
