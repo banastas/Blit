@@ -137,6 +137,9 @@ final class TransferManager {
 
     /// The full HUD is open (click the count in the condensed strip).
     var isExpanded = false
+    /// Files handed to Blit from Finder (Services › Send to Blit…), waiting
+    /// for the user to pick a destination.
+    var pendingExternalFiles: [URL] = []
 
     /// The job the strip shows: the running one, else the most recent.
     var featured: TransferJob? { jobs.first(where: \.isActive) ?? jobs.last(where: { $0.status != .queued }) ?? jobs.first }

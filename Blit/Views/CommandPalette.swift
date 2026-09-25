@@ -15,6 +15,7 @@ struct PaletteEntry: Identifiable, Hashable {
 
 struct CommandPalette: View {
     let entries: [PaletteEntry]
+    var prompt = "Go to a favorite, server, drive or recent folder"
     let onSelect: (BrowseLocation) -> Void
     @State private var query = ""
     @State private var highlighted: PaletteEntry.ID?
@@ -50,7 +51,7 @@ struct CommandPalette: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Go to a favorite, server, drive or recent folder", text: $query)
+                TextField(prompt, text: $query)
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($fieldFocused)

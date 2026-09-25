@@ -61,6 +61,15 @@ struct ContentView: View {
                 if item.isNew { selection = server.startLocation } else if selection?.serverID == server.id { browser?.reload() }
             }
         }
+        .sheet(isPresented: externalFilesBinding) {
+            let files = transfers.pendingExternalFiles
+            CommandPalette(entries: paletteEntries.filter { $0.location.localURL != nil && $0.group != .recent },
+                           prompt: files.count == 1 ? "Send “\(files[0].lastPathComponent)” to…" : "Send \(files.count) items to…") { location in
+                let name = location.localURL?.lastPathComponent ?? "Folder"
+                startTransfer(files.map { .local($0) }, to: location, name: name)
+            }
+            .onDisappear { transfers.pendingExternalFiles = [] }
+        }
         .sheet(isPresented: $showPalette) {
             CommandPalette(entries: paletteEntries) { location in
                 selection = location
@@ -171,6 +180,10 @@ struct ContentView: View {
             add(recent, d.name, d.detail, "clock", .recent)
         }
         return entries
+    }
+
+    private var externalFilesBinding: Binding<Bool> {
+        Binding(get: { !transfers.pendingExternalFiles.isEmpty }, set: { if !$0 { transfers.pendingExternalFiles = [] } })
     }
 
     private var trustBinding: Binding<TrustRequest?> {

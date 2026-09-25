@@ -1,13 +1,28 @@
 // Blit — a native macOS utility that moves big files fast and verifies every byte.
 
+import AppIntents
 import AppKit
 import SwiftUI
 
 /// Quitting mid-transfer: save the queue, close connections, then exit. A
 /// short watchdog guarantees the process ends even if something still holds
 /// it open; resume data (queue.json, .blitpart state) is already on disk.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var transfers: TransferManager?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.servicesProvider = self
+        NSUpdateDynamicServices()
+    }
+
+    /// Finder › Services › Send to Blit…: bring Blit forward and ask where to copy.
+    @objc func sendToBlit(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        guard !urls.isEmpty else { return }
+        transfers?.pendingExternalFiles = urls
+        NSApp.activate()
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let transfers, transfers.hasActiveWork else { return .terminateNow }
@@ -39,7 +54,10 @@ struct BlitApp: App {
         let connections = ConnectionManager()
         _servers = State(initialValue: servers)
         _connections = State(initialValue: connections)
-        _transfers = State(initialValue: TransferManager(servers: servers, verifier: connections.verifier))
+        let transfers = TransferManager(servers: servers, verifier: connections.verifier)
+        _transfers = State(initialValue: transfers)
+        // "Copy with Blit" (App Intent) enqueues through the same manager.
+        AppDependencyManager.shared.add(dependency: transfers)
     }
 
     var body: some Scene {
