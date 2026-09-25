@@ -129,6 +129,36 @@ enum UITestHarness {
                 try? await Task.sleep(for: .milliseconds(1200))
                 lines.append("\(label) @ \(Int(point.x)),\(Int(point.y)): \(opened ?? "NO MENU")")
             }
+            // Inline rename: Return-style start, name-only selection, type, Return.
+            opened = nil
+            browser.reload()
+            try? await Task.sleep(for: .seconds(1))
+            if let item = browser.rows.first(where: { $0.name == "one.txt" }) {
+                browser.beginRename(item)
+                try? await Task.sleep(for: .seconds(1))
+                let editor = window.firstResponder as? NSTextView
+                lines.append("rename: responder \(window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") · text \(editor?.string ?? "-") · selected \(editor.map { NSStringFromRange($0.selectedRange()) } ?? "-")")
+                if let editor {
+                    editor.insertText("renamed", replacementRange: editor.selectedRange())
+                    if let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                                    timestamp: ProcessInfo.processInfo.systemUptime,
+                                                    windowNumber: window.windowNumber, context: nil,
+                                                    characters: "\r", charactersIgnoringModifiers: "\r",
+                                                    isARepeat: false, keyCode: 36) {
+                        NSApp.postEvent(enter, atStart: false)
+                    }
+                    try? await Task.sleep(for: .seconds(1.5))
+                }
+                let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+                lines.append("rename: on disk \(names.sorted()) · renaming \(browser.renaming == nil ? "ended" : "still on")")
+                // Put it back for the next run.
+                for name in names where name != "one.txt" {
+                    try? FileManager.default.moveItem(at: folder.appendingPathComponent(name),
+                                                      to: folder.appendingPathComponent("one.txt"))
+                }
+            } else {
+                lines.append("rename: one.txt not listed")
+            }
             browser.goBack()
         }
     }

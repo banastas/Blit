@@ -193,7 +193,7 @@ struct ContentView: View {
             Button("Go to…", systemImage: "magnifyingglass") { showPalette = true }
                 .keyboardShortcut("k", modifiers: .command)
                 .help("Go to a favorite, server, drive or recent folder (⌘K)")
-            Button("New Folder", systemImage: "folder.badge.plus") { active?.promptNewFolder() }
+            Button("New Folder", systemImage: "folder.badge.plus") { active?.newFolder() }
                 .disabled(active?.current == nil)
                 .help("New Folder (⇧⌘N)")
             Button("Enclosing Folder", systemImage: "arrow.up") { active?.goUp() }

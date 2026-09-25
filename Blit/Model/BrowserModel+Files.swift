@@ -20,32 +20,55 @@ extension BrowserModel {
 
     // MARK: Names
 
-    func promptNewFolder() {
-        guard current != nil else { return }
+    /// Creates "untitled folder" (or "untitled folder 2"…) here at once and
+    /// puts its name into editing, like Finder.
+    func newFolder() {
+        guard let folder = current else { return }
         let names = Set(items.map { $0.name.lowercased() })
         var name = "untitled folder"
         var n = 2
         while names.contains(name) { name = "untitled folder \(n)"; n += 1 }
-        namePrompt = NamePrompt(kind: .newFolder, name: name)
-    }
-
-    func promptRename(_ item: FileItem) {
-        namePrompt = NamePrompt(kind: .rename(item), name: item.name)
-    }
-
-    func commit(_ prompt: NamePrompt) {
-        guard let folder = current else { return }
         Task {
             do {
-                switch prompt.kind {
-                case .newFolder:
-                    selection = [try await operations.makeFolder(named: prompt.name, in: folder)]
-                case .rename(let item):
-                    selection = [try await operations.rename(item.location, to: prompt.name)]
-                }
+                let created = try await operations.makeFolder(named: name, in: folder)
+                selection = [created]
+                renaming = created
             } catch {
                 operationError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
             }
+        }
+    }
+
+    /// Starts editing an item's name in place (Return, or File › Rename).
+    func beginRename(_ item: FileItem) {
+        selection = [item.id]
+        renaming = item.location
+    }
+
+    func cancelRename() { renaming = nil }
+
+    /// Ends editing; renames if the name changed. Safe to call more than once.
+    func commitRename(_ item: FileItem, to newName: String) {
+        guard renaming == item.location else { return }
+        renaming = nil
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != item.name else { return }
+        Task {
+            do {
+                selection = [try await operations.rename(item.location, to: name)]
+            } catch {
+                operationError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+        }
+    }
+
+    /// Opens the selected folder, or a local file in its app (double-click, ⌘↓, ⌘O).
+    func openSelection() {
+        guard selection.count == 1, let item = selectedItems.first else { return }
+        if item.isDirectory {
+            open(item.location)
+        } else if let url = item.location.localURL {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -64,8 +87,9 @@ extension BrowserModel {
     // MARK: Drag and drop
 
     /// A drop onto this list or one of its folders: Finder's rules, ⌥ copies.
-    func drop(_ sources: [BrowseLocation], into folder: BrowseLocation, name: String) {
-        let mode: FileOperations.Mode = NSEvent.modifierFlags.contains(.option) ? .copy : .automatic
+    /// `copy` is the ⌥ state captured at drop time, when the drop is read later.
+    func drop(_ sources: [BrowseLocation], into folder: BrowseLocation, name: String, copy: Bool? = nil) {
+        let mode: FileOperations.Mode = (copy ?? NSEvent.modifierFlags.contains(.option)) ? .copy : .automatic
         run(sources: sources, into: folder, name: name, mode: mode)
     }
 

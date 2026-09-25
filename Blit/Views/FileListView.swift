@@ -24,11 +24,6 @@ struct FileListView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if showPathBar, browser.current != nil { PathBar(browser: browser) }
         }
-        .alert(browser.namePrompt?.title ?? "", isPresented: promptShown, presenting: browser.namePrompt) { prompt in
-            TextField("Name", text: promptName)
-            Button(prompt.kind.isNewFolder ? "Create" : "Rename") { browser.commit(browser.namePrompt ?? prompt) }
-            Button("Cancel", role: .cancel) {}
-        }
         .confirmationDialog(deleteTitle, isPresented: deleteShown, presenting: browser.deleteRequest) { items in
             Button("Delete", role: .destructive) { browser.confirmDelete(items) }
             Button("Cancel", role: .cancel) {}
@@ -42,14 +37,6 @@ struct FileListView: View {
         } message: {
             Text(browser.operationError ?? "")
         }
-    }
-
-    private var promptShown: Binding<Bool> {
-        Binding(get: { browser.namePrompt != nil }, set: { if !$0 { browser.namePrompt = nil } })
-    }
-
-    private var promptName: Binding<String> {
-        Binding(get: { browser.namePrompt?.name ?? "" }, set: { browser.namePrompt?.name = $0 })
     }
 
     private var deleteShown: Binding<Bool> {
@@ -92,8 +79,12 @@ struct FileListView: View {
                     disclosure(for: item)
                     Label {
                         HStack(spacing: 5) {
-                            Text(item.name).lineLimit(1)
-                            if !item.isDirectory, let url = item.location.localURL,
+                            if browser.renaming == item.location {
+                                RenameField(browser: browser, item: item)
+                            } else {
+                                Text(item.name).lineLimit(1)
+                            }
+                            if browser.renaming != item.location, !item.isDirectory, let url = item.location.localURL,
                                let verified = VerifiedIndex.shared.entry(for: url, size: item.size) {
                                 Image(nsImage: PixelGlyph.check.image(size: 9))
                                     .foregroundStyle(.secondary)
@@ -134,6 +125,11 @@ struct FileListView: View {
                     .dropDestination(for: TransferPayload.self) { payloads in
                         _ = drop(payloads.flatMap(\.locations), onto: item)
                     }
+            }
+            // Drops between rows and below the last one (row drops above take
+            // the rows themselves): into the folder there, else this one.
+            .onInsert(of: [.blitLocations, .fileURL]) { index, providers in
+                insert(providers, at: index)
             }
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
@@ -184,7 +180,7 @@ struct FileListView: View {
 
     @ViewBuilder private func menu(for items: [FileItem]) -> some View {
         if items.isEmpty {
-            Button("New Folder") { browser.promptNewFolder() }
+            Button("New Folder") { browser.newFolder() }
             Divider()
             Button("Paste") { browser.paste(move: false) }
                 .disabled(!browser.operations.canPaste)
@@ -204,9 +200,9 @@ struct FileListView: View {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
             }
             Divider()
-            Button("New Folder") { browser.promptNewFolder() }
+            Button("New Folder") { browser.newFolder() }
             if items.count == 1 {
-                Button("Rename…") { browser.promptRename(items[0]) }
+                Button("Rename") { browser.beginRename(items[0]) }
             }
             if urls.count == items.count {
                 Button("Duplicate") { browser.duplicate(items) }
@@ -263,6 +259,46 @@ struct FileListView: View {
             }
         }
         return .handled
+    }
+
+    /// A drop between rows (`index` is the row below it) or below the last
+    /// row: into the expanded folder it falls inside, else this folder.
+    private func insert(_ providers: [NSItemProvider], at index: Int) {
+        let rows = browser.rows
+        var target = browser.current
+        var name = browser.title
+        if index < rows.count, rows[index].depth > 0, let parent = rows[index].location.parent {
+            target = parent
+            name = parent.lastComponent
+        }
+        guard let target else { return }
+        let copy = NSEvent.modifierFlags.contains(.option)
+        Task {
+            var sources: [BrowseLocation] = []
+            for provider in providers {
+                sources += await Self.locations(from: provider)
+            }
+            sources = sources.uniqued().filter { $0 != target }
+            if !sources.isEmpty { browser.drop(sources, into: target, name: name, copy: copy) }
+        }
+    }
+
+    /// Locations in a dragged item: Blit's own payload, or a file URL from Finder.
+    private static func locations(from provider: NSItemProvider) async -> [BrowseLocation] {
+        if provider.hasItemConformingToTypeIdentifier(UTType.blitLocations.identifier) {
+            return await withCheckedContinuation { continuation in
+                _ = provider.loadDataRepresentation(for: .blitLocations) { data, _ in
+                    let payload = data.flatMap { try? JSONDecoder().decode(TransferPayload.self, from: $0) }
+                    continuation.resume(returning: payload?.locations ?? [])
+                }
+            }
+        }
+        guard provider.canLoadObject(ofClass: URL.self) else { return [] }
+        return await withCheckedContinuation { continuation in
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                continuation.resume(returning: url.map { [.local($0)] } ?? [])
+            }
+        }
     }
 
     /// Drops onto a folder row go into that folder; onto a file, into the folder
@@ -363,7 +399,7 @@ enum EmptySpaceMenu {
         browser.selection = []
         let menu = NSMenu()
         menu.autoenablesItems = false
-        menu.addItem(ClosureMenuItem("New Folder") { browser.promptNewFolder() })
+        menu.addItem(ClosureMenuItem("New Folder") { browser.newFolder() })
         menu.addItem(.separator())
         let paste = ClosureMenuItem("Paste") { browser.paste(move: false) }
         paste.isEnabled = browser.operations.canPaste
@@ -405,4 +441,44 @@ struct ViewAnchor: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSView, context: Context) {}
+}
+
+/// Editing a name in place (PRD R2.12): the name without its extension starts
+/// selected, as in Finder. Return saves, Esc cancels, clicking away saves.
+private struct RenameField: View {
+    let browser: BrowserModel
+    let item: FileItem
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Name", text: $text)
+            .textFieldStyle(.roundedBorder)
+            .labelsHidden()
+            .focused($focused)
+            .onAppear {
+                text = item.name
+                DispatchQueue.main.async {
+                    focused = true
+                    // Focusing selects everything; then narrow it to the name
+                    // without its extension (the field editor is AppKit's).
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { selectBaseName() }
+                }
+            }
+            .onSubmit { browser.commitRename(item, to: text) }
+            .onExitCommand { browser.cancelRename() }
+            .onChange(of: focused) { _, isFocused in
+                if !isFocused { browser.commitRename(item, to: text) }
+            }
+    }
+
+    private func selectBaseName() {
+        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.string == item.name else { return }
+        let ext = (item.name as NSString).pathExtension
+        let whole = (item.name as NSString).length
+        let length = item.isDirectory || ext.isEmpty || ext.contains(" ")
+            ? whole
+            : whole - (ext as NSString).length - 1
+        editor.setSelectedRange(NSRange(location: 0, length: max(0, length)))
+    }
 }

@@ -21,28 +21,6 @@ struct FileItem: Identifiable, Hashable, Sendable {
     var id: BrowseLocation { location }
 }
 
-/// Asking for a name: a new folder, or a new name for an item.
-struct NamePrompt: Identifiable {
-    enum Kind { case newFolder, rename(FileItem) }
-    let id = UUID()
-    let kind: Kind
-    var name: String
-
-    var title: String {
-        switch kind {
-        case .newFolder: "New Folder"
-        case .rename(let item): "Rename “\(item.name)”"
-        }
-    }
-}
-
-extension NamePrompt.Kind {
-    var isNewFolder: Bool {
-        if case .newFolder = self { return true }
-        return false
-    }
-}
-
 /// A server presented a host key Blit hasn't seen (PRD R1.3).
 struct TrustRequest: Identifiable {
     let id = UUID()
@@ -68,7 +46,8 @@ final class BrowserModel {
     private(set) var expanded = Set<BrowseLocation>()
     private(set) var children: [BrowseLocation: [FileItem]] = [:]
     private(set) var loadingChildren = Set<BrowseLocation>()
-    var namePrompt: NamePrompt?
+    /// The item whose name is being edited in place, if any.
+    var renaming: BrowseLocation?
     /// Items waiting for the user to confirm a permanent delete.
     var deleteRequest: [FileItem]?
     var operationError: String?

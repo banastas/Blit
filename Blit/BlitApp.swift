@@ -24,8 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // alone while a text field or a sheet has the keyboard.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let key = event.keyCode
-            let space: UInt16 = 49, down: UInt16 = 125, up: UInt16 = 126
-            guard [space, down, up].contains(key),
+            let space: UInt16 = 49, down: UInt16 = 125, up: UInt16 = 126, returnKey: UInt16 = 36, enter: UInt16 = 76
+            guard [space, down, up, returnKey, enter].contains(key),
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   key != space || !event.isARepeat else { return event }
             let handled = MainActor.assumeIsolated { () -> Bool in
@@ -33,6 +33,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let panelIsKey = window is QLPreviewPanel
                 guard panelIsKey || (window === BrowserModel.activeWindow && window.attachedSheet == nil
                                      && !(window.firstResponder is NSText)) else { return false }
+                if key == returnKey || key == enter {
+                    // Return renames the selection in place, as in Finder (⌘↓ or double-click opens).
+                    guard !panelIsKey, browser.renaming == nil, browser.selection.count == 1,
+                          let item = browser.selectedItems.first else { return false }
+                    browser.beginRename(item)
+                    return true
+                }
                 if key == space {
                     browser.togglePreview()
                     return true
@@ -174,14 +181,17 @@ struct FileCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("New Folder") { onFiles { $0.promptNewFolder() } }
+            Button("New Folder") { onFiles { $0.newFolder() } }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(browser?.current == nil)
             Divider()
             Button("Quick Look") { onFiles { $0.togglePreview() } }
                 .keyboardShortcut("y")
                 .disabled(browser?.selection.isEmpty ?? true)
-            Button("Rename…") { onFiles { b in b.selectedItems.first.map(b.promptRename) } }
+            Button("Open") { onFiles { $0.openSelection() } }
+                .keyboardShortcut(.downArrow)
+                .disabled(browser?.selection.count != 1)
+            Button("Rename") { onFiles { b in b.selectedItems.first.map(b.beginRename) } }
                 .disabled(browser?.selection.count != 1)
             Button("Duplicate") { onFiles { $0.duplicate($0.selectedItems) } }
                 .disabled(browser.map { $0.selection.isEmpty || $0.current?.localURL == nil } ?? true)
