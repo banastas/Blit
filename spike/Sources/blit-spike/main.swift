@@ -25,6 +25,8 @@ struct Options {
     var staggerMS = 250     // delay between opening connections
     var out: String?        // write to this file (sftp mode); otherwise discard
     var trust: String?      // also accept a host key with this SHA256 fingerprint
+    var offsetGB = 0.0      // sftp mode: start reading here (split across --conns from this point)
+    var prefetchMB = 0      // sftp mode: dd this much of each connection's region into the server's cache
 }
 
 func usage() -> Never {
@@ -46,6 +48,8 @@ func usage() -> Never {
       --stagger MS    delay between opening connections              [250]
       --out FILE      write data to FILE and verify it (sftp mode, --seconds 0)
       --trust SHA256:…  also accept the host key with this fingerprint
+      --offset GB     sftp mode: start at this offset (to read parts of a file not yet cached)
+      --prefetch MB   sftp mode: run dd on the server over each connection's first MB (needs shell)
 
     Password comes from $BLIT_PASSWORD or a prompt. The host key must already be
     in ~/.ssh/known_hosts (connect once with ssh first).
@@ -83,6 +87,8 @@ func parseOptions() -> Options {
         case "--stagger": o.staggerMS = Int(value) ?? o.staggerMS
         case "--out": o.out = value
         case "--trust": o.trust = value
+        case "--offset": o.offsetGB = Double(value) ?? 0
+        case "--prefetch": o.prefetchMB = Int(value) ?? 0
         default: usage()
         }
     }
@@ -383,19 +389,26 @@ final class RemoteHasher: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
     typealias OutboundOut = ByteBuffer
     let path: String
+    let command: String
+    let rawOutput: Bool
     let done: EventLoopPromise<(String, Double)>
     var output = ""
     var t0 = 0.0
     var finished = false
 
-    init(path: String, done: EventLoopPromise<(String, Double)>) {
+    /// Runs `command` with `path` NUL-terminated on stdin. Returns the hash, or
+    /// the raw output when `rawOutput`.
+    init(path: String, command: String = "xargs -0 sha256sum --", rawOutput: Bool = false,
+         done: EventLoopPromise<(String, Double)>) {
         self.path = path
+        self.command = command
+        self.rawOutput = rawOutput
         self.done = done
     }
 
     func channelActive(context: ChannelHandlerContext) {
         // The filename never touches the shell command line.
-        let req = SSHChannelRequestEvent.ExecRequest(command: "xargs -0 sha256sum --", wantReply: true)
+        let req = SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true)
         context.triggerUserOutboundEvent(req, promise: nil)
     }
 
@@ -422,6 +435,7 @@ final class RemoteHasher: ChannelInboundHandler {
     func channelInactive(context: ChannelHandlerContext) { finishWithOutput(context) }
 
     func finishWithOutput(_ context: ChannelHandlerContext) {
+        if rawOutput { return finish(context, .success((output.trimmingCharacters(in: .whitespacesAndNewlines), now() - t0))) }
         let hash = output.split(separator: " ").first.map(String.init) ?? ""
         if hash.count == 64 {
             finish(context, .success((hash, now() - t0)))
@@ -555,8 +569,9 @@ final class SFTPReader: ChannelInboundHandler {
                 return fail(context, SpikeError("server did not report a file size"))
             }
             let n = UInt64(o.conns)
-            let chunk = (size + n - 1) / n
-            nextOffset = min(size, UInt64(index) * chunk)
+            let start = min(size, UInt64(o.offsetGB * 1e9))
+            let chunk = (size - start + n - 1) / n
+            nextOffset = min(size, start + UInt64(index) * chunk)
             rangeEnd = min(size, nextOffset + chunk)
             state = .open
             send(context, FXP.open) {
@@ -688,6 +703,13 @@ let password = o.mode == "hostkey" ? "" : readPassword("Password for \(o.user)@\
 let group = MultiThreadedEventLoopGroup(numberOfThreads: max(2, o.conns))
 defer { try? group.syncShutdownGracefully() }
 
+/// Runs `command` on the server with the remote path on stdin; returns its output.
+func remoteCommand(_ command: String) -> EventLoopFuture<(String, Double)> {
+    run(o, password: password, group: group, halfClosure: true) { (p: EventLoopPromise<(String, Double)>, _, _) in
+        RemoteHasher(path: o.path, command: command, rawOutput: true, done: p)
+    }
+}
+
 func remoteHash() throws -> (String, Double) {
     try run(o, password: password, group: group, halfClosure: true) { (p: EventLoopPromise<(String, Double)>, _, _) in
         RemoteHasher(path: o.path, done: p)
@@ -723,6 +745,21 @@ do {
             guard fd >= 0 else { throw SpikeError("cannot create \(out)") }
             Darwin.close(fd)
         }
+        // Server-side prefetch: dd each connection's first --prefetch MB into the server's page cache.
+        var prefetches: [EventLoopFuture<(String, Double)>] = []
+        if o.prefetchMB > 0 {
+            let (sizeText, _) = try remoteCommand("xargs -0 stat -L -c %s --").wait()
+            guard let size = UInt64(sizeText) else { throw SpikeError("stat failed: \(sizeText)") }
+            let n = UInt64(o.conns)
+            let start = min(size, UInt64(o.offsetGB * 1e9))
+            let chunk = (size - start + n - 1) / n
+            for i in 0..<o.conns {
+                let from = (start + UInt64(i) * chunk) / 1_048_576
+                prefetches.append(remoteCommand(
+                    "xargs -0 sh -c 'dd if=\"$1\" of=/dev/null bs=1M skip=\(from) count=\(o.prefetchMB) 2>&1 | tail -1' blit"))
+            }
+            print("  prefetching \(o.prefetchMB) MB per connection on the server")
+        }
         var futures: [EventLoopFuture<Stats>] = []
         for i in 0..<o.conns {
             if i > 0 { usleep(useconds_t(o.staggerMS * 1000)) }
@@ -742,6 +779,11 @@ do {
                 s.notes.forEach { print("           \($0)") }
             case .failure(let e):
                 print("  conn \(i)  FAILED: \(e)")
+            }
+        }
+        for (i, f) in prefetches.enumerated() {
+            if let (line, secs) = try? f.wait() {
+                print(String(format: "  prefetch %d  %.1f s · %@", i, secs, line))
             }
         }
         let active = all.filter { $0.bytes > 0 }

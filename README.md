@@ -10,7 +10,7 @@ Blit moves data between three places, and does nothing else:
 
 The name comes from *bit block transfer*: copy a block of memory as fast as the hardware allows.
 
-> **Status:** pre-alpha. Benchmarking (M0) and the SSH spike (M1) are complete: one SwiftNIO SSH connection reached **42.9 MB/s**, and 3 connections reached **~90 MB/s, verified**. Next up is the SFTP engine (M2). This README is the living product requirements document (PRD).
+> **Status:** pre-alpha. M0 (benchmarks), M1 (SSH spike) and M2 (SFTP engine) are complete. The `blit` command-line tool downloads in parallel, resumes, and verifies every file against the server's SHA-256. Next is M3, the SSD → NAS copy engine. This README is the living product requirements document (PRD).
 
 ---
 
@@ -189,7 +189,7 @@ Derived from the measurements below.
 
 | Path | Target | Ceiling / notes |
 |---|---|---|
-| Remote → SSD, pack of many files | **≥ 55 MB/s** sustained | Remote disk: 86 MB/s for one reader. lftp: 57 MB/s with 8 connections. M1 spike: ~90 MB/s with 3 (file probably in the server's cache). |
+| Remote → SSD, pack of many files | **≥ 55 MB/s** sustained (server-cached files) | M2: 54.3 MB/s for a 26-file pack including verification; 65–93 MB/s for cached single files. Uncached files are limited by the seedbox's shared disk (22–36 MB/s measured), not by Blit. See [cold-file results](#cold-file-results-m2). |
 | Remote → SSD, single large file | **≥ 50 MB/s** | Needs chunked downloads. Transmit: 24.6 MB/s on one connection. M1 spike: 88.9–93.0 MB/s split 3 ways, written to disk and verified. |
 | Remote, per connection | **≥ 24 MB/s** ✅ | **M1: 42.9 MB/s** (255 KB reads, 16 MB window, 7 MB receive buffer). OpenSSH: 10.7 MB/s. |
 | SSD → NAS, today (1 GbE) | **≥ 105 MB/s** | Link maximum is about 113 MB/s. |
@@ -264,6 +264,27 @@ What it settled:
 5. **Writing to disk costs nothing at these speeds.** Saved runs matched discarded ones. An earlier 54 MB/s run coincided with 3.6 s connection setup (normally 1.2–1.9 s), so it was the server being busy.
 6. **Server-side `sha256sum` with the path sent NUL-delimited over stdin works:** 923 MB in about 7 s (from cache), and it matched every time.
 7. **SwiftNIO SSH reports failures but leaves the TCP connection open,** so the engine must close on error and apply handshake timeouts. The spike initially hung without them.
+
+### Cold-file results (M2)
+
+Measured on 2026-09-24 against parts of a 52 GB file that hadn't been read that day, so the server's page cache couldn't help.
+
+| Test | MB/s |
+|---|---:|
+| Server disk, sequential `dd` (1 MB reads, no network), one reader | 132 |
+| `blit get`, 3 connections (256 MB chunks) | 30–36, dipping to ~9 |
+| SFTP, 1 connection reading sequentially | 35.3 |
+| SFTP, 3 connections far apart | 36.4 (12 each) |
+| SFTP, 3 connections, an hour later | 22.2 |
+| SFTP, 3 connections + server-side `dd` prefetch of each region | 22.2 (prefetch `dd`s ran at 8.2 MB/s each) |
+
+What it means:
+
+1. **Uncached files are limited by the seedbox's shared disk,** and its speed swings widely with other customers' load: 132 MB/s for one idle sequential reader, versus 22–36 MB/s for SFTP reads at other times.
+2. **More connections don't help on uncached files, but don't hurt either:** 35.3 MB/s with one versus 36.4 with three. On cached files, three are 2–3× faster, so **3 stays the default**.
+3. **Server-side prefetch was tested and rejected.** Under load, the prefetch reads compete for the same disk and never get ahead of the downloads.
+4. **Freshly completed downloads are the fast case.** A file the seedbox just finished writing is likely still in its page cache (65–93 MB/s measured on cached files). Fetching new downloads promptly is worth more than any client-side tuning; see open question 10.
+5. **Every M1/M0 figure above 36 MB/s was from a cached file,** including the 86 MB/s `dd` in M0.
 
 ### LAN
 
@@ -341,8 +362,8 @@ The setup Blit is tuned against:
 |---|---|---|---|
 | **M0** | Benchmarks | Measure the network ceilings, find the bottlenecks, validate the approach | ✅ Done |
 | **M1** | SSH spike | Throwaway code: raw SwiftNIO SSH channel throughput with a ≥ 8 MB window against the real server, then a minimal pipelined read loop that handles shortened replies, plus `sha256sum` over an exec channel. **Done when one connection sustains more than 24.6 MB/s from the reference server.** Result: 42.9 MB/s on one connection, ~90 MB/s on 3, verified ([results](#m1-spike-results)). Carried into M2: `sha256sum` on DSM, and fixing the probe to time from first byte. | ✅ Done |
-| **M2** | SFTP engine | `BlitKit` Swift package. Pipelined reads, connection pool with staggered setup, chunked files, remote checksums with hash cache, resume, stability gate, filename policy, host-key pin store. Target ≥ 55 MB/s from the reference server. **Done so far:** SFTP v3 protocol layer and read planner; SSH connections with M1 tuning, host-key verification (known_hosts + pinned fingerprints), close-on-error and handshake timeout; SFTP client with pipelined downloads and backpressured writes; parallel verified downloads (shared range queue, `.blitpart`, `F_FULLFSYNC`, server `sha256sum`, mtime, rename); **resume** (`.blitpart.state` with completed ranges, 256 MB chunks); server hash starts when the last range is handed out; **server-side hash cache** (`~/.cache/blit/sha256`); **stability gate**; `blit ls` / `blit get`; 35 unit tests. **Live (2026-09-24, 3 connections, 923.5 MB file):** fresh 64.8 MB/s, verified 4.8 s after the last byte; repeat 74.1 MB/s with the hash cached (0.7 s); killed at 339.6 MB then resumed with 232.8 MB reused and the whole file verified. 26-file pack: 26/26 verified. **Next:** host-key pin store with a trust prompt, filename collision detection, cold-file throughput. | In progress |
-| **M3** | Local engine | LocalCopyEngine, NAS-side checksums over SSH, `.blitpart` handling, queue-wide disk-space checks, command-line test harness. Target ≥ 105 MB/s SSD → NAS. | |
+| **M2** | SFTP engine | `BlitKit` Swift package. Pipelined reads, connection pool with staggered setup, chunked files, remote checksums with hash cache, resume, stability gate, filename policy, host-key pin store. Target ≥ 55 MB/s from the reference server. **Done so far:** SFTP v3 protocol layer and read planner; SSH connections with M1 tuning, host-key verification (known_hosts + pinned fingerprints), close-on-error and handshake timeout; SFTP client with pipelined downloads and backpressured writes; parallel verified downloads (shared range queue, `.blitpart`, `F_FULLFSYNC`, server `sha256sum`, mtime, rename); **resume** (`.blitpart.state` with completed ranges, 256 MB chunks); server hash starts when the last range is handed out; **server-side hash cache** (`~/.cache/blit/sha256`); **stability gate**; `blit ls` / `blit get`; 35 unit tests. **Live (2026-09-24, 3 connections, 923.5 MB file):** fresh 64.8 MB/s, verified 4.8 s after the last byte; repeat 74.1 MB/s with the hash cached (0.7 s); killed at 339.6 MB then resumed with 232.8 MB reused and the whole file verified. 26-file pack: 26/26 verified. Host-key store with trust prompt (`blit hostkeys`); filename collision detection; SFTPGo endpoint verified live (35.1 MB/s over 3 connections, size-check fallback without a shell); cold-file throughput measured ([results](#cold-file-results-m2)). 38 unit tests. | ✅ Done |
+| **M3** | Local engine | LocalCopyEngine, NAS-side checksums over SSH (first: confirm `sha256sum` and `stat -c` on DSM), `.blitpart` handling, queue-wide disk-space checks, `blit copy` in the CLI. Target ≥ 105 MB/s SSD → NAS. | Next |
 | **M4** | App | `Blit.xcodeproj` (bundle, signing, entitlements) depending on BlitKit as a local package. Finder-style browser (sorted newest first, alternating rows, ⌘K, optional second pane), transfer strip, durable queue, server editor, Keychain, host-key pinning, notifications, menu bar icon, "Blit to…" Quick Action | |
 | **M5** | Hardening | Handling network changes, sleep and wake, drive ejection, transfer log export, signing and notarization | |
 
@@ -356,7 +377,8 @@ The setup Blit is tuned against:
 6. **Uploads:** out of scope for v1, but the engine shouldn't rule them out.
 7. **Browse-only File Provider:** worth it after v1? Handing downloads from the extension to Blit's engine is feasible. Still to check: whether File Provider on macOS 27 can place files on an external APFS drive rather than the boot drive, and how reliable it is.
 8. **Connection ramp:** does the seedbox's sshd drop near-simultaneous logins above `MaxStartups`? Opening 3–4 connections 250 ms apart worked every time in M1. 8–16 at once wasn't tested, and isn't needed at 3–4 connections.
-9. **Cold-file throughput:** every M1 figure came from a file in the server's cache. Measure an unread file in M2 to find the real disk-limited ceiling.
+9. ~~**Cold-file throughput**~~ **Answered (M2):** 22–36 MB/s, set by the seedbox's shared disk and its load; more connections and server-side prefetch don't raise it ([results](#cold-file-results-m2)).
+10. **Fetch new downloads automatically?** Freshly completed files are usually still in the seedbox's cache and download 2–3× faster. A watch mode that fetches new completed downloads as they appear would take advantage of that. It's a candidate for after v1.
 
 ## Repository layout
 
