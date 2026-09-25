@@ -6,8 +6,28 @@ import Observation
 
 struct Favorite: Codable, Identifiable, Hashable {
     var id = UUID()
-    var url: URL
-    var name: String { url.lastPathComponent }
+    var location: BrowseLocation
+
+    init(location: BrowseLocation) { self.location = location }
+
+    enum CodingKeys: String, CodingKey { case id, location, url }
+
+    // Favorites saved before server support stored a plain `url`.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        if let location = try c.decodeIfPresent(BrowseLocation.self, forKey: .location) {
+            self.location = location
+        } else {
+            self.location = .local(try c.decode(URL.self, forKey: .url))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(location, forKey: .location)
+    }
 }
 
 struct VolumeLocation: Identifiable, Hashable {
@@ -66,21 +86,37 @@ final class SidebarModel {
 
     // MARK: Favorites
 
+    /// Local favorites need their folder present; server favorites are checked when opened.
     func isAvailable(_ favorite: Favorite) -> Bool {
+        guard let url = favorite.location.localURL else { return true }
         var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: favorite.url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     /// Adds folders (ignoring files and duplicates) at `index`, or at the end.
     func addFavorites(_ urls: [URL], at index: Int? = nil) {
-        let folders = urls.filter { url in
+        let folders = urls.map(\.standardizedFileURL).filter { url in
             var isDirectory: ObjCBool = false
             return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
-                && !favorites.contains { $0.url.standardizedFileURL == url.standardizedFileURL }
+                && !isFavorite(.local(url))
         }
         guard !folders.isEmpty else { return }
         let insertAt = min(index ?? favorites.count, favorites.count)
-        favorites.insert(contentsOf: folders.map { Favorite(url: $0.standardizedFileURL) }, at: insertAt)
+        favorites.insert(contentsOf: folders.map { Favorite(location: .local($0)) }, at: insertAt)
+        saveFavorites()
+    }
+
+    /// Adds any location (a local folder or a folder on a server), e.g. from ⌘D.
+    func addFavorite(_ location: BrowseLocation) {
+        if case .local(let url) = location { return addFavorites([url]) }
+        guard !isFavorite(location) else { return }
+        favorites.append(Favorite(location: location))
+        saveFavorites()
+    }
+
+    /// Removes favorites on a server that's been deleted.
+    func removeFavorites(onServer id: UUID) {
+        favorites.removeAll { $0.location.serverID == id }
         saveFavorites()
     }
 
@@ -94,8 +130,13 @@ final class SidebarModel {
         saveFavorites()
     }
 
-    func isFavorite(_ url: URL) -> Bool {
-        favorites.contains { $0.url.standardizedFileURL == url.standardizedFileURL }
+    func isFavorite(_ location: BrowseLocation) -> Bool {
+        favorites.contains { favorite in
+            if let a = favorite.location.localURL, let b = location.localURL {
+                return a.standardizedFileURL == b.standardizedFileURL
+            }
+            return favorite.location == location
+        }
     }
 
     private func loadFavorites() {

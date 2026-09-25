@@ -54,16 +54,23 @@ struct FileListView: View {
             .width(min: 80, ideal: 140)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
-        .contextMenu(forSelectionType: FileItem.ID.self) { urls in
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(Array(urls)) }
+        .contextMenu(forSelectionType: FileItem.ID.self) { locations in
+            let urls = locations.compactMap(\.localURL)
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
                 .disabled(urls.isEmpty)
-        } primaryAction: { urls in
-            // Double-click / Return: open a folder in place, or the file in its app.
-            guard let url = urls.first, let item = browser.items.first(where: { $0.url == url }) else { return }
-            if item.isDirectory { browser.open(url) } else { NSWorkspace.shared.open(url) }
+        } primaryAction: { locations in
+            // Double-click / Return: open a folder in place, or a local file in its app.
+            guard let location = locations.first, let item = browser.items.first(where: { $0.location == location }) else { return }
+            if item.isDirectory {
+                browser.open(location)
+            } else if let url = location.localURL {
+                NSWorkspace.shared.open(url)
+            }
         }
         .overlay {
-            if browser.items.isEmpty, !browser.isLoading {
+            if browser.isLoading, browser.items.isEmpty {
+                ProgressView()
+            } else if browser.items.isEmpty {
                 Text("Empty Folder").foregroundStyle(.tertiary)
             }
         }
@@ -78,7 +85,7 @@ final class IconCache {
     private var cache: [String: NSImage] = [:]
 
     func icon(for item: FileItem) -> NSImage {
-        let key = item.isDirectory ? "/folder" : item.url.pathExtension.lowercased()
+        let key = item.isDirectory ? "/folder" : (item.name as NSString).pathExtension.lowercased()
         if let cached = cache[key] { return cached }
         let type = item.isDirectory ? UTType.folder : (UTType(filenameExtension: key) ?? .data)
         let image = NSWorkspace.shared.icon(for: type)
