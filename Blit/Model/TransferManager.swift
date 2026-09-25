@@ -110,6 +110,13 @@ final class TransferJob: Identifiable {
     var log: [LogLine] = []
     /// Files whose bytes are all in, waiting on verification, with when that began.
     var verifying: [String: Date] = [:]
+    /// Server-side hashing in progress: bytes hashed so far and file sizes, by
+    /// relative path (where the server reports progress).
+    var hashed: [String: UInt64] = [:]
+    var hashSizes: [String: UInt64] = [:]
+    /// Everything hashed so far (for the hash rate), and that rate in MB/s.
+    @ObservationIgnored var hashedTotal: UInt64 = 0
+    var hashRate = 0.0
     var startedAt: Date?
     var finishedAt: Date?
     @ObservationIgnored let counter = ByteCounter()
@@ -123,6 +130,36 @@ final class TransferJob: Identifiable {
     }
 
     var transferred: Int64 { Int64(counter.total) + resumedBytes + presentBytes }
+
+    /// All bytes are in and files are waiting on their checksums.
+    var isVerifyingOnly: Bool { isActive && !verifying.isEmpty && transferred >= totalBytes }
+
+    /// Files the server is hashing, with how far along each is.
+    var hashing: [(name: String, fraction: Double)] {
+        hashed.keys.sorted().map { name in
+            (name, min(1, Double(hashed[name] ?? 0) / Double(max(hashSizes[name] ?? 1, 1))))
+        }
+    }
+
+    /// How far verification of the downloaded files has got, where the server
+    /// reports progress.
+    var verifyProgress: Double? {
+        let names = verifying.keys.filter { hashSizes[$0] != nil }
+        let total = names.reduce(UInt64(0)) { $0 + (hashSizes[$1] ?? 0) }
+        guard total > 0 else { return nil }
+        let done = names.reduce(UInt64(0)) { $0 + min(hashed[$1] ?? 0, hashSizes[$1] ?? 0) }
+        return Double(done) / Double(total)
+    }
+
+    /// Seconds until the waiting files are verified, at the current hash rate.
+    var verifySecondsLeft: Int? {
+        guard hashRate > 0.5 else { return nil }
+        let left = verifying.keys.reduce(UInt64(0)) { total, name in
+            guard let size = hashSizes[name] else { return total }
+            return total + (size - min(hashed[name] ?? 0, size))
+        }
+        return Int(Double(left) / (hashRate * 1e6))
+    }
     /// Every file was already there; nothing was transferred.
     var allAlreadyPresent: Bool { fileCount > 0 && filesAlreadyPresent == fileCount }
     var progress: Double {
@@ -206,8 +243,23 @@ final class TransferManager {
         }
     }
 
-    /// The full HUD is open (click the count in the condensed strip).
+    /// The full HUD is open (click the count in the condensed strip). It opens
+    /// by itself when a transfer starts (Settings), unless collapsed during
+    /// the current batch.
     var isExpanded = false
+    @ObservationIgnored private var collapsedThisBatch = false
+
+    /// Collapses the HUD; it stays collapsed until the current transfers end.
+    func collapse() {
+        isExpanded = false
+        if hasActiveWork { collapsedThisBatch = true }
+    }
+
+    private func expandForTransfer() {
+        let wanted = UserDefaults.standard.object(forKey: "expandHUDOnTransfer") as? Bool ?? true
+        if !jobs.contains(where: { $0.isActive && !$0.isOperation }) { collapsedThisBatch = false }
+        if wanted, !collapsedThisBatch { isExpanded = true }
+    }
     /// Files handed to Blit from Finder (Services › Send to Blit…), waiting
     /// for the user to pick a destination.
     var pendingExternalFiles: [URL] = []
@@ -286,6 +338,7 @@ final class TransferManager {
             job.deleteSources = move
             jobs.append(job)
         }
+        expandForTransfer()
         saveQueue()
         runNext()
         return nil
@@ -344,6 +397,7 @@ final class TransferManager {
             job.note("RESTORED FROM LAST SESSION · RESUMING")
             jobs.append(job)
         }
+        expandForTransfer()
         saveQueue()
         runNext()
     }
@@ -536,6 +590,7 @@ final class TransferManager {
     private func sample(_ job: TransferJob) async {
         var last = (time: Date(), bytes: 0)
         var lastPer: [Int] = []
+        var lastHashed: UInt64 = 0
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(1))
             let now = Date()
@@ -548,10 +603,14 @@ final class TransferManager {
                 job.connectionRates = zip(per, lastPer).map { Double($0 - $1) / seconds / 1e6 }
             }
             lastPer = per
+            let hashedNow = job.hashedTotal
+            job.hashRate = Double(hashedNow - min(lastHashed, hashedNow)) / seconds / 1e6
+            lastHashed = hashedNow
             guard job.status == .running else { continue }
             job.rate = rate
             job.peakRate = max(job.peakRate, rate)
-            job.history.append(rate)
+            // Once only checksums remain, the histogram shows the server's hash rate.
+            job.history.append(job.isVerifyingOnly ? job.hashRate : rate)
             if job.history.count > 60 { job.history.removeFirst(job.history.count - 60) }
         }
     }
@@ -768,6 +827,15 @@ extension TransferJob {
 
     func handle(_ event: TransferEvent) {
         if case .fileFinished(let f, _) = event, completedPaths.contains(f.relativePath) { return }
+        if case .fileHashProgress(let f, let bytes) = event {
+            // Late progress for a file that's already done is dropped.
+            guard !completedPaths.contains(f.relativePath), !failures.contains(where: { $0.hasPrefix(f.relativePath + ":") }) else { return }
+            let previous = hashed[f.relativePath] ?? 0
+            if bytes > previous { hashedTotal += bytes - previous }
+            hashed[f.relativePath] = bytes
+            hashSizes[f.relativePath] = f.size
+            return
+        }
         if case .fileFinished(let f, let v) = event {
             let (hash, method): (String?, String) = switch v {
             case .sha256(let h, _): (h, "server-sha256")
@@ -787,9 +855,14 @@ extension TransferJob {
         case .fileStarted(let f): note("GET \(f.relativePath.uppercased())")
         case .fileDownloaded(let f):
             verifying[f.relativePath] = Date()
+            hashSizes[f.relativePath] = f.size
             note("DOWNLOADED \(f.relativePath.uppercased()) · VERIFYING")
+        case .fileHashProgress:
+            break
         case .fileFinished(let f, let v):
             verifying[f.relativePath] = nil
+            hashed[f.relativePath] = nil
+            hashSizes[f.relativePath] = nil
             guard completedPaths.insert(f.relativePath).inserted else { return }
             filesFinished += 1
             switch v {
@@ -805,6 +878,8 @@ extension TransferJob {
             }
         case .fileFailed(let f, let reason):
             verifying[f.relativePath] = nil
+            hashed[f.relativePath] = nil
+            hashSizes[f.relativePath] = nil
             failures.append("\(f.relativePath): \(reason)")
             note("✕ \(f.relativePath.uppercased()) · \(reason.uppercased())", failure: true)
         }

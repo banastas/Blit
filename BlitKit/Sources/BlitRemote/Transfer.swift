@@ -2,9 +2,10 @@
 //
 // Every file becomes one or more byte ranges on a shared queue; each connection
 // pulls the next range when it's free, so faster connections do more work.
-// When a file's last range is handed out, the server starts hashing it; when
-// its last range lands, a separate verifier finishes the file so connections
-// keep downloading.
+// When a file's first range is handed out, the server starts hashing it, so
+// the hash reads the file alongside the download (while it's in the server's
+// cache) instead of re-reading it cold afterwards; when its last range lands,
+// a separate verifier finishes the file so connections keep downloading.
 
 import BlitSFTP
 import Foundation
@@ -88,6 +89,8 @@ public enum TransferEvent: Sendable {
     case fileStarted(RemoteFile)
     /// Every byte has arrived; verification comes next.
     case fileDownloaded(RemoteFile)
+    /// The server has hashed `bytes` of the file so far (where it can report it).
+    case fileHashProgress(RemoteFile, bytes: UInt64)
     case fileFinished(RemoteFile, verification: Verification)
     case fileFailed(RemoteFile, String)
 }
@@ -109,7 +112,7 @@ public struct TransferOptions: Sendable {
     /// e.g. when a queue restored after relaunch runs again. A different size
     /// still fails unless `overwrite`.
     public var skipExistingSameSize = false
-    public var concurrentHashes = 2
+    public var concurrentHashes = 3
     public init() {}
 }
 
@@ -184,7 +187,9 @@ public struct RemoteHasher: Sendable {
     }
 
     /// POSIX sh; no single quotes, since it's passed inside '…'. Needs GNU or
-    /// BusyBox `stat -c`. Prints "sha256 size mtime cached|computed".
+    /// BusyBox `stat -c`. Prints "sha256 size mtime cached|computed". Where
+    /// GNU dd has status=progress, the bytes hashed so far go to stderr about
+    /// once a second.
     static let script = #"""
     p=$1
     set -- $(stat -L -c "%s %Y" -- "$p" 2>/dev/null)
@@ -194,7 +199,11 @@ public struct RemoteHasher: Sendable {
     if [ -s "$d/$k" ]; then
       h=$(cut -c1-64 "$d/$k"); c=cached
     else
-      h=$(sha256sum < "$p" | cut -c1-64)
+      if dd if=/dev/null of=/dev/null status=progress 2>/dev/null; then
+        h=$(dd if="$p" bs=4M status=progress | sha256sum | cut -c1-64)
+      else
+        h=$(sha256sum < "$p" | cut -c1-64)
+      fi
       [ ${#h} -eq 64 ] || exit 4
       mkdir -p "$d" && printf "%s\n" "$h" > "$d/$k.$$" && mv -f "$d/$k.$$" "$d/$k"
       c=computed
@@ -202,9 +211,16 @@ public struct RemoteHasher: Sendable {
     printf "%s %s %s %s\n" "$h" "$1" "$2" "$c"
     """#
 
-    public func sha256(_ path: RemotePath) async throws -> Result {
+    /// `progress` gets the bytes hashed so far, where the server can report them.
+    public func sha256(_ path: RemotePath, progress: (@Sendable (UInt64) -> Void)? = nil) async throws -> Result {
         let stdin = mapPath(path).bytes + [0]
-        let cachedRun = try await connection.run("xargs -0 sh -c '\(Self.script)' blit", stdin: stdin)
+        var onStderr: (@Sendable ([UInt8]) -> Void)?
+        if let progress {
+            onStderr = { chunk in
+                if let bytes = RemoteHasher.progressBytes(chunk) { progress(bytes) }
+            }
+        }
+        let cachedRun = try await connection.run("xargs -0 sh -c '\(Self.script)' blit", stdin: stdin, onStderr: onStderr)
         if let result = Self.parse(scriptOutput: cachedRun.stdout) { return result }
 
         // Fallback: plain sha256sum (no cache, no size/mtime).
@@ -228,6 +244,18 @@ public struct RemoteHasher: Sendable {
     }
 
     static func isHash(_ s: String) -> Bool { s.count == 64 && s.allSatisfy(\.isHexDigit) }
+
+    /// The latest byte count in GNU dd progress output
+    /// ("\r1073741824 bytes (1.1 GB, 1.0 GiB) copied, 4 s, 268 MB/s").
+    static func progressBytes(_ chunk: [UInt8]) -> UInt64? {
+        let text = String(decoding: chunk, as: UTF8.self)
+        var latest: UInt64?
+        for line in text.split(whereSeparator: { $0 == "\r" || $0 == "\n" }) {
+            let words = line.split(separator: " ")
+            if words.count >= 2, words[1] == "bytes" || words[1] == "byte", let n = UInt64(words[0]) { latest = n }
+        }
+        return latest
+    }
 }
 
 /// Limits how many operations run at once (e.g. server-side hashes sharing a disk).
@@ -279,6 +307,7 @@ actor FileJob {
     let finalPath: String
     private var state: PartState
     private let resuming: Bool
+    private let rangeCount: Int
     private var unassigned: Int
     private var remaining: Int
     private var part: PartFile?
@@ -290,6 +319,7 @@ actor FileJob {
         self.finalPath = finalPath
         self.state = state
         self.resuming = resuming
+        self.rangeCount = ranges
         self.unassigned = ranges
         self.remaining = ranges
     }
@@ -307,9 +337,10 @@ actor FileJob {
     }
 
     /// Call when a range is handed to a connection; true for the file's last one.
+    /// Call as each range is handed out; true for the first one.
     func assigned() -> Bool {
         unassigned -= 1
-        return unassigned == 0
+        return unassigned == rangeCount - 1
     }
 
     func startRemoteHash(_ start: @escaping @Sendable () async throws -> RemoteHasher.Result) {
@@ -444,7 +475,12 @@ public func download(
     let startHash: @Sendable (FileJob) async -> Void = { job in
         guard let effectiveHasher else { return }
         let path = job.file.path
-        await job.startRemoteHash { try await hashLimiter.run { try await effectiveHasher.sha256(path) } }
+        let file = job.file
+        await job.startRemoteHash {
+            try await hashLimiter.run {
+                try await effectiveHasher.sha256(path) { bytes in events(.fileHashProgress(file, bytes: bytes)) }
+            }
+        }
     }
 
     for job in alreadyComplete {
@@ -469,8 +505,8 @@ public func download(
                     }
                     workers.addTask {
                         while let (job, range) = await queue.next() {
-                            // The server starts hashing when the last range is handed out,
-                            // while the file is warm in its cache.
+                            // The server starts hashing when the first range is handed out,
+                            // so it reads the file while the download does.
                             if await job.assigned() { await startHash(job) }
                             var succeeded = false
                             if await job.failure == nil {

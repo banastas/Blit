@@ -50,15 +50,19 @@ struct ContentView: View {
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if let job = transfers.featured {
                             Group {
-                                if transfers.isExpanded {
-                                    TransferHUD(job: job)
+                                // File operations only ever use the condensed strip.
+                                if transfers.isExpanded, !job.isOperation {
+                                    TransferHUD(job: job).transition(.crt)
                                 } else {
-                                    TransferStrip(job: job)
+                                    TransferStrip(job: job).transition(.crt)
                                 }
                             }
                             .padding(8)
+                            .transition(.crt)
                         }
                     }
+                    .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: transfers.isExpanded)
+                    .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: transfers.featured == nil)
             }
         }
         .navigationTitle(active?.title ?? "Blit")

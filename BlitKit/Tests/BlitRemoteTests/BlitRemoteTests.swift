@@ -262,3 +262,17 @@ let ecdsaFingerprint = "SHA256:76qoOQkgBMCQb+Pv8st5gk/vAkC3VBxLHcxjifRRDkw"
         #expect(TransferPlan.collisions(["a", "b"], caseSensitive: false).isEmpty)
     }
 }
+
+@Suite struct RemoteHasherProgressTests {
+    @Test func parsesDDProgress() {
+        let chunk = Array("\r268435456 bytes (268 MB, 256 MiB) copied, 1 s, 268 MB/s\r536870912 bytes (537 MB, 512 MiB) copied, 2 s, 268 MB/s".utf8)
+        #expect(RemoteHasher.progressBytes(chunk) == 536_870_912)
+        let summary = Array("640+0 records in\n640+0 records out\n2684354560 bytes (2.7 GB, 2.5 GiB) copied, 9.8 s, 274 MB/s\n".utf8)
+        #expect(RemoteHasher.progressBytes(summary) == 2_684_354_560)
+        #expect(RemoteHasher.progressBytes(Array("dd: unknown operand".utf8)) == nil)
+    }
+
+    @Test func scriptHasNoSingleQuotes() {
+        #expect(!RemoteHasher.script.contains("'"))
+    }
+}

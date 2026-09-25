@@ -69,8 +69,8 @@ struct TransferStrip: View {
                 }
                 .font(HUDFont.terminal(18))
                 .frame(minWidth: 80, maxWidth: .infinity, alignment: .leading)
-                PixelCells(fraction: job.progress, count: 24)
-                Text("\(Int((job.progress * 100).rounded()))%")
+                PixelCells(fraction: displayedProgress, count: 24)
+                Text("\(Int((displayedProgress * 100).rounded()))%")
                     .font(HUDFont.terminal(18))
                     .frame(width: 38, alignment: .trailing)
                 separator
@@ -141,9 +141,11 @@ struct TransferStrip: View {
         return "\(arrow) \(done)/\(String(job.fileCount).leftPadded(width))"
     }
 
-    /// All bytes are in and files are waiting on their checksums.
-    private var isVerifyingOnly: Bool {
-        job.isActive && !job.verifying.isEmpty && job.transferred >= job.totalBytes
+    private var isVerifyingOnly: Bool { job.isVerifyingOnly }
+
+    /// Transfer progress, or verification progress once only checksums remain.
+    private var displayedProgress: Double {
+        isVerifyingOnly ? (job.verifyProgress ?? job.progress) : job.progress
     }
 
     @ViewBuilder private var rate: some View {
@@ -152,9 +154,13 @@ struct TransferStrip: View {
                 .font(HUDFont.terminal(26))
                 .fixedSize()
         } else if isVerifyingOnly {
-            Text("SHA256")
-                .font(HUDFont.terminal(26))
-                .fixedSize()
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("SHA256").font(HUDFont.terminal(26))
+                if job.hashRate > 0.5 {
+                    Text(String(format: "%.0f MB/S", job.hashRate)).font(HUDFont.terminal(14)).foregroundStyle(HUDColor.dim)
+                }
+            }
+            .fixedSize()
         } else if !job.isActive, job.allAlreadyPresent {
             Text("PRESENT")
                 .font(HUDFont.terminal(26))
@@ -192,13 +198,21 @@ struct TransferStrip: View {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let elapsed = Int(context.date.timeIntervalSince(since))
                 let others = job.verifying.count - 1
-                Text("VERIFYING \(name.uppercased())\(others > 0 ? " +\(others)" : "") · \(job.verificationMethod) · \(elapsed / 60):\(String(format: "%02d", elapsed % 60))")
+                Text("VERIFYING \(name.uppercased())\(others > 0 ? " +\(others)" : "") · \(job.verificationMethod)\(Self.verifyDetail(job)) · \(elapsed / 60):\(String(format: "%02d", elapsed % 60))")
                     .foregroundStyle(HUDColor.bright)
             }
         } else if let last = job.log.last {
             hudText("\(last.time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))) \(last.text)")
                 .foregroundStyle(last.isFailure ? Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255) : HUDColor.dim)
         }
+    }
+
+    /// " · 62% · ~1:10 LEFT" where the server reports hashing progress.
+    static func verifyDetail(_ job: TransferJob) -> String {
+        guard let fraction = job.verifyProgress else { return "" }
+        var text = " · \(Int((fraction * 100).rounded()))%"
+        if let left = job.verifySecondsLeft { text += " · ~\(left / 60):\(String(format: "%02d", left % 60)) LEFT" }
+        return text
     }
 
     private var summary: String {

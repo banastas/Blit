@@ -163,10 +163,13 @@ public final class SSHConnection: Sendable {
     }
 
     /// Runs a command, sends `stdin` followed by EOF, and collects its output.
-    public func run(_ command: String, stdin: [UInt8] = []) async throws -> CommandResult {
+    /// `onStderr` sees stderr as it arrives (e.g. progress lines).
+    public func run(_ command: String, stdin: [UInt8] = [],
+                    onStderr: (@Sendable ([UInt8]) -> Void)? = nil) async throws -> CommandResult {
         let done = channel.eventLoop.makePromise(of: CommandResult.self)
         _ = try await openSessionChannel(halfClosure: true) { child in
-            try child.pipeline.syncOperations.addHandler(ExecHandler(command: command, stdin: stdin, done: done))
+            try child.pipeline.syncOperations.addHandler(ExecHandler(command: command, stdin: stdin, done: done,
+                                                                     onStderr: onStderr))
         }
         return try await done.futureResult.get()
     }
@@ -278,11 +281,14 @@ final class ExecHandler: ChannelInboundHandler {
     private let done: EventLoopPromise<SSHConnection.CommandResult>
     private var result = SSHConnection.CommandResult(stdout: [], stderr: [], exitStatus: nil)
     private var completed = false
+    private let onStderr: (@Sendable ([UInt8]) -> Void)?
 
-    init(command: String, stdin: [UInt8], done: EventLoopPromise<SSHConnection.CommandResult>) {
+    init(command: String, stdin: [UInt8], done: EventLoopPromise<SSHConnection.CommandResult>,
+         onStderr: (@Sendable ([UInt8]) -> Void)? = nil) {
         self.command = command
         self.stdin = stdin
         self.done = done
+        self.onStderr = onStderr
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -315,6 +321,8 @@ final class ExecHandler: ChannelInboundHandler {
         guard case .byteBuffer(let buffer) = message.data else { return }
         if message.type == .channel {
             result.stdout.append(contentsOf: buffer.readableBytesView)
+        } else if let onStderr {
+            onStderr(Array(buffer.readableBytesView))
         } else {
             result.stderr.append(contentsOf: buffer.readableBytesView)
         }

@@ -256,6 +256,7 @@ do {
             case .fileStarted: break
             case .fileDownloaded:
                 progress.downloaded()
+            case .fileHashProgress: break
             case .fileFinished(let f, let v):
                 progress.finished()
                 let check: String

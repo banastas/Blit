@@ -37,7 +37,7 @@ struct TransferHUD: View {
     private var header: some View {
         HStack {
             Button {
-                transfers.isExpanded = false
+                transfers.collapse()
             } label: {
                 hudText("▼ TRANSFER · \(stateLabel)", glyphSize: 9)
                     .font(HUDFont.label())
@@ -93,15 +93,38 @@ struct TransferHUD: View {
                 .foregroundStyle(HUDColor.dim)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            // Read the value here, not inside the GeometryReader, so the bar
+            // redraws as it changes.
+            let fraction = job.progress
             GeometryReader { geo in
-                PixelCells(fraction: job.progress, count: max(16, Int(geo.size.width / 6)))
+                PixelCells(fraction: fraction, count: max(16, Int(geo.size.width / 6)))
             }
             .frame(height: 10)
             .padding(.vertical, 4)
             HUDRow("\(TransferJob.bytes(job.transferred)) / \(TransferJob.bytes(job.totalBytes))",
                    "\(Int((job.progress * 100).rounded()))%")
             HUDRow("FILES \(job.filesFinished)/\(job.fileCount)", "VERIFIED \(job.filesVerified)")
-            if !job.connectionRates.isEmpty, job.isActive {
+            let hashing = job.hashing
+            if !hashing.isEmpty, job.isActive {
+                Text("SERVER SHA256").font(HUDFont.label()).foregroundStyle(HUDColor.dim).padding(.top, 4)
+                ForEach(hashing.prefix(3), id: \.name) { file in
+                    HStack(spacing: 6) {
+                        Text((file.name as NSString).lastPathComponent.uppercased())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(width: 140, alignment: .leading)
+                            .foregroundStyle(HUDColor.dim)
+                        let fraction = file.fraction
+                        GeometryReader { geo in
+                            PixelCells(fraction: fraction, count: max(8, Int(geo.size.width / 6)), height: 6)
+                        }
+                        .frame(height: 6)
+                        Text("\(Int((file.fraction * 100).rounded()))%").frame(width: 40, alignment: .trailing)
+                    }
+                    .font(HUDFont.terminal(16))
+                }
+            }
+            if !job.connectionRates.isEmpty, job.isActive, !job.isVerifyingOnly {
                 Text(isDownload ? "CONNECTIONS" : "STREAMS").font(HUDFont.label()).foregroundStyle(HUDColor.dim).padding(.top, 4)
                 let top = max(job.connectionRates.max() ?? 1, 1)
                 ForEach(Array(job.connectionRates.enumerated()), id: \.offset) { index, rate in
@@ -122,8 +145,11 @@ struct TransferHUD: View {
     private var throughputPanel: some View {
         HUDPanel("Throughput · 60 s") {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                if job.isActive, !job.verifying.isEmpty, job.transferred >= job.totalBytes {
+                if job.isVerifyingOnly {
                     Text("SHA256").font(HUDFont.terminal(40))
+                    if job.hashRate > 0.5 {
+                        Text(String(format: "%.1f MB/S", job.hashRate)).font(HUDFont.terminal(18)).foregroundStyle(HUDColor.dim)
+                    }
                 } else if !job.isActive, job.allAlreadyPresent {
                     Text("PRESENT").font(HUDFont.terminal(40))
                 } else {
@@ -215,6 +241,10 @@ struct TransferHUD: View {
     }
 
     private var eta: String {
+        if job.isVerifyingOnly {
+            guard let seconds = job.verifySecondsLeft else { return "VERIFY --:--" }
+            return String(format: "VERIFY %02d:%02d", seconds / 60, seconds % 60)
+        }
         guard job.isActive, job.rate > 0.1 else { return "ETA --:--" }
         let seconds = Int(Double(job.totalBytes - job.transferred) / (job.rate * 1e6))
         return seconds >= 3600
@@ -268,5 +298,34 @@ private struct HUDRow: View {
             Text(value).lineLimit(1)
         }
         .font(HUDFont.terminal(18))
+    }
+}
+
+/// The HUD switching on and off like an old CRT: a bright line sweeps out
+/// horizontally, then opens vertically; switching off runs it backwards.
+struct CRTEffect: ViewModifier, Animatable {
+    /// 0 = off, 1 = fully on.
+    var progress: Double
+
+    nonisolated var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let p = max(0, min(1, progress))
+        let line = 0.3   // share of the animation spent as a line
+        let x = p < line ? max(0.02, p / line) : 1
+        let y = p < line ? 0.015 : 0.015 + (p - line) / (1 - line) * 0.985
+        content
+            .brightness(p < 1 ? 0.6 * (1 - p) : 0)
+            .scaleEffect(x: x, y: y, anchor: .center)
+            .opacity(p < 0.01 ? 0 : 1)
+    }
+}
+
+extension AnyTransition {
+    static var crt: AnyTransition {
+        .modifier(active: CRTEffect(progress: 0), identity: CRTEffect(progress: 1))
     }
 }
