@@ -74,7 +74,9 @@ struct TransferStrip: View {
                     .font(HUDFont.terminal(18))
                     .frame(width: 38, alignment: .trailing)
                 separator
-                if job.failures.isEmpty {
+                if job.isOperation, job.failures.isEmpty {
+                    EmptyView()
+                } else if job.failures.isEmpty {
                     PixelHistogram(samples: Array(job.history.suffix(30)), scale: max(job.peakRate, 1))
                         .frame(width: 60, height: 20)
                 } else {
@@ -145,7 +147,11 @@ struct TransferStrip: View {
     }
 
     @ViewBuilder private var rate: some View {
-        if isVerifyingOnly {
+        if case .operation(let verb, _) = job.kind {
+            Text(verb)
+                .font(HUDFont.terminal(26))
+                .fixedSize()
+        } else if isVerifyingOnly {
             Text("SHA256")
                 .font(HUDFont.terminal(26))
                 .fixedSize()
@@ -196,6 +202,11 @@ struct TransferStrip: View {
     }
 
     private var summary: String {
+        if case .operation(_, let done) = job.kind {
+            let ok = job.filesFinished - job.failures.count
+            return "\(job.failures.isEmpty ? "✓" : "✕") \(ok)/\(job.fileCount) \(done) · \(job.destinationName.uppercased())"
+                + (job.failures.isEmpty ? "" : " · \(job.failures.count) FAILED")
+        }
         let verified = "\(job.filesVerified)/\(job.fileCount) VERIFIED"
         let size = TransferJob.bytes(job.totalBytes)
         if case .failed(let why) = job.status, job.fileCount == 0 { return "✕ \(why.uppercased())" }

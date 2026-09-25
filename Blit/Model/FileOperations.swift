@@ -126,7 +126,7 @@ final class FileOperations {
         let inPlace = local.filter { Self.same(.local($0.deletingLastPathComponent()), here) }
         local.removeAll { url in inPlace.contains(url) }
         if mode == .copy, !inPlace.isEmpty {
-            problems += await Task.detached { Self.duplicateLocal(inPlace) }.value
+            problems += await duplicateTracked(inPlace)
             onChanged?([here])
         }
 
@@ -139,7 +139,10 @@ final class FileOperations {
             }
             local.removeAll { url in sameVolume.contains(url) }
             if !sameVolume.isEmpty {
-                problems += await Task.detached { Self.moveLocal(sameVolume, into: folder) }.value
+                problems += await track("MOVE", done: "MOVED", sameVolume.map { .local($0) }, to: folder.lastPathComponent) { item in
+                    guard let url = item.localURL else { return }
+                    try await Task.detached { try Self.moveLocal(url, into: folder) }.value
+                }
                 onChanged?([here] + sameVolume.map { .local($0.deletingLastPathComponent()) })
             }
         }
@@ -163,15 +166,11 @@ final class FileOperations {
         var problems: [String] = []
         do {
             let client = try await connections.browseClient(for: server)
-            for source in sources {
-                guard let path = source.remotePath else { continue }
+            problems = await track("MOVE", done: "MOVED", sources, to: destination.lastComponent) { source in
+                guard let path = source.remotePath else { return }
                 let target = folder.appending(path.lastComponent)
-                do {
-                    try await Self.ensureMissing(target, on: client, in: destination.lastComponent)
-                    try await client.rename(path, to: target)
-                } catch {
-                    problems.append(Self.describe(error))
-                }
+                try await Self.ensureMissing(target, on: client, in: destination.lastComponent)
+                try await client.rename(path, to: target)
             }
         } catch {
             problems.append(Self.describe(error))
@@ -239,7 +238,7 @@ final class FileOperations {
     func duplicate(_ items: [BrowseLocation]) async -> String? {
         let urls = items.compactMap(\.localURL)
         guard !urls.isEmpty else { return "Duplicate works on local items only." }
-        let problems = await Task.detached { Self.duplicateLocal(urls) }.value
+        let problems = await duplicateTracked(urls)
         onChanged?(urls.map { .local($0.deletingLastPathComponent()) })
         return Self.summary(problems)
     }
@@ -256,46 +255,43 @@ final class FileOperations {
     }
 
     func moveToTrash(_ items: [BrowseLocation]) async -> String? {
-        let urls = items.compactMap(\.localURL)
-        let problems = await Task.detached { () -> [String] in
-            urls.compactMap { url in
-                do {
-                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-                    return nil
-                } catch {
-                    return "\(url.lastPathComponent): \(error.localizedDescription)"
-                }
-            }
-        }.value
+        let problems = await track("TRASH", done: "MOVED TO TRASH", items, to: "Trash") { item in
+            guard let url = item.localURL else { return }
+            try await Task.detached { try FileManager.default.trashItem(at: url, resultingItemURL: nil) }.value
+        }
         onChanged?(items.compactMap(\.parent))
         return Self.summary(problems)
     }
 
     /// Deletes immediately; folders go with everything in them. Callers confirm first.
     func deletePermanently(_ items: [BrowseLocation]) async -> String? {
+        // An item inside another selected folder goes with that folder.
+        let items = items.uniqued().filter { item in
+            !items.contains { $0 != item && Self.location($0, contains: item) }
+        }
         var problems: [String] = []
-        let urls = items.compactMap(\.localURL)
-        problems += await Task.detached { () -> [String] in
-            urls.compactMap { url in
-                do {
-                    try FileManager.default.removeItem(at: url)
-                    return nil
-                } catch {
-                    return "\(url.lastPathComponent): \(error.localizedDescription)"
-                }
+        let local = items.filter { $0.localURL != nil }
+        if !local.isEmpty {
+            problems += await track("DELETE", done: "DELETED", local, to: Self.volumeName(of: local[0])) { item in
+                guard let url = item.localURL else { return }
+                try await Task.detached {
+                    do {
+                        try FileManager.default.removeItem(at: url)
+                    } catch CocoaError.fileNoSuchFile {
+                        // Already gone: that's what was asked for.
+                    }
+                }.value
             }
-        }.value
+        }
         let remote = Dictionary(grouping: items.filter { $0.serverID != nil }, by: { $0.serverID! })
         for (id, locations) in remote {
             guard let server = servers.server(id) else { continue }
             do {
                 let client = try await connections.browseClient(for: server)
-                for location in locations {
-                    guard let path = location.remotePath else { continue }
-                    do {
-                        try await client.removeRecursively(path)
-                    } catch {
-                        problems.append("\(location.lastComponent): \(Self.describe(error))")
+                problems += await track("DELETE", done: "DELETED", locations, to: server.displayName) { location, job in
+                    guard let path = location.remotePath else { return }
+                    try await client.removeRecursively(path) { removed in
+                        Task { @MainActor in job.note("DELETED \(removed.description.uppercased())") }
                     }
                 }
             } catch {
@@ -361,20 +357,65 @@ final class FileOperations {
         (try? url.resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject
     }
 
-    nonisolated private static func moveLocal(_ urls: [URL], into folder: URL) -> [String] {
+    nonisolated private static func moveLocal(_ url: URL, into folder: URL) throws {
         let fm = FileManager.default
-        return urls.compactMap { url in
-            let target = folder.appendingPathComponent(url.lastPathComponent)
-            if fm.fileExists(atPath: target.path) {
-                return "“\(url.lastPathComponent)” already exists in “\(folder.lastPathComponent)”."
-            }
-            do {
-                try fm.moveItem(at: url, to: target)
-                return nil
-            } catch {
-                return "\(url.lastPathComponent): \(error.localizedDescription)"
-            }
+        let target = folder.appendingPathComponent(url.lastPathComponent)
+        if fm.fileExists(atPath: target.path) {
+            throw FileOperationError.message("already exists in “\(folder.lastPathComponent)”")
         }
+        try fm.moveItem(at: url, to: target)
+    }
+
+    // MARK: Progress in the strip
+
+    /// Runs `work` on each item, showing progress in the transfer strip
+    /// (condensed HUD) when it takes more than a moment. Returns problems.
+    private func track(_ verb: String, done: String, _ items: [BrowseLocation], to destination: String,
+                       _ work: (BrowseLocation, TransferJob) async throws -> Void) async -> [String] {
+        let job = transfers.beginOperation(verb, done: done, items: items.map(\.lastComponent),
+                                           destination: destination, link: Self.link(for: items.first))
+        var problems: [String] = []
+        for item in items {
+            job.note("\(verb) \(item.lastComponent.uppercased())")
+            do {
+                try await work(item, job)
+            } catch {
+                let problem = "\(item.lastComponent): \(Self.describe(error))"
+                problems.append(problem)
+                job.failures.append(problem)
+                job.note("✕ \(problem.uppercased())", failure: true)
+            }
+            job.filesFinished += 1
+        }
+        if problems.isEmpty { job.note("✓ \(items.count) \(done)") }
+        transfers.finishOperation(job)
+        return problems
+    }
+
+    private func track(_ verb: String, done: String, _ items: [BrowseLocation], to destination: String,
+                       _ work: (BrowseLocation) async throws -> Void) async -> [String] {
+        await track(verb, done: done, items, to: destination) { item, _ in try await work(item) }
+    }
+
+    private func duplicateTracked(_ urls: [URL]) async -> [String] {
+        await track("DUPLICATE", done: "DUPLICATED", urls.map { .local($0) },
+                    to: urls.first?.deletingLastPathComponent().lastPathComponent ?? "") { item in
+            guard let url = item.localURL else { return }
+            try await Task.detached { try Self.duplicateLocal(url) }.value
+        }
+    }
+
+    /// "SFTP", "SMB" or "LOCAL", for the strip's link label.
+    private static func link(for item: BrowseLocation?) -> String {
+        guard let item else { return "" }
+        if item.serverID != nil { return "SFTP" }
+        guard let url = item.localURL else { return "" }
+        return (try? url.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal == false ? "SMB" : "LOCAL"
+    }
+
+    private static func volumeName(of item: BrowseLocation) -> String {
+        guard let url = item.localURL else { return "" }
+        return (try? url.resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName ?? url.lastPathComponent
     }
 
     /// Finder's naming: “Movie copy.mkv”, then “Movie copy 2.mkv”; folders keep
@@ -392,19 +433,12 @@ final class FileOperations {
         }
     }
 
-    nonisolated private static func duplicateLocal(_ urls: [URL]) -> [String] {
+    nonisolated private static func duplicateLocal(_ url: URL) throws {
         let fm = FileManager.default
-        return urls.compactMap { url in
-            var isDirectory: ObjCBool = false
-            _ = fm.fileExists(atPath: url.path, isDirectory: &isDirectory)
-            let target = duplicateURL(for: url, isDirectory: isDirectory.boolValue) { fm.fileExists(atPath: $0) }
-            do {
-                // copyItem clones on APFS, so this is instant on the same SSD.
-                try fm.copyItem(at: url, to: target)
-                return nil
-            } catch {
-                return "\(url.lastPathComponent): \(error.localizedDescription)"
-            }
-        }
+        var isDirectory: ObjCBool = false
+        _ = fm.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        let target = duplicateURL(for: url, isDirectory: isDirectory.boolValue) { fm.fileExists(atPath: $0) }
+        // copyItem clones on APFS, so this is instant on the same SSD.
+        try fm.copyItem(at: url, to: target)
     }
 }

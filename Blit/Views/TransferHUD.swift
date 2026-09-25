@@ -68,6 +68,7 @@ struct TransferHUD: View {
         switch job.kind {
         case .download(let server): route = "\(server.displayName.uppercased()) → \(job.destinationName.uppercased())"
         case .copy: route = "COPY → \(job.destinationName.uppercased())"
+        case .operation(let verb, _): route = "\(verb) → \(job.destinationName.uppercased())"
         }
         switch job.status {
         case .queued: return "QUEUED · " + route

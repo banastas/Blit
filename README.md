@@ -190,6 +190,8 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
   - Cut, Copy and Paste (⌘X/⌘C/⌘V), and Move Items Here (⌥⌘V). Local items also go on the pasteboard as file URLs, so copying in Finder and pasting in Blit (or the reverse) works.
   - Delete (⌘⌫). Local drives use the Trash, with no prompt. Servers and network shares have no Trash, so deletes there are permanent and always ask first.
   - A move across devices, or from a server, runs through the verified transfer engine. Each source file is removed only after its copy is verified by SHA-256. Files that were already present, only size-checked, or that failed stay where they were, and the log says so.
+  - File operations that take more than a moment (deletes, moves, duplicates, trashing) show in the condensed transfer strip, with an item count, progress cells and the current item. A clean one leaves the strip after a few seconds; one with problems stays until dismissed.
+  - Deleting on a server treats anything already gone as deleted (another client or the torrent client may have moved it), and removes a folder only after its listing is closed.
   - Uploads, and copies within or between servers, aren't supported yet. Blit says so rather than failing silently.
 
 ### Transfer engine

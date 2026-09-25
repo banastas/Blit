@@ -102,36 +102,66 @@ public final class SFTPClient: Sendable {
         try expectOK(try await request { .rename(id: $0, from: from, to: to) }, "rename \(from)")
     }
 
+    /// Deletes a file. Something already gone counts as deleted.
     public func removeFile(_ path: RemotePath) async throws {
-        try expectOK(try await request { .remove(id: $0, path: path) }, "delete \(path)")
+        try expectOK(try await request { .remove(id: $0, path: path) }, "delete \(path)", orGone: true)
     }
 
+    /// Deletes an empty folder. Something already gone counts as deleted.
     public func removeDirectory(_ path: RemotePath) async throws {
-        try expectOK(try await request { .rmdir(id: $0, path: path) }, "delete folder \(path)")
+        try expectOK(try await request { .rmdir(id: $0, path: path) }, "delete folder \(path)", orGone: true)
     }
 
     /// Deletes a file, or a folder and everything in it. Symlinks are removed,
-    /// not followed.
-    public func removeRecursively(_ path: RemotePath) async throws {
-        let attributes: SFTPAttributes
+    /// not followed. Anything that disappears meanwhile (another client, the
+    /// torrent client moving a finished download) counts as deleted. `removed`
+    /// is called for each file deleted.
+    public func removeRecursively(_ path: RemotePath, removed: (@Sendable (RemotePath) -> Void)? = nil) async throws {
         switch try await request({ .lstat(id: $0, path: path) }) {
-        case .attributes(_, let a): attributes = a
-        case let other: throw Self.failure(other, "stat \(path)")
+        case .attributes(_, let a) where a.isDirectory:
+            try await removeTree(path, removed: removed)
+        case .attributes:
+            try await removeFile(path)
+            removed?(path)
+        case .status(_, let code, _) where code == SFTPStatusCode.noSuchFile.rawValue:
+            return
+        case let other:
+            throw Self.failure(other, "stat \(path)")
         }
-        guard attributes.isDirectory else { return try await removeFile(path) }
-        for entry in try await list(path) {
-            try await removeRecursively(path.appending(entry.filename))
-        }
-        try await removeDirectory(path)
     }
 
-    private func expectOK(_ response: SFTPResponse, _ what: String) throws {
-        if case .status(_, let code, _) = response, code == SFTPStatusCode.ok.rawValue { return }
+    private func removeTree(_ folder: RemotePath, removed: (@Sendable (RemotePath) -> Void)?) async throws {
+        // Wait for the listing's handle to close: some servers handle requests
+        // concurrently, and the folder should be closed before it's removed.
+        let entries: [SFTPNameEntry]
+        do {
+            entries = try await list(folder, closeInBackground: false)
+        } catch SFTPError.status(let code, _) where code == SFTPStatusCode.noSuchFile.rawValue {
+            return
+        }
+        for entry in entries {
+            let path = folder.appending(entry.filename)
+            // readdir attributes describe the entry itself (a symlink isn't followed).
+            if entry.attributes.isDirectory {
+                try await removeTree(path, removed: removed)
+            } else {
+                try await removeFile(path)
+                removed?(path)
+            }
+        }
+        try await removeDirectory(folder)
+    }
+
+    private func expectOK(_ response: SFTPResponse, _ what: String, orGone: Bool = false) throws {
+        if case .status(_, let code, _) = response {
+            if code == SFTPStatusCode.ok.rawValue { return }
+            if orGone, code == SFTPStatusCode.noSuchFile.rawValue { return }
+        }
         throw Self.failure(response, what)
     }
 
     /// Directory entries, excluding `.` and `..`.
-    public func list(_ path: RemotePath) async throws -> [SFTPNameEntry] {
+    public func list(_ path: RemotePath, closeInBackground: Bool = true) async throws -> [SFTPNameEntry] {
         let handle = try await openHandle({ .opendir(id: $0, path: path) }, path)
         var entries: [SFTPNameEntry] = []
         do {
@@ -149,7 +179,7 @@ public final class SFTPClient: Sendable {
             closeHandleInBackground(handle)
             throw error
         }
-        closeHandleInBackground(handle)
+        if closeInBackground { closeHandleInBackground(handle) } else { try await closeHandle(handle) }
         return entries
     }
 

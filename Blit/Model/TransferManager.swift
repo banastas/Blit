@@ -63,7 +63,13 @@ struct LogLine: Identifiable {
 @MainActor
 @Observable
 final class TransferJob: Identifiable {
-    enum Kind { case download(ServerConfig), copy }
+    enum Kind {
+        case download(ServerConfig), copy
+        /// A file operation shown in the strip while it runs (delete, move,
+        /// duplicate…): progress counts items, not bytes. `done` is the past
+        /// tense for the summary ("DELETED").
+        case operation(verb: String, done: String)
+    }
     enum Status: Equatable {
         case queued, preparing, running, finished, failed(String)
         /// Waiting to retry after a recoverable failure (connection lost, drive unmounted).
@@ -119,7 +125,14 @@ final class TransferJob: Identifiable {
     var transferred: Int64 { Int64(counter.total) + resumedBytes + presentBytes }
     /// Every file was already there; nothing was transferred.
     var allAlreadyPresent: Bool { fileCount > 0 && filesAlreadyPresent == fileCount }
-    var progress: Double { totalBytes > 0 ? min(1, Double(transferred) / Double(totalBytes)) : 0 }
+    var progress: Double {
+        if isOperation { return fileCount > 0 ? min(1, Double(filesFinished) / Double(fileCount)) : 0 }
+        return totalBytes > 0 ? min(1, Double(transferred) / Double(totalBytes)) : 0
+    }
+    var isOperation: Bool {
+        if case .operation = kind { return true }
+        return false
+    }
     var isActive: Bool {
         switch status {
         case .preparing, .running, .waiting: true
@@ -199,8 +212,44 @@ final class TransferManager {
     /// for the user to pick a destination.
     var pendingExternalFiles: [URL] = []
 
-    /// The job the strip shows: the running one, else the most recent.
-    var featured: TransferJob? { jobs.first(where: \.isActive) ?? jobs.last(where: { $0.status != .queued }) ?? jobs.first }
+    /// The job the strip shows: the most recently started active one (so a
+    /// delete shows over a long download while it runs), else the most recent.
+    var featured: TransferJob? {
+        jobs.filter(\.isActive).max { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
+            ?? jobs.last(where: { $0.status != .queued }) ?? jobs.first
+    }
+
+    // MARK: File operations in the strip
+
+    /// Starts showing a file operation. It appears only if it's still running
+    /// after a moment, so instant renames and moves don't flash the strip.
+    func beginOperation(_ verb: String, done: String, items: [String], destination: String, link: String) -> TransferJob {
+        let job = TransferJob(kind: .operation(verb: verb, done: done), sources: [], destination: URL(fileURLWithPath: "/"),
+                              title: Self.title(items), destinationName: destination)
+        job.fileCount = items.count
+        job.status = .running
+        job.startedAt = Date()
+        job.link = link
+        job.connections = 1
+        Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            if job.isActive, !jobs.contains(where: { $0 === job }) { jobs.append(job) }
+        }
+        return job
+    }
+
+    /// Ends a file operation. A clean one leaves the strip after a few seconds;
+    /// one with problems stays until dismissed.
+    func finishOperation(_ job: TransferJob) {
+        job.status = job.failures.isEmpty ? .finished : .failed("\(job.failures.count) failed")
+        job.finishedAt = Date()
+        guard job.failures.isEmpty else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(4))
+            jobs.removeAll { $0 === job }
+            if jobs.isEmpty { isExpanded = false }
+        }
+    }
     var queuedCount: Int { jobs.filter { $0.status == .queued }.count }
 
     func dismissFinished() {
@@ -262,7 +311,7 @@ final class TransferManager {
     private func saveQueue() {
         // While quitting, the running job fails as its connections close; keep it saved.
         guard !isQuitting else { return }
-        let pending = jobs.filter { $0.status == .queued || $0.isActive }.map { job -> SavedJob in
+        let pending = jobs.filter { !$0.isOperation && ($0.status == .queued || $0.isActive) }.map { job -> SavedJob in
             var serverID: UUID?
             if case .download(let server) = job.kind { serverID = server.id }
             return SavedJob(serverID: serverID, sources: job.sources, destination: job.destination, title: job.title,
@@ -388,6 +437,7 @@ final class TransferManager {
                 switch job.kind {
                 case .download(let server): try await download(job, from: server)
                 case .copy: try await copy(job)
+                case .operation: return
                 }
             } catch {
                 fatal = "\(error)"
