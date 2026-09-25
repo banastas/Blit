@@ -24,6 +24,7 @@ struct FileListView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if showPathBar, browser.current != nil { PathBar(browser: browser) }
         }
+        .debugHeight("list")
         .confirmationDialog(deleteTitle, isPresented: deleteShown, presenting: browser.deleteRequest) { items in
             Button("Delete", role: .destructive) { browser.confirmDelete(items) }
             Button("Cancel", role: .cancel) {}

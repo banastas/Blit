@@ -9,6 +9,10 @@ struct MenuBarLabel: View {
     @State private var frame = 0
 
     var body: some View {
+        label
+    }
+
+    @ViewBuilder private var label: some View {
         if let job = transfers.featured, job.isActive, !job.isOperation {
             HStack(spacing: 4) {
                 Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: frame), cell: 1.5))

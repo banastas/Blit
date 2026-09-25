@@ -16,6 +16,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
         #if DEBUG
+        for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                guard let window = note.object as? NSWindow else { return }
+                let frame = window.frame, layout = window.contentLayoutRect
+                MainActor.assumeIsolated {
+                    LayoutLog.write("window \(name.rawValue) frame \(frame) layout \(layout)")
+                }
+            }
+        }
         UITestHarness.runIfRequested()
         UITestHarness.renderStatusIconsIfRequested()
         #endif

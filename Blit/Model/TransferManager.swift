@@ -192,6 +192,9 @@ final class TransferJob: Identifiable {
     var removedSources = 0
 
     func note(_ text: String, failure: Bool = false) {
+        #if DEBUG
+        LayoutLog.write("note \(text.prefix(60))")
+        #endif
         log.append(LogLine(text: text, isFailure: failure))
         if log.count > 200 { log.removeFirst(log.count - 200) }
     }
@@ -606,6 +609,9 @@ final class TransferManager {
                 job.connectionRates = zip(per, lastPer).map { Double($0 - $1) / seconds / 1e6 }
             }
             lastPer = per
+            #if DEBUG
+            LayoutLog.write("sample rate \(String(format: "%.1f", rate)) conns \(job.connectionRates.map { String(format: "%.1f", $0) }.joined(separator: " "))")
+            #endif
             let hashedNow = job.hashedTotal
             job.hashRate = Double(hashedNow - min(lastHashed, hashedNow)) / seconds / 1e6
             lastHashed = hashedNow

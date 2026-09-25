@@ -39,6 +39,7 @@ struct PathBar: View {
         .frame(maxWidth: .infinity)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+        .debugHeight("pathbar")
     }
 
     /// The selected item if exactly one is selected, else the current folder,

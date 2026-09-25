@@ -12,13 +12,13 @@ struct TransferHUD: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             HStack(alignment: .top, spacing: 10) {
-                itemPanel.frame(maxWidth: .infinity)
-                throughputPanel.frame(maxWidth: .infinity)
-                linkPanel.frame(width: 210)
+                itemPanel.frame(maxWidth: .infinity).debugHeight("item")
+                throughputPanel.frame(maxWidth: .infinity).debugHeight("throughput")
+                linkPanel.frame(width: 210).debugHeight("link")
             }
             .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 10) {
-                logPanel.frame(maxWidth: .infinity)
+                logPanel.frame(maxWidth: .infinity).debugHeight("log")
                 if !job.failures.isEmpty {
                     warningPanel.frame(width: 260)
                 }
@@ -30,6 +30,7 @@ struct TransferHUD: View {
         .background(HUDColor.background, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(HUDColor.border, lineWidth: 0.5))
         .environment(\.colorScheme, .dark)
+        .debugHeight("HUD")
     }
 
     // MARK: Header
@@ -329,3 +330,37 @@ extension AnyTransition {
         .modifier(active: CRTEffect(progress: 0), identity: CRTEffect(progress: 1))
     }
 }
+
+extension View {
+    /// Debug builds: logs this view's height whenever it changes, to
+    /// ~/Library/Logs/Blit/layout.log (for chasing layout jitter).
+    @ViewBuilder func debugHeight(_ label: String) -> some View {
+        #if DEBUG
+        onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { old, new in
+            guard old != new else { return }
+            LayoutLog.write("\(label) y \(String(format: "%.1f", old.minY))→\(String(format: "%.1f", new.minY)) h \(String(format: "%.1f", old.height))→\(String(format: "%.1f", new.height))")
+        }
+        #else
+        self
+        #endif
+    }
+}
+
+#if DEBUG
+enum LayoutLog {
+    static let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/Blit/layout.log")
+
+    static func write(_ line: String) {
+        let stamp = Date().formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits).secondFraction(.fractional(2)))
+        let data = Data("\(stamp) \(line)\n".utf8)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+            try? handle.close()
+        } else {
+            try? data.write(to: url)
+        }
+    }
+}
+#endif

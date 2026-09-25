@@ -177,6 +177,14 @@ public struct RemoteHasher: Sendable {
         public var cached: Bool
     }
 
+    /// The server can't hash files at all (no shell access, no sha256sum), as
+    /// opposed to a hash that was interrupted (connection lost). Only this
+    /// allows falling back to a size check.
+    public struct Unavailable: Error, CustomStringConvertible {
+        public let reason: String
+        public var description: String { reason }
+    }
+
     public let connection: SSHConnection
     /// Maps an SFTP path to the shell's view of it (they can differ, e.g. SFTPGo's virtual root).
     public let mapPath: @Sendable (RemotePath) -> RemotePath
@@ -220,8 +228,18 @@ public struct RemoteHasher: Sendable {
                 if let bytes = RemoteHasher.progressBytes(chunk) { progress(bytes) }
             }
         }
-        let cachedRun = try await connection.run("xargs -0 sh -c '\(Self.script)' blit", stdin: stdin, onStderr: onStderr)
+        let cachedRun: SSHConnection.CommandResult
+        do {
+            cachedRun = try await connection.run("xargs -0 sh -c '\(Self.script)' blit", stdin: stdin, onStderr: onStderr)
+        } catch SSHError.channelRequestRefused(let what) {
+            throw Unavailable(reason: "the server refused to run commands (\(what))")
+        }
         if let result = Self.parse(scriptOutput: cachedRun.stdout) { return result }
+        // An exec that ended without an exit status was cut off (connection
+        // lost mid-hash), not a server that can't hash.
+        guard cachedRun.exitStatus != nil else {
+            throw SSHError.disconnected("the hash was interrupted")
+        }
 
         // Fallback: plain sha256sum (no cache, no size/mtime).
         let plain = try await connection.run("xargs -0 sha256sum --", stdin: stdin)
@@ -229,8 +247,9 @@ public struct RemoteHasher: Sendable {
         if line.hasPrefix("\\") { line.removeFirst() }   // sha256sum escapes odd filenames this way
         let hash = String(line.prefix(64))
         guard Self.isHash(hash) else {
+            guard plain.exitStatus != nil else { throw SSHError.disconnected("the hash was interrupted") }
             let err = String(decoding: plain.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw SFTPError.unexpected("sha256sum failed: \(err.isEmpty ? line : err)")
+            throw Unavailable(reason: "sha256sum failed: \(err.isEmpty ? line : err)")
         }
         return Result(sha256: hash, size: nil, modificationTime: nil, cached: false)
     }
@@ -578,13 +597,18 @@ private func finalize(job: FileJob, part: PartFile, verify: Bool) async throws -
         let remote: RemoteHasher.Result
         do {
             remote = try await remoteHash.value
-        } catch {
-            // Couldn't get a hash (no shell access, no sha256sum…): fall back to
-            // a size check and say so (PRD R4.1). A hash that doesn't match is
-            // handled below and always fails the file.
+        } catch let unavailable as RemoteHasher.Unavailable {
+            // The server can't hash at all (no shell access, no sha256sum): fall
+            // back to a size check and say so (PRD R4.1).
             _ = try? await local
             remote = RemoteHasher.Result(sha256: "", size: nil, modificationTime: nil, cached: false)
-            verification = .sizeOnly(reason: "\(error)")
+            verification = .sizeOnly(reason: unavailable.reason)
+        } catch {
+            // Interrupted (connection lost, Blit quitting): never accept the file
+            // unverified. Keep the complete part file; a retry or the next
+            // launch hashes it again (PRD R4.1, R3.6).
+            _ = try? await local
+            throw SFTPError.unexpected("verification interrupted (\(error)); kept \(partPath)")
         }
         if !remote.sha256.isEmpty {
             if let size = remote.size, let mtime = remote.modificationTime,

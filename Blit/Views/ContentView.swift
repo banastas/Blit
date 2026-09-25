@@ -59,6 +59,7 @@ struct ContentView: View {
                                 }
                             }
                             .padding(8)
+                            .debugHeight("inset")
                             .transition(.crt)
                         }
                     }
