@@ -341,7 +341,7 @@ The setup Blit is tuned against:
 |---|---|---|---|
 | **M0** | Benchmarks | Measure the network ceilings, find the bottlenecks, validate the approach | ✅ Done |
 | **M1** | SSH spike | Throwaway code: raw SwiftNIO SSH channel throughput with a ≥ 8 MB window against the real server, then a minimal pipelined read loop that handles shortened replies, plus `sha256sum` over an exec channel. **Done when one connection sustains more than 24.6 MB/s from the reference server.** Result: 42.9 MB/s on one connection, ~90 MB/s on 3, verified ([results](#m1-spike-results)). Carried into M2: `sha256sum` on DSM, and fixing the probe to time from first byte. | ✅ Done |
-| **M2** | SFTP engine | `BlitKit` Swift package. Pipelined reads, connection pool with staggered setup, chunked files, remote checksums with hash cache, resume, stability gate, filename policy, host-key pin store. Target ≥ 55 MB/s from the reference server. **Done so far:** SFTP v3 message encoding and decoding, packet framer, and read planner (short-read requeue, early EOF), with 20 unit tests. | In progress |
+| **M2** | SFTP engine | `BlitKit` Swift package. Pipelined reads, connection pool with staggered setup, chunked files, remote checksums with hash cache, resume, stability gate, filename policy, host-key pin store. Target ≥ 55 MB/s from the reference server. **Done so far:** SFTP v3 protocol layer and read planner; SSH connections with M1 tuning, host-key verification (known_hosts + pinned fingerprints), close-on-error and handshake timeout; SFTP client with pipelined downloads and backpressured writes; parallel verified downloads (shared range queue, `.blitpart`, `F_FULLFSYNC`, server `sha256sum`, mtime, rename); `blit ls` / `blit get` CLI; 29 unit tests. **Next:** live validation, resume, hash cache, stability gate, pin store. | In progress |
 | **M3** | Local engine | LocalCopyEngine, NAS-side checksums over SSH, `.blitpart` handling, queue-wide disk-space checks, command-line test harness. Target ≥ 105 MB/s SSD → NAS. | |
 | **M4** | App | `Blit.xcodeproj` (bundle, signing, entitlements) depending on BlitKit as a local package. Finder-style browser (sorted newest first, alternating rows, ⌘K, optional second pane), transfer strip, durable queue, server editor, Keychain, host-key pinning, notifications, menu bar icon, "Blit to…" Quick Action | |
 | **M5** | Hardening | Handling network changes, sleep and wake, drive ejection, transfer log export, signing and notarization | |
@@ -373,8 +373,10 @@ blit/
 │   └── run-m1b.sh        M1 follow-ups (SFTPGo, 255 KB reads, disk-write cost)
 └── BlitKit/              the transfer engine (Swift package; open Package.swift in Xcode)
     ├── Package.swift
-    ├── Sources/BlitSFTP/ SFTP v3 protocol: messages, attributes, framer, read planner
-    └── Tests/BlitSFTPTests/
+    ├── Sources/BlitSFTP/   SFTP v3 protocol: messages, attributes, framer, read planner
+    ├── Sources/BlitRemote/ SSH connections, host keys, SFTP client, parallel verified downloads
+    ├── Sources/blit/       command-line front end (`blit ls`, `blit get`)
+    └── Tests/
 ```
 
 The app's Xcode project (`Blit.xcodeproj`) arrives in M4 and uses BlitKit as a local package.
@@ -384,6 +386,10 @@ The app's Xcode project (`Blit.xcodeproj`) arrives in M4 and uses BlitKit as a l
 ```bash
 cd BlitKit
 swift test                 # or open Package.swift in Xcode and press ⌘U
+swift build -c release     # builds .build/release/blit
+
+.build/release/blit ls  user@host:port <remote-folder>                 # newest first
+.build/release/blit get user@host:port <remote-path> <local-folder>    # 3 connections, verified
 ```
 
 This needs Xcode 27. If `xcode-select -p` shows `/Library/Developer/CommandLineTools`, either run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` once, or prefix commands with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`.
