@@ -33,7 +33,8 @@ struct ContentView: View {
                         onEditServer: { editing = EditingServer(server: $0, isNew: false) },
                         onRemoveServer: { removing = $0 },
                         onTransfer: drop,
-                        onNASVerification: { nasShare = $0 })
+                        onNASVerification: { nasShare = $0 },
+                        onRefresh: refresh)
                 .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 300)
         } detail: {
             if let browser {
@@ -136,6 +137,26 @@ struct ContentView: View {
             Button("OK") { transferError = nil }
         } message: {
             Text(transferError ?? "")
+        }
+    }
+
+    /// Sidebar › Refresh: reloads every pane showing `location` or something
+    /// inside it (for a server, anything on it); if none does, opens it.
+    /// Reconnect reopens the server's browsing session first.
+    private func refresh(_ location: BrowseLocation, reconnect: Bool) {
+        let server = servers.server(location.serverID)
+        if reconnect, let server { connections.disconnect(server) }
+        let panes = [browser, showSecondPane ? secondBrowser : nil].compactMap { $0 }
+        let showing = panes.filter { model in
+            guard let current = model.current else { return false }
+            if let server { return current.serverID == server.id }
+            return FileOperations.location(location, contains: current)
+        }
+        if showing.isEmpty {
+            selection = location
+            active?.open(location)
+        } else {
+            showing.forEach { $0.reload() }
         }
     }
 

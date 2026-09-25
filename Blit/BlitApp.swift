@@ -135,6 +135,10 @@ struct BrowserCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .sidebar) {
+            Button("Refresh") { browser?.reload() }
+                .keyboardShortcut("r")
+                .disabled(browser?.current == nil)
+            Divider()
             Button(showPathBar ? "Hide Path Bar" : "Show Path Bar") { showPathBar.toggle() }
                 .keyboardShortcut("p", modifiers: [.command, .option])
             Toggle("Show Icon Previews", isOn: $showIconPreviews)

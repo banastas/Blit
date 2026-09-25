@@ -16,6 +16,9 @@ struct SidebarView: View {
     var onRemoveServer: (ServerConfig) -> Void
     var onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
     var onNASVerification: (VolumeLocation) -> Void
+    /// Refresh (reload whatever shows this location, or open it); `reconnect`
+    /// first reopens the server's session.
+    var onRefresh: (BrowseLocation, _ reconnect: Bool) -> Void
 
     var body: some View {
         List(selection: $selection) {
@@ -25,6 +28,9 @@ struct SidebarView: View {
                         .transferTarget(favorite.location, name: favorite.location.lastComponent, onTransfer: onTransfer)
                         .tag(favorite.location)
                         .contextMenu {
+                            Button("Refresh") { onRefresh(favorite.location, false) }
+                                .disabled(!sidebar.isAvailable(favorite))
+                            Divider()
                             if let url = favorite.location.localURL {
                                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                                     .disabled(!sidebar.isAvailable(favorite))
@@ -59,6 +65,9 @@ struct SidebarView: View {
                     }
                     .tag(server.startLocation)
                     .contextMenu {
+                        Button("Refresh") { onRefresh(server.startLocation, false) }
+                        Button("Reconnect") { onRefresh(server.startLocation, true) }
+                        Divider()
                         Button("Edit…") { onEditServer(server) }
                         Button("Disconnect") { connections.disconnect(server) }
                             .disabled(connections.state(server) != .connected)
@@ -87,6 +96,11 @@ struct SidebarView: View {
                     Label(drive.name, systemImage: drive.isInternal ? "internaldrive" : "externaldrive")
                         .transferTarget(.local(drive.url), name: drive.name, onTransfer: onTransfer)
                         .tag(BrowseLocation.local(drive.url))
+                        .contextMenu {
+                            Button("Refresh") { onRefresh(.local(drive.url), false) }
+                            Divider()
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([drive.url]) }
+                        }
                 }
             }
 
@@ -133,6 +147,8 @@ struct SidebarView: View {
             .transferTarget(.local(share.url), name: share.name, onTransfer: onTransfer)
             .tag(BrowseLocation.local(share.url))
             .contextMenu {
+                Button("Refresh") { onRefresh(.local(share.url), false) }
+                Divider()
                 Button(login == nil ? "Verify Copies on NAS…" : "NAS Verification…") { onNASVerification(share) }
                 if let login {
                     Button("Turn Off NAS Verification") { servers.remove(login) }

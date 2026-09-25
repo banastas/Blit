@@ -167,6 +167,8 @@ struct FileListView: View {
             Divider()
             Button("Paste") { browser.paste(move: false) }
                 .disabled(!browser.operations.canPaste)
+            Divider()
+            Button("Refresh") { browser.reload() }
         } else {
             let urls = items.compactMap(\.location.localURL)
             if items.count == 1, items[0].isDirectory {
@@ -195,6 +197,8 @@ struct FileListView: View {
                 .disabled(!browser.operations.canPaste)
             Divider()
             Button(browser.deleteTitle(for: items), role: .destructive) { browser.requestDelete(items) }
+            Divider()
+            Button("Refresh") { browser.reload() }
         }
     }
 
