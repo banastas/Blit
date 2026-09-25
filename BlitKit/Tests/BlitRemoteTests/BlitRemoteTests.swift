@@ -69,14 +69,26 @@ let ecdsaFingerprint = "SHA256:76qoOQkgBMCQb+Pv8st5gk/vAkC3VBxLHcxjifRRDkw"
             #expect(ranges.last?.upperBound == size)
             for (a, b) in zip(ranges, ranges.dropFirst()) { #expect(a.upperBound == b.lowerBound) }
             for r in ranges.dropLast() {
-                #expect(r.count >= Int(32 * mb) && r.count <= Int(1024 * mb))
+                #expect(r.count >= Int(32 * mb) && r.count <= Int(256 * mb))
                 #expect(r.count % Int(mb) == 0)
             }
         }
         // About four chunks per connection for a mid-size file.
         #expect(TransferPlan.ranges(size: 923_000_000, connections: 3).count == 12)
-        // 1 GB cap for very large files.
-        #expect(TransferPlan.ranges(size: 20 * 1024 * mb, connections: 3).count == 20)
+        // 256 MB cap for very large files bounds what an interruption costs.
+        #expect(TransferPlan.ranges(size: 20 * 1024 * mb, connections: 3).count == 80)
+    }
+
+    @Test func resumePlansOnlyTheGaps() {
+        let size = 1024 * mb
+        var done = ByteRangeSet()
+        done.insert(0..<(300 * mb))
+        done.insert((700 * mb)..<(800 * mb))
+        let ranges = TransferPlan.ranges(size: size, connections: 3, gaps: done.gaps(in: 0..<size))
+        #expect(ranges.first?.lowerBound == 300 * mb)
+        #expect(ranges.last?.upperBound == size)
+        #expect(ranges.reduce(0) { $0 + UInt64($1.count) } == size - 400 * mb)
+        #expect(!ranges.contains { $0.overlaps((700 * mb)..<(800 * mb)) })
     }
 
     @Test func localNamesEscapeInvalidUTF8() {
@@ -113,5 +125,84 @@ let ecdsaFingerprint = "SHA256:76qoOQkgBMCQb+Pv8st5gk/vAkC3VBxLHcxjifRRDkw"
         #expect(try String(contentsOfFile: path, encoding: .utf8) == "abcdef")
         // printf abcdef | shasum -a 256
         #expect(try localSHA256(path: path) == "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721")
+    }
+}
+
+@Suite struct ByteRangeSetTests {
+    @Test func mergesOverlappingAndAdjacentRanges() {
+        var set = ByteRangeSet()
+        set.insert(10..<20)
+        set.insert(30..<40)
+        set.insert(20..<25)        // touches 10..<20
+        set.insert(35..<50)        // overlaps 30..<40
+        set.insert(0..<0)          // empty: ignored
+        #expect(set.ranges == [10..<25, 30..<50])
+        #expect(set.byteCount == 35)
+        set.insert(0..<100)
+        #expect(set.ranges == [0..<100])
+    }
+
+    @Test func gapsWithinATotal() {
+        let set = ByteRangeSet([10..<20, 30..<40])
+        #expect(set.gaps(in: 0..<50) == [0..<10, 20..<30, 40..<50])
+        #expect(set.gaps(in: 15..<35) == [20..<30])
+        #expect(ByteRangeSet().gaps(in: 0..<5) == [0..<5])
+        #expect(ByteRangeSet([0..<5]).gaps(in: 0..<5).isEmpty)
+    }
+
+    @Test func roundTripsThroughJSON() throws {
+        let set = ByteRangeSet([0..<268_435_456, 536_870_912..<805_306_368])
+        let decoded = try JSONDecoder().decode(ByteRangeSet.self, from: JSONEncoder().encode(set))
+        #expect(decoded == set)
+    }
+}
+
+@Suite struct RemoteHasherTests {
+    @Test func parsesScriptOutput() {
+        let hash = String(repeating: "ab", count: 32)
+        let result = RemoteHasher.parse(scriptOutput: Array("\(hash) 923500000 1758700000 cached\n".utf8))
+        #expect(result == RemoteHasher.Result(sha256: hash, size: 923_500_000, modificationTime: 1_758_700_000, cached: true))
+        #expect(RemoteHasher.parse(scriptOutput: Array("\(hash) 1 2 computed".utf8))?.cached == false)
+        #expect(RemoteHasher.parse(scriptOutput: Array("sh: stat: not found\n".utf8)) == nil)
+        #expect(RemoteHasher.parse(scriptOutput: []) == nil)
+    }
+
+    /// Runs the real script under /bin/sh with a GNU-style `stat -c` shim (macOS
+    /// stat uses -f), against awkward filenames: first computed, then cached.
+    @Test func scriptHashesAndCachesAwkwardFilenames() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("blit-hash-\(UUID().uuidString)")
+        let bin = root.appendingPathComponent("bin")
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        let shim = bin.appendingPathComponent("stat")
+        try "#!/bin/sh\n# GNU-style: stat -L -c \"%s %Y\" -- FILE\nexec /usr/bin/stat -L -f \"%z %m\" \"$5\"\n"
+            .write(to: shim, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+
+        for name in ["plain.bin", "it's a \"quoted\" name $(x).bin", "new\nline.bin"] {
+            let file = root.appendingPathComponent(name)
+            try Data("abcdef".utf8).write(to: file)
+            func run() throws -> RemoteHasher.Result? {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/bin/sh")
+                p.arguments = ["-c", RemoteHasher.script, "blit", file.path]
+                var env = ProcessInfo.processInfo.environment
+                env["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+                env["HOME"] = root.path
+                env.removeValue(forKey: "XDG_CACHE_HOME")
+                p.environment = env
+                let out = Pipe()
+                p.standardOutput = out
+                try p.run()
+                p.waitUntilExit()
+                return RemoteHasher.parse(scriptOutput: Array(out.fileHandleForReading.readDataToEndOfFile()))
+            }
+            let first = try #require(try run())
+            #expect(first.sha256 == "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721")
+            #expect(first.size == 6)
+            #expect(!first.cached)
+            #expect(try run()?.cached == true)
+        }
     }
 }

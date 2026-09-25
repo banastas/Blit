@@ -1,9 +1,10 @@
-// Parallel, verified downloads (PRD R3.2, R3.3, R3.5, R4.1).
+// Parallel, verified, resumable downloads (PRD R3.2, R3.3, R3.5, R3.6, R3.9, R4.1).
 //
 // Every file becomes one or more byte ranges on a shared queue; each connection
 // pulls the next range when it's free, so faster connections do more work.
-// When a file's last range lands, it's handed to a separate verifier so the
-// connections keep downloading.
+// When a file's last range is handed out, the server starts hashing it; when
+// its last range lands, a separate verifier finishes the file so connections
+// keep downloading.
 
 import BlitSFTP
 import Foundation
@@ -15,17 +16,25 @@ import Synchronization
 public enum TransferPlan {
     /// Files at least this big are split across connections.
     public static let splitThreshold: UInt64 = 64 << 20
+    static let mb: UInt64 = 1 << 20
 
-    /// Byte ranges for one file. Small files are one range. Large files get
-    /// about four chunks per connection (32 MB–1 GB each), so a connection
-    /// that finishes early can take more.
-    public static func ranges(size: UInt64, connections: Int) -> [Range<UInt64>] {
-        guard size >= splitThreshold, connections > 1 else { return [0..<size] }
-        let mb: UInt64 = 1 << 20
+    /// Chunk size for a file: about four chunks per connection, 32–256 MB, whole
+    /// megabytes. The 256 MB cap bounds what an interruption can cost (PRD R3.6).
+    public static func chunkSize(size: UInt64, connections: Int) -> UInt64 {
+        guard size >= splitThreshold, connections > 1 else { return max(size, 1) }
         let target = size / UInt64(connections * 4)
-        var chunk = min(max(target, 32 * mb), 1024 * mb)
-        chunk = (chunk + mb - 1) / mb * mb
-        return stride(from: UInt64(0), to: size, by: Int(chunk)).map { $0..<min($0 + chunk, size) }
+        let chunk = min(max(target, 32 * mb), 256 * mb)
+        return (chunk + mb - 1) / mb * mb
+    }
+
+    /// Byte ranges covering `gaps` (the parts still missing) in chunks.
+    public static func ranges(size: UInt64, connections: Int, gaps: [Range<UInt64>]? = nil) -> [Range<UInt64>] {
+        let chunk = chunkSize(size: size, connections: connections)
+        let missing = gaps ?? [0..<size]
+        if size == 0 { return [0..<0] }
+        return missing.flatMap { gap in
+            stride(from: gap.lowerBound, to: gap.upperBound, by: Int(chunk)).map { $0..<min($0 + chunk, gap.upperBound) }
+        }
     }
 
     /// A local path component for a remote name (PRD R3.10). Valid UTF-8 is
@@ -59,6 +68,8 @@ public struct RemoteFile: Sendable, Equatable {
 }
 
 public enum TransferEvent: Sendable {
+    /// Resuming a partial download: `bytes` were already on disk.
+    case fileResumed(RemoteFile, bytes: UInt64)
     case fileStarted(RemoteFile)
     /// Every byte has arrived; verification comes next.
     case fileDownloaded(RemoteFile)
@@ -67,7 +78,8 @@ public enum TransferEvent: Sendable {
 }
 
 public enum Verification: Sendable, Equatable {
-    case sha256(String)
+    /// `cached` means the server reused a hash it computed earlier for this exact file.
+    case sha256(String, cached: Bool)
     /// Checksums unavailable (e.g. no shell access); sizes matched (PRD R4.1 fallback).
     case sizeOnly(reason: String)
     case skipped
@@ -76,7 +88,7 @@ public enum Verification: Sendable, Equatable {
 public struct TransferOptions: Sendable {
     public var verify = true
     public var overwrite = false
-    public var concurrentVerifications = 2
+    public var concurrentHashes = 2
     public init() {}
 }
 
@@ -90,10 +102,11 @@ public final class ByteCounter: Sendable {
 public struct TransferSummary: Sendable {
     public var finished: [RemoteFile] = []
     public var verified = 0
+    public var resumedBytes: UInt64 = 0
     public var failed: [(file: RemoteFile, reason: String)] = []
 }
 
-// MARK: - Remote listing and hashing
+// MARK: - Remote listing
 
 /// Files under `root` (or `root` itself), with destination paths that start
 /// with the root's own name, like `cp -r`.
@@ -122,9 +135,21 @@ public func remoteFiles(at root: RemotePath, using client: SFTPClient) async thr
     return files.sorted { $0.relativePath < $1.relativePath }
 }
 
-/// `sha256sum` on the server over an exec channel. The path goes over stdin,
-/// NUL-terminated, so it never touches a shell command line (PRD R4.1).
+// MARK: - Remote hashing
+
+/// SHA-256 on the server over an exec channel (PRD R4.1). The path goes over
+/// stdin NUL-terminated and reaches the script as "$1", so it never touches a
+/// shell command line. Results are cached in ~/.cache/blit/sha256 on the
+/// server, keyed by path, size and mtime, so no file is hashed twice.
 public struct RemoteHasher: Sendable {
+    public struct Result: Sendable, Equatable {
+        public var sha256: String
+        /// Size and mtime the server saw when hashing (nil from the plain fallback).
+        public var size: UInt64?
+        public var modificationTime: UInt32?
+        public var cached: Bool
+    }
+
     public let connection: SSHConnection
     /// Maps an SFTP path to the shell's view of it (they can differ, e.g. SFTPGo's virtual root).
     public let mapPath: @Sendable (RemotePath) -> RemotePath
@@ -134,16 +159,92 @@ public struct RemoteHasher: Sendable {
         self.mapPath = mapPath
     }
 
-    public func sha256(_ path: RemotePath) async throws -> String {
-        let result = try await connection.run("xargs -0 sha256sum --", stdin: mapPath(path).bytes + [0])
-        var line = String(decoding: result.stdout, as: UTF8.self)
+    /// POSIX sh; no single quotes, since it's passed inside '…'. Needs GNU or
+    /// BusyBox `stat -c`. Prints "sha256 size mtime cached|computed".
+    static let script = #"""
+    p=$1
+    set -- $(stat -L -c "%s %Y" -- "$p" 2>/dev/null)
+    [ $# -eq 2 ] || exit 3
+    d="${XDG_CACHE_HOME:-$HOME/.cache}/blit/sha256"
+    k=$(printf "%s|%s|%s" "$p" "$1" "$2" | sha256sum | cut -c1-64)
+    if [ -s "$d/$k" ]; then
+      h=$(cut -c1-64 "$d/$k"); c=cached
+    else
+      h=$(sha256sum < "$p" | cut -c1-64)
+      [ ${#h} -eq 64 ] || exit 4
+      mkdir -p "$d" && printf "%s\n" "$h" > "$d/$k.$$" && mv -f "$d/$k.$$" "$d/$k"
+      c=computed
+    fi
+    printf "%s %s %s %s\n" "$h" "$1" "$2" "$c"
+    """#
+
+    public func sha256(_ path: RemotePath) async throws -> Result {
+        let stdin = mapPath(path).bytes + [0]
+        let cachedRun = try await connection.run("xargs -0 sh -c '\(Self.script)' blit", stdin: stdin)
+        if let result = Self.parse(scriptOutput: cachedRun.stdout) { return result }
+
+        // Fallback: plain sha256sum (no cache, no size/mtime).
+        let plain = try await connection.run("xargs -0 sha256sum --", stdin: stdin)
+        var line = String(decoding: plain.stdout, as: UTF8.self)
         if line.hasPrefix("\\") { line.removeFirst() }   // sha256sum escapes odd filenames this way
         let hash = String(line.prefix(64))
-        guard hash.count == 64, hash.allSatisfy(\.isHexDigit) else {
-            let err = String(decoding: result.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.isHash(hash) else {
+            let err = String(decoding: plain.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             throw SFTPError.unexpected("sha256sum failed: \(err.isEmpty ? line : err)")
         }
-        return hash
+        return Result(sha256: hash, size: nil, modificationTime: nil, cached: false)
+    }
+
+    static func parse(scriptOutput: [UInt8]) -> Result? {
+        let fields = String(decoding: scriptOutput, as: UTF8.self).split(whereSeparator: \.isWhitespace)
+        guard fields.count == 4, isHash(String(fields[0])),
+              let size = UInt64(fields[1]), let mtime = UInt32(fields[2]),
+              fields[3] == "cached" || fields[3] == "computed" else { return nil }
+        return Result(sha256: String(fields[0]), size: size, modificationTime: mtime, cached: fields[3] == "cached")
+    }
+
+    static func isHash(_ s: String) -> Bool { s.count == 64 && s.allSatisfy(\.isHexDigit) }
+}
+
+/// Limits how many server-side hashes run at once (they share the server's disk).
+actor AsyncLimiter {
+    private let limit: Int
+    private var running = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(_ limit: Int) { self.limit = max(1, limit) }
+
+    func run<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T {
+        if running >= limit { await withCheckedContinuation { waiters.append($0) } } else { running += 1 }
+        defer {
+            if waiters.isEmpty { running -= 1 } else { waiters.removeFirst().resume() }
+        }
+        return try await body()
+    }
+}
+
+// MARK: - Resume state
+
+/// Sidecar next to a `.blitpart`: which byte ranges are on disk, and for which
+/// version of the remote file.
+struct PartState: Codable, Equatable {
+    var version = 1
+    var remotePath: Data
+    var size: UInt64
+    var modificationTime: UInt32?
+    var done: ByteRangeSet
+
+    func matches(_ file: RemoteFile) -> Bool {
+        version == 1 && remotePath == Data(file.path.bytes) && size == file.size && modificationTime == file.modificationTime
+    }
+
+    static func load(_ path: String) -> PartState? {
+        guard let data = FileManager.default.contents(atPath: path) else { return nil }
+        return try? JSONDecoder().decode(PartState.self, from: data)
+    }
+
+    func save(_ path: String) throws {
+        try JSONEncoder().encode(self).write(to: URL(fileURLWithPath: path), options: .atomic)
     }
 }
 
@@ -152,31 +253,54 @@ public struct RemoteHasher: Sendable {
 actor FileJob {
     let file: RemoteFile
     let finalPath: String
+    private var state: PartState
+    private let resuming: Bool
+    private var unassigned: Int
     private var remaining: Int
     private var part: PartFile?
     private(set) var failure: String?
+    private(set) var remoteHash: Task<RemoteHasher.Result, Error>?
 
-    init(file: RemoteFile, finalPath: String, ranges: Int) {
+    init(file: RemoteFile, finalPath: String, state: PartState, resuming: Bool, ranges: Int) {
         self.file = file
         self.finalPath = finalPath
+        self.state = state
+        self.resuming = resuming
+        self.unassigned = ranges
         self.remaining = ranges
     }
 
     var partPath: String { finalPath + ".blitpart" }
+    var statePath: String { finalPath + ".blitpart.state" }
 
     /// Opens the part file on first use; returns whether this is the first range.
     func begin() throws -> (PartFile, first: Bool) {
         if let part { return (part, false) }
-        let p = try PartFile.create(at: partPath, size: file.size)
+        let p = resuming ? try PartFile.reopen(at: partPath, size: file.size) : try PartFile.create(at: partPath, size: file.size)
         part = p
+        if !resuming { try state.save(statePath) }
         return (p, true)
     }
 
-    /// Call once per range, however it ended. Returns the part file when the
-    /// last range is done and nothing failed. The file is only closed once no
-    /// range can still be writing to it (a reused descriptor could otherwise
-    /// receive another connection's late writes).
-    func rangeEnded() -> PartFile? {
+    /// Call when a range is handed to a connection; true for the file's last one.
+    func assigned() -> Bool {
+        unassigned -= 1
+        return unassigned == 0
+    }
+
+    func startRemoteHash(_ start: @escaping @Sendable () async throws -> RemoteHasher.Result) {
+        if remoteHash == nil { remoteHash = Task { try await start() } }
+    }
+
+    /// Call once per range, however it ended. Records completed ranges for
+    /// resume, and returns the part file when the last range is done and
+    /// nothing failed. The file is only closed once no range can still be
+    /// writing to it (a reused descriptor could otherwise receive late writes).
+    func rangeEnded(_ range: Range<UInt64>, succeeded: Bool) -> PartFile? {
+        if succeeded, failure == nil {
+            state.done.insert(range)
+            try? state.save(statePath)
+        }
         remaining -= 1
         guard remaining == 0 else { return nil }
         if failure != nil {
@@ -191,6 +315,7 @@ actor FileJob {
     func fail(_ reason: String) -> Bool {
         guard failure == nil else { return false }
         failure = reason
+        remoteHash?.cancel()
         return true
     }
 }
@@ -219,8 +344,13 @@ public func download(
 ) async -> TransferSummary {
     let summary = Mutex(TransferSummary())
     let fm = FileManager.default
+    let hashLimiter = AsyncLimiter(options.concurrentHashes)
+    let effectiveHasher = options.verify ? hasher : nil
 
+    let (finished, finishedSink) = AsyncStream.makeStream(of: (FileJob, PartFile).self)
     var work: [(FileJob, Range<UInt64>)] = []
+    var alreadyComplete: [FileJob] = []
+
     for file in files {
         let finalPath = directory + "/" + file.relativePath
         if fm.fileExists(atPath: finalPath), !options.overwrite {
@@ -235,17 +365,52 @@ public func download(
             summary.withLock { $0.failed.append((file, "\(error)")) }
             continue
         }
-        let ranges = TransferPlan.ranges(size: file.size, connections: clients.count)
-        let job = FileJob(file: file, finalPath: finalPath, ranges: ranges.count)
+
+        // Resume if a matching part file and state exist (PRD R3.6).
+        let partPath = finalPath + ".blitpart"
+        let statePath = partPath + ".state"
+        var state = PartState(remotePath: Data(file.path.bytes), size: file.size, modificationTime: file.modificationTime, done: ByteRangeSet())
+        var resuming = false
+        if let saved = PartState.load(statePath), saved.matches(file), fm.fileExists(atPath: partPath) {
+            state = saved
+            resuming = true
+            let have = saved.done.byteCount
+            if have > 0 {
+                events(.fileResumed(file, bytes: have))
+                summary.withLock { $0.resumedBytes += have }
+            }
+        }
+        let gaps = state.done.gaps(in: 0..<file.size)
+        if resuming, gaps.isEmpty, file.size > 0 {
+            // All bytes are on disk; it only needs verifying.
+            alreadyComplete.append(FileJob(file: file, finalPath: finalPath, state: state, resuming: true, ranges: 0))
+            continue
+        }
+        let ranges = TransferPlan.ranges(size: file.size, connections: clients.count, gaps: resuming ? gaps : nil)
+        let job = FileJob(file: file, finalPath: finalPath, state: state, resuming: resuming, ranges: ranges.count)
         work += ranges.map { (job, $0) }
     }
     let queue = WorkQueue(work)
-    let (finished, finishedSink) = AsyncStream.makeStream(of: (FileJob, PartFile).self)
 
     let record: @Sendable (FileJob, String) async -> Void = { job, reason in
         if await job.fail(reason) {
             events(.fileFailed(job.file, reason))
             summary.withLock { $0.failed.append((job.file, reason)) }
+        }
+    }
+    let startHash: @Sendable (FileJob) async -> Void = { job in
+        guard let effectiveHasher else { return }
+        let path = job.file.path
+        await job.startRemoteHash { try await hashLimiter.run { try await effectiveHasher.sha256(path) } }
+    }
+
+    for job in alreadyComplete {
+        do {
+            let part = try PartFile.reopen(at: await job.partPath, size: job.file.size)
+            await startHash(job)
+            finishedSink.yield((job, part))
+        } catch {
+            await record(job, "\(error)")
         }
     }
 
@@ -256,20 +421,32 @@ public func download(
                 for client in clients {
                     workers.addTask {
                         while let (job, range) = await queue.next() {
+                            // The server starts hashing when the last range is handed out,
+                            // while the file is warm in its cache.
+                            if await job.assigned() { await startHash(job) }
+                            var succeeded = false
                             if await job.failure == nil {
                                 do {
                                     let (part, first) = try await job.begin()
-                                    if first { events(.fileStarted(job.file)) }
+                                    if first {
+                                        // Stability gate (PRD R3.9): the file must still match the listing.
+                                        let now = try await client.stat(job.file.path)
+                                        guard now.size == job.file.size, now.modificationTime == job.file.modificationTime else {
+                                            throw SFTPError.unexpected("changed since it was listed (still being written?)")
+                                        }
+                                        events(.fileStarted(job.file))
+                                    }
                                     let stats = try await client.download(job.file.path, range: range, into: part,
                                                                           progress: counter.add)
                                     if stats.endedEarly {
                                         throw SFTPError.unexpected("file is shorter than listed (changed on the server?)")
                                     }
+                                    succeeded = true
                                 } catch {
                                     await record(job, "\(error)")
                                 }
                             }
-                            if let complete = await job.rangeEnded() {
+                            if let complete = await job.rangeEnded(range, succeeded: succeeded) {
                                 events(.fileDownloaded(job.file))
                                 finishedSink.yield((job, complete))
                             }
@@ -280,19 +457,13 @@ public func download(
             finishedSink.finish()
         }
 
-        // Verifiers: sync, checksum, set the modification time, rename.
+        // Verifiers: sync, compare checksums, set the modification time, rename.
         group.addTask {
             await withTaskGroup(of: Void.self) { verifiers in
-                var running = 0
                 for await (job, part) in finished {
-                    if running >= options.concurrentVerifications {
-                        await verifiers.next()
-                        running -= 1
-                    }
-                    running += 1
                     verifiers.addTask {
                         do {
-                            let verification = try await finalize(job: job, part: part, hasher: options.verify ? hasher : nil)
+                            let verification = try await finalize(job: job, part: part, verify: effectiveHasher != nil)
                             events(.fileFinished(job.file, verification: verification))
                             summary.withLock {
                                 $0.finished.append(job.file)
@@ -309,23 +480,31 @@ public func download(
     return summary.withLock { $0 }
 }
 
-private func finalize(job: FileJob, part: PartFile, hasher: RemoteHasher?) async throws -> Verification {
+private func finalize(job: FileJob, part: PartFile, verify: Bool) async throws -> Verification {
     try part.sync()
     part.close()
     let file = job.file
     let partPath = await job.partPath
+    let statePath = await job.statePath
     let finalPath = job.finalPath
 
     var verification = Verification.skipped
-    if let hasher {
+    if verify, let remoteHash = await job.remoteHash {
         async let local = Task.detached { try localSHA256(path: partPath) }.value
         do {
-            let remote = try await hasher.sha256(file.path)
-            let mine = try await local
-            guard mine == remote else {
-                throw SFTPError.unexpected("SHA-256 mismatch: local \(mine), server \(remote); kept \(partPath)")
+            let remote = try await remoteHash.value
+            if let size = remote.size, let mtime = remote.modificationTime,
+               size != file.size || (file.modificationTime != nil && mtime != file.modificationTime) {
+                try? FileManager.default.removeItem(atPath: statePath)
+                throw SFTPError.unexpected("changed on the server during download; kept \(partPath)")
             }
-            verification = .sha256(mine)
+            let mine = try await local
+            guard mine == remote.sha256 else {
+                // Don't resume a complete-but-wrong file; the next run starts over.
+                try? FileManager.default.removeItem(atPath: statePath)
+                throw SFTPError.unexpected("SHA-256 mismatch: local \(mine), server \(remote.sha256); kept \(partPath)")
+            }
+            verification = .sha256(mine, cached: remote.cached)
         } catch let error as SSHError {
             // No shell access: fall back to a size check (PRD R4.1).
             _ = try? await local
@@ -343,5 +522,6 @@ private func finalize(job: FileJob, part: PartFile, hasher: RemoteHasher?) async
                                                ofItemAtPath: partPath)
     }
     guard rename(partPath, finalPath) == 0 else { throw POSIXFailure("rename to \(finalPath)") }
+    try? FileManager.default.removeItem(atPath: statePath)
     return verification
 }

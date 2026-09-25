@@ -28,6 +28,18 @@ public final class PartFile: Sendable {
         return PartFile(path: path, fd: fd, pool: pool)
     }
 
+    /// Reopens an existing part file for resuming; its size must be `size`.
+    public static func reopen(at path: String, size: UInt64, pool: NIOThreadPool = .singleton) throws -> PartFile {
+        let fd = Darwin.open(path, O_RDWR | O_CLOEXEC)
+        guard fd >= 0 else { throw POSIXFailure("open \(path)") }
+        var info = Darwin.stat()
+        guard fstat(fd, &info) == 0, UInt64(info.st_size) == size else {
+            Darwin.close(fd)
+            throw POSIXFailure("resume \(path): unexpected size")
+        }
+        return PartFile(path: path, fd: fd, pool: pool)
+    }
+
     private init(path: String, fd: Int32, pool: NIOThreadPool) {
         self.path = path
         self.fd = fd

@@ -125,17 +125,17 @@ public final class SFTPClient: Sendable {
         let handle = try await openHandle({ .open(id: $0, path: path, flags: .read, attributes: SFTPAttributes()) }, path)
         let s = strategy ?? self.strategy
         let handler = self.handler
-        do {
-            let stats = try await channel.eventLoop.flatSubmit {
-                handler.value.download(handle: handle, planner: ReadPlanner(range: range, readSize: s.readSize, maxInFlight: s.maxInFlight),
-                                       file: file, progress: progress)
-            }.get()
-            try await closeHandle(handle)
-            return stats
-        } catch {
-            try? await closeHandle(handle)
-            throw error
-        }
+        defer { closeHandleInBackground(handle) }
+        return try await channel.eventLoop.flatSubmit {
+            handler.value.download(handle: handle, planner: ReadPlanner(range: range, readSize: s.readSize, maxInFlight: s.maxInFlight),
+                                   file: file, progress: progress)
+        }.get()
+    }
+
+    /// Sends CLOSE without waiting a round trip for the reply.
+    private func closeHandleInBackground(_ handle: ByteBuffer) {
+        let handler = self.handler
+        channel.eventLoop.execute { _ = handler.value.send { .close(id: $0, handle: handle) } }
     }
 
     public func close() async {

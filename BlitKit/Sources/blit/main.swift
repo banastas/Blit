@@ -151,11 +151,12 @@ do {
                 let bytes = counter.total
                 let rate = Double(bytes - last.bytes) / now.timeIntervalSince(last.time)
                 last = (now, bytes)
+                let shown = bytes + Int(progress.resumedBytes)
                 let verifying = progress.verifying
-                let status = bytes >= Int(totalBytes) && verifying > 0
+                let status = shown >= Int(totalBytes) && verifying > 0
                     ? "verifying \(verifying) file\(verifying == 1 ? "" : "s")…"
                     : String(format: "%.1f MB/s", rate / 1e6)
-                print("\r  \(formatBytes(Double(bytes))) of \(formatBytes(Double(totalBytes))) · \(status)          ", terminator: "")
+                print("\r  \(formatBytes(Double(shown))) of \(formatBytes(Double(totalBytes))) · \(status)          ", terminator: "")
                 fflush(stdout)
             }
         }
@@ -163,6 +164,9 @@ do {
         let summary = await download(files, into: localFolder, clients: clients, hasher: hasher,
                                      options: options, counter: counter) { event in
             switch event {
+            case .fileResumed(let f, let bytes):
+                progress.resumed(bytes)
+                print("\r  resuming \(f.relativePath): \(formatBytes(Double(bytes))) already on disk")
             case .fileStarted: break
             case .fileDownloaded:
                 progress.downloaded()
@@ -170,7 +174,7 @@ do {
                 progress.finished()
                 let check: String
                 switch v {
-                case .sha256: check = "✓ sha256"
+                case .sha256(_, let cached): check = cached ? "✓ sha256 (cached on server)" : "✓ sha256"
                 case .sizeOnly(let why): check = "size only (\(why))"
                 case .skipped: check = "not verified"
                 }
@@ -184,8 +188,9 @@ do {
         _ = await ticker.result
         let end = Date()
         let downloadSeconds = (progress.lastDownload ?? end).timeIntervalSince(start)
-        print(String(format: "\rdone: %d/%d files, %d verified · %@ downloaded in %.1f s (%.1f MB/s) · %.1f s total            ",
-                     summary.finished.count, files.count, summary.verified, formatBytes(Double(counter.total)),
+        let resumedNote = summary.resumedBytes > 0 ? " (+\(formatBytes(Double(summary.resumedBytes))) resumed)" : ""
+        print(String(format: "\rdone: %d/%d files, %d verified · %@%@ downloaded in %.1f s (%.1f MB/s) · %.1f s total            ",
+                     summary.finished.count, files.count, summary.verified, formatBytes(Double(counter.total)), resumedNote,
                      downloadSeconds, Double(counter.total) / downloadSeconds / 1e6, end.timeIntervalSince(start)))
         for c in clients { await c.connection.close() }
         if !summary.failed.isEmpty { exit(1) }
@@ -200,7 +205,9 @@ do {
 
 /// Counts for the progress line, updated from transfer events.
 final class ProgressState: Sendable {
-    private let state = Mutex((verifying: 0, lastDownload: Date?.none))
+    private let state = Mutex((verifying: 0, lastDownload: Date?.none, resumed: UInt64(0)))
+    func resumed(_ bytes: UInt64) { state.withLock { $0.resumed += bytes } }
+    var resumedBytes: UInt64 { state.withLock { $0.resumed } }
     func downloaded() { state.withLock { $0.verifying += 1; $0.lastDownload = Date() } }
     func finished() { state.withLock { $0.verifying = max(0, $0.verifying - 1) } }
     var verifying: Int { state.withLock { $0.verifying } }
