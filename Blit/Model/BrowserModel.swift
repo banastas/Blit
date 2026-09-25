@@ -37,6 +37,13 @@ final class BrowserModel {
     var sortOrder = [KeyPathComparator(\FileItem.modified, order: .reverse)]
     var trustRequest: TrustRequest?
     var passwordRequest: ServerConfig?
+    /// Show names starting with "." (View › Show Hidden Files, ⇧⌘.).
+    private(set) var showHidden = false
+
+    func toggleHidden() {
+        showHidden.toggle()
+        reload()
+    }
 
     let servers: ServerStore
     let connections: ConnectionManager
@@ -107,7 +114,8 @@ final class BrowserModel {
                 let listed: [FileItem]
                 switch location {
                 case .local(let url):
-                    listed = try await Task.detached { try Self.listLocal(url) }.value
+                    let hidden = showHidden
+                    listed = try await Task.detached { try Self.listLocal(url, showHidden: hidden) }.value
                 case .remote(let id, let bytes):
                     guard let server = servers.server(id) else { throw ConnectionError.noPassword }
                     listed = try await listRemote(server, RemotePath(bytes: bytes))
@@ -148,6 +156,7 @@ final class BrowserModel {
         return entries.compactMap { entry in
             let a = entry.attributes
             guard a.isDirectory || a.isRegularFile else { return nil }
+            if !showHidden, entry.filename.bytes.first == UInt8(ascii: ".") { return nil }
             let name = TransferPlan.localName(entry.filename)
             let ext = (name as NSString).pathExtension
             return FileItem(location: .remote(server.id, base.appending(entry.filename)), name: name,
@@ -158,11 +167,11 @@ final class BrowserModel {
         }
     }
 
-    nonisolated static func listLocal(_ folder: URL) throws -> [FileItem] {
+    nonisolated static func listLocal(_ folder: URL, showHidden: Bool) throws -> [FileItem] {
         let keys: [URLResourceKey] = [.isDirectoryKey, .isPackageKey, .contentModificationDateKey, .fileSizeKey,
                                       .localizedTypeDescriptionKey]
         let urls = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys,
-                                                               options: [.skipsHiddenFiles])
+                                                               options: showHidden ? [] : [.skipsHiddenFiles])
         return urls.compactMap { url in
             guard let v = try? url.resourceValues(forKeys: Set(keys)) else { return nil }
             let isFolder = (v.isDirectory ?? false) && !(v.isPackage ?? false)

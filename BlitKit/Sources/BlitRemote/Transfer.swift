@@ -124,8 +124,10 @@ public struct TransferSummary: Sendable {
 // MARK: - Remote listing
 
 /// Files under `root` (or `root` itself), with destination paths that start
-/// with the root's own name, like `cp -r`.
-public func remoteFiles(at root: RemotePath, using client: SFTPClient) async throws -> [RemoteFile] {
+/// with the root's own name, like `cp -r`. Hidden entries (names starting
+/// with ".", such as a torrent client's `.parts` files) are skipped unless
+/// `includeHidden`.
+public func remoteFiles(at root: RemotePath, using client: SFTPClient, includeHidden: Bool = false) async throws -> [RemoteFile] {
     let attributes = try await client.stat(root)
     let rootName = TransferPlan.localName(root.lastComponent)
     if !attributes.isDirectory {
@@ -136,6 +138,7 @@ public func remoteFiles(at root: RemotePath, using client: SFTPClient) async thr
     var folders: [(RemotePath, String)] = [(root, rootName)]
     while let (folder, local) = folders.popLast() {
         for entry in try await client.list(folder) {
+            if !includeHidden, entry.filename.bytes.first == UInt8(ascii: ".") { continue }
             let path = folder.appending(entry.filename)
             let name = local + "/" + TransferPlan.localName(entry.filename)
             if entry.attributes.isDirectory {

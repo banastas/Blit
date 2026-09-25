@@ -56,6 +56,8 @@ final class TransferJob: Identifiable {
     var peakRate = 0.0
     var history: [Double] = []
     var log: [LogLine] = []
+    /// Files whose bytes are all in, waiting on verification, with when that began.
+    var verifying: [String: Date] = [:]
     var startedAt: Date?
     var finishedAt: Date?
     @ObservationIgnored let counter = ByteCounter()
@@ -71,6 +73,14 @@ final class TransferJob: Identifiable {
     var transferred: Int64 { Int64(counter.total) + resumedBytes }
     var progress: Double { totalBytes > 0 ? min(1, Double(transferred) / Double(totalBytes)) : 0 }
     var isActive: Bool { status == .preparing || status == .running }
+    /// How files are verified, for the HUD.
+    var verificationMethod: String {
+        if case .download = kind { return "SERVER SHA256" }
+        return nasVerified ? "NAS SHA256" : "READ-BACK"
+    }
+    var nasVerified = false
+    /// Include hidden files when walking folders (captured at drop time).
+    var includeHidden = false
 
     func note(_ text: String, failure: Bool = false) {
         log.append(LogLine(text: text, isFailure: failure))
@@ -103,7 +113,8 @@ final class TransferManager {
 
     /// Queues a transfer of `sources` into `destination`. Returns a message
     /// if it can't be done.
-    func enqueue(_ sources: [BrowseLocation], to destination: BrowseLocation, destinationName: String) -> String? {
+    func enqueue(_ sources: [BrowseLocation], to destination: BrowseLocation, destinationName: String,
+                 includeHidden: Bool = false) -> String? {
         guard let folder = destination.localURL else {
             return "Uploading to a server isn't supported yet. Drop onto a local folder, drive or NAS share."
         }
@@ -116,8 +127,10 @@ final class TransferManager {
         }
         if let id = remote.first?.serverID {
             guard let server = servers.server(id) else { return "That server no longer exists." }
-            jobs.append(TransferJob(kind: .download(server), sources: remote, destination: folder,
-                                    title: Self.title(remote.map(\.lastComponent)), destinationName: destinationName))
+            let job = TransferJob(kind: .download(server), sources: remote, destination: folder,
+                                  title: Self.title(remote.map(\.lastComponent)), destinationName: destinationName)
+            job.includeHidden = includeHidden
+            jobs.append(job)
         }
         if !local.isEmpty {
             jobs.append(TransferJob(kind: .copy, sources: local.map { .local($0) }, destination: folder,
@@ -207,10 +220,13 @@ final class TransferManager {
 
         var files: [RemoteFile] = []
         for source in job.sources {
-            if let path = source.remotePath { files += try await remoteFiles(at: path, using: clients[0]) }
+            if let path = source.remotePath {
+                files += try await remoteFiles(at: path, using: clients[0], includeHidden: job.includeHidden)
+            }
         }
         job.fileCount = files.count
         job.totalBytes = Int64(files.reduce(0) { $0 + $1.size })
+        job.note("LISTED \(files.count) FILE\(files.count == 1 ? "" : "S") · \(TransferJob.bytes(job.totalBytes))")
         job.status = .running
 
         let hasher = RemoteHasher(connection: clients[0].connection)
@@ -228,6 +244,7 @@ final class TransferManager {
         }
         job.fileCount = files.count
         job.totalBytes = Int64(files.reduce(0) { $0 + $1.size })
+        job.note("LISTED \(files.count) FILE\(files.count == 1 ? "" : "S") · \(TransferJob.bytes(job.totalBytes))")
 
         if let mount = MountInfo.of(job.destination.path), mount.isSMB {
             let host = mount.source.split(separator: "@").last?.split(separator: "/").first
@@ -259,9 +276,12 @@ extension TransferJob {
         case .fileResumed(let f, let bytes):
             resumedBytes += Int64(bytes)
             note("RESUME \(f.relativePath.uppercased()) · \(Self.bytes(Int64(bytes))) ON DISK")
-        case .fileStarted: break
-        case .fileDownloaded(let f): note("DOWNLOADED \(f.relativePath.uppercased()) · VERIFYING")
+        case .fileStarted(let f): note("GET \(f.relativePath.uppercased())")
+        case .fileDownloaded(let f):
+            verifying[f.relativePath] = Date()
+            note("DOWNLOADED \(f.relativePath.uppercased()) · VERIFYING")
         case .fileFinished(let f, let v):
+            verifying[f.relativePath] = nil
             filesFinished += 1
             switch v {
             case .sha256(let hash, let cached):
@@ -271,6 +291,7 @@ extension TransferJob {
             case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
             }
         case .fileFailed(let f, let reason):
+            verifying[f.relativePath] = nil
             failures.append("\(f.relativePath): \(reason)")
             note("✕ \(f.relativePath.uppercased()) · \(reason.uppercased())", failure: true)
         }
@@ -278,9 +299,12 @@ extension TransferJob {
 
     func handle(_ event: CopyEvent) {
         switch event {
-        case .fileStarted: break
-        case .fileCopied(let f): note("COPIED \(f.relativePath.uppercased()) · VERIFYING")
+        case .fileStarted(let f): note("COPY \(f.relativePath.uppercased())")
+        case .fileCopied(let f):
+            verifying[f.relativePath] = Date()
+            note("COPIED \(f.relativePath.uppercased()) · VERIFYING")
         case .fileFinished(let f, let v):
+            verifying[f.relativePath] = nil
             filesFinished += 1
             switch v {
             case .nas(let hash):
@@ -293,6 +317,7 @@ extension TransferJob {
             case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
             }
         case .fileFailed(let f, let reason):
+            verifying[f.relativePath] = nil
             failures.append("\(f.relativePath): \(reason)")
             note("✕ \(f.relativePath.uppercased()) · \(reason.uppercased())", failure: true)
         }

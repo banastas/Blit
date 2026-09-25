@@ -44,6 +44,7 @@ struct ContentView: View {
             if let location { browser?.open(location) }
         }
         .onAppear(perform: start)
+        .focusedSceneValue(\.browser, browser)
         .sheet(item: $editing) { item in
             ServerEditor(server: item.server, isNew: item.isNew) { server, password in
                 servers.save(server, password: password)
@@ -84,7 +85,8 @@ struct ContentView: View {
     }
 
     private func startTransfer(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
-        transferError = transfers.enqueue(sources, to: destination, destinationName: name.isEmpty ? "Folder" : name)
+        transferError = transfers.enqueue(sources, to: destination, destinationName: name.isEmpty ? "Folder" : name,
+                                          includeHidden: browser?.showHidden ?? false)
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {

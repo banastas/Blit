@@ -52,11 +52,17 @@ struct TransferStrip: View {
                     .font(HUDFont.label())
                     .foregroundStyle(HUDColor.bright)
                     .fixedSize()
-                Text("\(job.title.uppercased())  \(Text("→ \(job.destinationName.uppercased())").foregroundStyle(HUDColor.dim))")
-                    .font(HUDFont.terminal(18))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(minWidth: 80, maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 8) {
+                    Text(job.title.uppercased())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("→ \(job.destinationName.uppercased())")
+                        .foregroundStyle(HUDColor.dim)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                .font(HUDFont.terminal(18))
+                .frame(minWidth: 80, maxWidth: .infinity, alignment: .leading)
                 PixelCells(fraction: job.progress, count: 24)
                 Text("\(Int((job.progress * 100).rounded()))%")
                     .font(HUDFont.terminal(18))
@@ -127,13 +133,24 @@ struct TransferStrip: View {
         return "\(arrow) \(done)/\(String(job.fileCount).leftPadded(width))"
     }
 
-    private var rate: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 3) {
-            Text(job.isActive ? String(format: "%.1f", job.rate) : averageRate)
+    /// All bytes are in and files are waiting on their checksums.
+    private var isVerifyingOnly: Bool {
+        job.isActive && !job.verifying.isEmpty && job.transferred >= job.totalBytes
+    }
+
+    @ViewBuilder private var rate: some View {
+        if isVerifyingOnly {
+            Text("SHA256")
                 .font(HUDFont.terminal(26))
-            Text("MB/S").font(HUDFont.terminal(14)).foregroundStyle(HUDColor.dim)
+                .fixedSize()
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(job.isActive ? String(format: "%.1f", job.rate) : averageRate)
+                    .font(HUDFont.terminal(26))
+                Text("MB/S").font(HUDFont.terminal(14)).foregroundStyle(HUDColor.dim)
+            }
+            .fixedSize()
         }
-        .fixedSize()
     }
 
     private var averageRate: String {
@@ -148,6 +165,14 @@ struct TransferStrip: View {
             let queued = transfers.queuedCount
             Text(summary + (queued > 0 ? " · \(queued) QUEUED" : ""))
                 .foregroundStyle(job.failures.isEmpty ? HUDColor.bright : Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
+        } else if isVerifyingOnly, let (name, since) = job.verifying.min(by: { $0.value < $1.value }) {
+            // Verification can take minutes on big files; show it's alive (elapsed time).
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let elapsed = Int(context.date.timeIntervalSince(since))
+                let others = job.verifying.count - 1
+                Text("VERIFYING \(name.uppercased())\(others > 0 ? " +\(others)" : "") · \(job.verificationMethod) · \(elapsed / 60):\(String(format: "%02d", elapsed % 60))")
+                    .foregroundStyle(HUDColor.bright)
+            }
         } else if let last = job.log.last {
             Text("\(last.time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))) \(last.text)")
                 .foregroundStyle(last.isFailure ? Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255) : HUDColor.dim)

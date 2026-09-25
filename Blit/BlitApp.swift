@@ -28,5 +28,25 @@ struct BlitApp: App {
                 .frame(minWidth: 760, minHeight: 440)
         }
         .windowToolbarStyle(.unified)
+        .commands { BrowserCommands() }
+    }
+}
+
+extension FocusedValues {
+    @Entry var browser: BrowserModel?
+}
+
+/// View menu items that act on the front window's browser.
+struct BrowserCommands: Commands {
+    @FocusedValue(\.browser) private var browser
+
+    var body: some Commands {
+        CommandGroup(after: .sidebar) {
+            Button(browser?.showHidden == true ? "Hide Hidden Files" : "Show Hidden Files") {
+                browser?.toggleHidden()
+            }
+            .keyboardShortcut(".", modifiers: [.command, .shift])
+            .disabled(browser == nil)
+        }
     }
 }
