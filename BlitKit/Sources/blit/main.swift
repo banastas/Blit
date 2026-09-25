@@ -5,6 +5,7 @@ import BlitRemote
 import BlitSFTP
 import Darwin
 import Foundation
+import Synchronization
 
 struct Arguments {
     var command = ""
@@ -139,18 +140,22 @@ do {
         let hasher = a.verify ? RemoteHasher(connection: clients[0].connection) : nil
         let counter = ByteCounter()
         let start = Date()
+        let progress = ProgressState()
 
-        // Live progress line.
+        // Live progress line; ends quietly when cancelled.
         let ticker = Task {
             var last = (time: Date(), bytes: 0)
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
+            while true {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
                 let now = Date()
                 let bytes = counter.total
                 let rate = Double(bytes - last.bytes) / now.timeIntervalSince(last.time)
                 last = (now, bytes)
-                print(String(format: "\r  %@ of %@ · %.1f MB/s   ", formatBytes(Double(bytes)), formatBytes(Double(totalBytes)), rate / 1e6),
-                      terminator: "")
+                let verifying = progress.verifying
+                let status = bytes >= Int(totalBytes) && verifying > 0
+                    ? "verifying \(verifying) file\(verifying == 1 ? "" : "s")…"
+                    : String(format: "%.1f MB/s", rate / 1e6)
+                print("\r  \(formatBytes(Double(bytes))) of \(formatBytes(Double(totalBytes))) · \(status)          ", terminator: "")
                 fflush(stdout)
             }
         }
@@ -159,7 +164,10 @@ do {
                                      options: options, counter: counter) { event in
             switch event {
             case .fileStarted: break
+            case .fileDownloaded:
+                progress.downloaded()
             case .fileFinished(let f, let v):
+                progress.finished()
                 let check: String
                 switch v {
                 case .sha256: check = "✓ sha256"
@@ -168,14 +176,17 @@ do {
                 }
                 print("\r  \(f.relativePath)  \(formatBytes(Double(f.size)))  \(check)            ")
             case .fileFailed(let f, let reason):
+                progress.finished()
                 print("\r  ✗ \(f.relativePath): \(reason)            ")
             }
         }
         ticker.cancel()
-        let seconds = Date().timeIntervalSince(start)
-        print(String(format: "\rdone: %d/%d files, %d verified, %@ in %.1f s (%.1f MB/s)            ",
-                     summary.finished.count, files.count, summary.verified, formatBytes(Double(counter.total)), seconds,
-                     Double(counter.total) / seconds / 1e6))
+        _ = await ticker.result
+        let end = Date()
+        let downloadSeconds = (progress.lastDownload ?? end).timeIntervalSince(start)
+        print(String(format: "\rdone: %d/%d files, %d verified · %@ downloaded in %.1f s (%.1f MB/s) · %.1f s total            ",
+                     summary.finished.count, files.count, summary.verified, formatBytes(Double(counter.total)),
+                     downloadSeconds, Double(counter.total) / downloadSeconds / 1e6, end.timeIntervalSince(start)))
         for c in clients { await c.connection.close() }
         if !summary.failed.isEmpty { exit(1) }
 
@@ -185,6 +196,15 @@ do {
 } catch {
     print("error: \(error)")
     exit(1)
+}
+
+/// Counts for the progress line, updated from transfer events.
+final class ProgressState: Sendable {
+    private let state = Mutex((verifying: 0, lastDownload: Date?.none))
+    func downloaded() { state.withLock { $0.verifying += 1; $0.lastDownload = Date() } }
+    func finished() { state.withLock { $0.verifying = max(0, $0.verifying - 1) } }
+    var verifying: Int { state.withLock { $0.verifying } }
+    var lastDownload: Date? { state.withLock { $0.lastDownload } }
 }
 
 extension String {

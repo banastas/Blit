@@ -60,6 +60,8 @@ public struct RemoteFile: Sendable, Equatable {
 
 public enum TransferEvent: Sendable {
     case fileStarted(RemoteFile)
+    /// Every byte has arrived; verification comes next.
+    case fileDownloaded(RemoteFile)
     case fileFinished(RemoteFile, verification: Verification)
     case fileFailed(RemoteFile, String)
 }
@@ -267,7 +269,10 @@ public func download(
                                     await record(job, "\(error)")
                                 }
                             }
-                            if let complete = await job.rangeEnded() { finishedSink.yield((job, complete)) }
+                            if let complete = await job.rangeEnded() {
+                                events(.fileDownloaded(job.file))
+                                finishedSink.yield((job, complete))
+                            }
                         }
                     }
                 }
