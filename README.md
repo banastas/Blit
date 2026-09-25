@@ -10,7 +10,7 @@ Blit moves data between three places, and does nothing else:
 
 The name comes from *bit block transfer*: copy a block of memory as fast as the hardware allows.
 
-> **Status:** pre-alpha. The benchmarking phase (M0) is complete. The app itself hasn't been started yet. This README is the living product requirements document (PRD).
+> **Status:** pre-alpha. Benchmarking (M0) is complete and the PRD has had a technical review. Next up is the SSH spike (M1). The app itself hasn't been started yet. This README is the living product requirements document (PRD).
 
 ---
 
@@ -120,8 +120,8 @@ remote SFTP server ──(parallel SFTP, verified)──▶ external SSD ──(
 
 Apple doesn't let third-party apps put their own interface in a Finder tab. What Blit does instead:
 
-- **Quick Action (App Intents): "Blit to…"** Right-click reviewed files in Finder and send them to a NAS through Blit's verified copy engine. It's also available in Shortcuts. *(M3)*
-- **Browse-only File Provider (later option).** The seedbox would appear under Locations in Finder's sidebar, but actual downloads are handed to Blit's engine. macOS's own File Provider transfers would lose parallel connections, split files, and checksums.
+- **Quick Action (App Intents): "Blit to…"** Right-click reviewed files in Finder and send them to a NAS through Blit's verified copy engine. It's also available in Shortcuts. *(M4)*
+- **Browse-only File Provider (later, low priority).** The seedbox would appear under Locations in Finder's sidebar, with downloads handed to Blit's engine. macOS's own File Provider transfers would lose parallel connections, split files, and checksums. File Provider files normally live on the boot drive. External APFS drives may be supported (to check), and exFAT drives aren't. Combined with the non-goal on Finder mounting, this stays low priority.
 
 ## Requirements
 
@@ -132,6 +132,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R1.3** Check host keys on first connect and pin them after that. Refuse to connect if a host key changes.
 - **R1.4** Local and external volumes appear automatically. Blit notices when a drive is ejected mid-transfer and recovers when it reconnects.
 - **R1.5** NAS shares mounted through macOS SMB are used as normal filesystem paths. Blit can save and remount favorite shares.
+- **R1.6** A NAS entry can have an SSH endpoint, used to compute checksums on the NAS (R4.2). This requires SSH enabled in DSM and an account in the administrators group.
 
 ### Browser
 
@@ -149,17 +150,20 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R3.1** Download and copy recursively, preserving folder structure and modification times.
 - **R3.2** **Parallel files:** N files in flight at once, N configurable per server.
 - **R3.3** **Split files:** files above a size threshold are downloaded in byte-range chunks over several connections.
-- **R3.4** **Deep request pipelining:** many SFTP read requests in flight per connection, and a large SSH channel window. Read size adapts to the server; see [findings](#benchmark-findings).
-- **R3.5** Write to `name.blitpart`, force it to disk (`F_FULLFSYNC`), verify, then rename. A partial file is never visible under its final name.
+- **R3.4** **Deep request pipelining:** many SFTP read requests in flight per connection, and a large SSH channel window. **Shortened read replies are normal:** when a server returns fewer bytes than requested (SFTPGo caps replies at 32 KB), request the remainder and keep the pipeline full. Use `limits@openssh.com` to choose the read size where the server offers it (OpenSSH 8.5 and later). See [findings](#benchmark-findings).
+- **R3.5** Write to `name.blitpart`, force it to disk, verify, then rename. A partial file is never visible under its final name. On local APFS or HFS+ volumes use `F_FULLFSYNC`. Over SMB, use `fsync`; `F_FULLFSYNC` isn't supported there, and the NAS-side checksum (R4.2) provides the guarantee.
 - **R3.6** **Resume:** after a dropped connection, reconnect with backoff and resume from what's already on disk.
-- **R3.7** Preallocate the destination file, and use large buffers that bypass the system cache (`F_NOCACHE`) for local and SMB copies.
+- **R3.7** Use large buffers that bypass the system cache (`F_NOCACHE`). Preallocate the destination (`F_PREALLOCATE`) on local volumes only; it's often unsupported over SMB.
 - **R3.8** Use APFS clones (`clonefile`) for copies within the same volume.
+- **R3.9** **Stability gate:** a remote file is eligible for download only once its size and modification time are unchanged across two checks, because files may still be written or assembled on the seedbox. If the size changed since listing, re-list; don't treat it as corruption.
+- **R3.10** **Filename policy:** Linux allows any bytes in a filename, but APFS requires valid UTF-8 and treats different Unicode normalizations of a name as the same file, and SMB forbids some characters. Blit escapes names that can't be stored, detects names that would collide, and records the original name in the transfer log.
+- **R3.11** **Timestamps:** SFTP v3 modification times are whole seconds. Comparisons (R2.4, R5.3) allow for that.
 
 ### Integrity
 
-- **R4.1** **Remote to local:** compare the local file's SHA-256 with `sha256sum` run on the server over an SSH exec channel. If the server has no shell access, fall back to comparing sizes and warn.
-- **R4.2** **Local to NAS:** hash while copying, then re-read the destination with caching off and compare. Verification can be switched off for trusted paths, but it's on by default.
-- **R4.3** A mismatch re-downloads only the affected file, or the affected chunks when chunk hashes are available. Files are never silently accepted.
+- **R4.1** **Remote to local:** compare the local file's SHA-256 with `sha256sum` run on the server over an SSH exec channel. This is the only way to get a remote hash: neither SFTPGo nor OpenSSH supports the SFTP `check-file` extension. Start the hash the moment a file finishes downloading, while it's still in the server's cache. Store hashes on the server under `~/.cache/blit/`, outside the download folders, keyed by path, size, and modification time, so a file is never hashed twice. Filenames are untrusted: pass them NUL-delimited over stdin (`xargs -0`) and never paste them into a shell command. If the server has no shell access, fall back to comparing sizes and warn.
+- **R4.2** **Local to NAS:** hash the source while copying, then compare with `sha256sum` run **on the NAS** over SSH (R1.6), reusing R4.1's code. Reading the copy back over SMB isn't reliable: `F_NOCACHE` doesn't clear pages cached during the write, and the SMB client can answer reads from its local cache. So read-back is only a fallback, and is flagged as weaker, when a NAS has no SSH access. Verification can be switched off for trusted paths, but it's on by default.
+- **R4.3** A mismatch re-downloads the affected file. Files are never silently accepted. Hashing each chunk on the server was ruled out, because reading ranges adds disk seeks on the server.
 - **R4.4** Keep a per-transfer record (file, size, hash, source, destination, time) as an exportable log.
 
 ### Queue and UX
@@ -171,11 +175,12 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R5.5** Send a notification when a queue finishes or fails.
 - **R5.6** Keep the Mac awake while transfers run.
 - **R5.7** A menu bar icon shows overall progress and speed when the main window is closed.
+- **R5.8** **Queue-wide disk space:** before starting each item, check the destination's free space against everything still queued for it. If it would run out, pause the queue; don't fail the file.
 
 ### Finder integration
 
 - **R6.1** A "Blit to…" Quick Action (App Intents) for files selected in Finder, with destinations chosen from saved NAS and drive locations. It's also available in Shortcuts.
-- **R6.2** *(Later)* A browse-only File Provider extension for servers. Downloads started from Finder go through Blit's engine.
+- **R6.2** *(Later, low priority)* A browse-only File Provider extension for servers. Downloads started from Finder go through Blit's engine. It's blocked on confirming whether File Provider can place files on an external drive (open question 7).
 
 ## Performance targets
 
@@ -185,7 +190,7 @@ Derived from the measurements below.
 |---|---|---|
 | Remote → SSD, pack of many files | **≥ 55 MB/s** sustained | Remote disk: 86 MB/s for one reader. Measured 57 MB/s with 8 connections. |
 | Remote → SSD, single large file | **≥ 50 MB/s** | Needs chunked downloads. Transmit manages 24.6 MB/s on one connection. |
-| Remote, per connection | **≥ 24 MB/s** | Needs a larger in-flight window than OpenSSH's (OpenSSH: 10.7 MB/s). |
+| Remote, per connection | **≥ 24 MB/s** | Needs a larger in-flight window than OpenSSH's (OpenSSH: 10.7 MB/s). M1 exit criterion: more than 24.6 MB/s. |
 | SSD → NAS, today (1 GbE) | **≥ 105 MB/s** | Link maximum is about 113 MB/s. |
 | SSD → NAS, after the 10 GbE upgrade | Limited by the NAS disks | See [reference environment](#reference-environment). |
 | Integrity | 100% of files verified | Zero silent corruption |
@@ -225,16 +230,16 @@ Measured on 2026-09-24 from the [reference environment](#reference-environment) 
 ### What the numbers mean
 
 1. **The SFTPGo endpoint was the ceiling, not the server.** It levels off around 27 MB/s. Over OpenSSH on the same machine, speed scales almost linearly up to 8 connections.
-2. **SFTPGo handles 64 KB reads badly.** Throughput fell about 30× (0.36 MB/s). OpenSSH handles 64 KB reads fine. Blit must discover each server's read size (the `limits@openssh.com` extension where supported) and fall back to 32 KB.
-3. **OpenSSH's client caps each connection at about 10.7 MB/s** at 148 ms. That fits its ~2 MB channel window: 2 MB every 148 ms is about 13.5 MB/s at best.
-4. **Transmit reached 24.6 MB/s on one connection,** which means about 3.6 MB in flight. A custom client can raise the window further. The next limit is probably the server's TCP send buffer (Linux's default maximum is 4 MB, which would be about 27 MB/s here). That last point is a hypothesis to confirm in M2.
-5. **16 connections is slower than 8.** Many readers at different offsets likely make the server's hard drives seek. The target is **3–4 connections with large windows**, which should reach the disk ceiling with less load on a shared server.
+2. **64 KB reads through SFTPGo collapsed to 0.36 MB/s, but the problem was lftp, not the server.** SFTPGo is built on `pkg/sftp`, which caps read replies at 32,768 bytes. A 64 KB request gets a shortened 32 KB reply, which the protocol allows, and lftp handles that badly. SFTPGo also doesn't support `limits@openssh.com`, so read-size discovery wouldn't help there. The fix is handling shortened replies correctly (R3.4). A client that does can use 64 KB requests against SFTPGo safely.
+3. **OpenSSH's client caps each connection at about 10.7 MB/s** at 148 ms. That fits its fixed 2 MiB channel window (`CHAN_SES_WINDOW_DEFAULT` = 64 × 32 KB, which can't be changed). 2 MiB every 148 ms is about 14.2 MB/s at best. `sftp`'s `-B` and `-R` options add more requests in flight, but the window still caps the total.
+4. **Transmit reached 24.6 MB/s on one connection,** which means about 3.6 MB in flight. Where the next ceiling sits is **unknown**. Linux counts buffer overhead against its TCP send-buffer limit, so a default 4 MB limit carries only about half that in data. Transmit's 3.6 MB means either the seedbox's buffers are already tuned above the default, or Transmit limits itself (a ~4 MB window inside the app). The M1 spike answers this.
+5. **16 connections was slower than 8 (46.9 vs 57.1 MB/s), and the cause is unknown.** Possible causes: disk seeking from many readers, sshd's `MaxStartups` (default `10:30:100`) randomly dropping near-simultaneous logins, 16 logins at 148 ms eating into the 20-second test, or ordinary variation between single runs on a shared server. Through SFTPGo, 16 connections was level with 8 rather than slower. The target is **3–4 connections with large windows** either way, for fair use and because of the disk ceiling.
 6. **The SFTP and shell endpoints use different path roots.** `/files/…` in SFTPGo is `~/files/…` over OpenSSH. Blit needs a per-server path mapping between them (R1.2).
 
 ### LAN
 
 - The Mac's 2.5 GbE USB adapter negotiates **1000baseT**, because the core switch has only gigabit ports. Every wired path is limited to about 113 MB/s.
-- SMB to both Synology units uses SMB 3.1.1 with signing and encryption off, which is already the fastest configuration. No `/etc/nsmb.conf` tuning is needed.
+- SMB to both Synology units uses SMB 3.1.1 with signing and encryption off. **At 1 GbE**, no `/etc/nsmb.conf` tuning is needed, because the link is the bottleneck. That's unproven for the planned 10 GbE upgrade, where `nsmb.conf` settings and SMB multichannel can matter.
 
 ## Architecture
 
@@ -251,26 +256,30 @@ Measured on 2026-09-24 from the [reference environment](#reference-environment) 
 │  • connection │  • copyfile / clone   │  • SHA-256 (CryptoKit)       │
 │    pool       │  • large overlapped   │  • remote sha256sum          │
 │  • pipelined  │    reads and writes   │    over SSH exec             │
-│    reads      │  • F_NOCACHE,         │  • read-back verification    │
-│  • chunked    │    F_PREALLOCATE      │    for local/SMB copies      │
+│    reads      │  • F_NOCACHE,         │  • NAS sha256sum over SSH    │
+│  • chunked    │    F_PREALLOCATE      │    (read-back as fallback)   │
 │    files      │                       │                              │
 ├───────────────┴───────────────────────┴──────────────────────────────┤
-│  SSH transport (SwiftNIO SSH or libssh2, decided in M2) · Keychain   │
+│  SSH transport: SwiftNIO SSH · SFTP v3 client (own) · Keychain       │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### SFTP engine design notes
 
 - **Protocol:** SFTP version 3, which covers every server that matters.
-- **Per connection:** a large channel window (start at 16 MB and tune), 64+ read requests in flight, and read size discovered per server (32 KB fallback).
+- **Library: SwiftNIO SSH, with our own SFTP client.** SwiftNIO SSH sets each channel's window at the maximum packet size × 64. The default 128 KB packet gives an 8 MB window (about 54 MB/s at 148 ms). Raising the packet size to 256 KB gives 16 MB. There's no direct window setting. It supports key renegotiation (servers typically renegotiate every 1–4 GB, so 20 GB files depend on this) and AES-GCM, which matches the cipher plan.
+- **Ruled out:** Citadel's SFTP client waits for each read before sending the next (no pipelining), so its wire-format types may be worth borrowing but not its read path. libssh2 has a fixed 2 MiB window, caps SFTP reads at 30,000 bytes, and gives no window control through its SFTP API, which puts it at OpenSSH's ~14 MB/s. It stays a fallback only if SwiftNIO SSH fails the M1 spike.
+- **Per connection:** window ≥ 8 MB (packet size 128–256 KB), 64+ read requests in flight, and correct handling of shortened read replies (R3.4).
 - **Scheduling:** a pool of up to N connections, 3–4 by default. Small files are spread across connections. Files over roughly 256 MB are split into chunks that share the same pool. A connection that finishes early takes remaining chunks from slower ones.
 - **Auth:** password or key. Host keys are pinned.
 - **Cipher:** prefer `aes128-gcm@openssh.com` (the server already negotiates it; it's hardware-accelerated on Apple Silicon). Compression is off.
-- **Checksums:** use an optional second session to the shell endpoint to run `sha256sum`, in parallel with other downloads.
+- **Checksums:** use a second session to the shell endpoint to run `sha256sum` the moment each file finishes, and store the results in a hash cache (R4.1). The same code verifies NAS copies (R4.2).
+- **Connection setup:** open connections a moment apart rather than all at once, to stay under sshd's `MaxStartups` limit.
 
 ### Local / SMB engine design notes
 
-- For the same APFS volume, use `clonefile`. For large cross-volume copies, use a double-buffered loop with 4–8 MB buffers, `F_NOCACHE` on both ends, and `F_PREALLOCATE`. That lets verification hash as data streams, without reading the source again.
+- For the same APFS volume, use `clonefile`. For large cross-volume copies, use a double-buffered loop with 4–8 MB buffers and `F_NOCACHE`, which hashes the source as it streams. `F_PREALLOCATE` and `F_FULLFSYNC` apply to local volumes only. Over SMB, use `fsync`.
+- Verify NAS copies with `sha256sum` on the Synology over SSH (R4.2). An SMB read-back can be answered from the Mac's cache.
 - For many small files, run 4–8 file copies at once. For large ones, copy one file at a time with deep buffering.
 
 ## Reference environment
@@ -300,20 +309,22 @@ The setup Blit is tuned against:
 | | Milestone | Scope | Status |
 |---|---|---|---|
 | **M0** | Benchmarks | Measure the network ceilings, find the bottlenecks, validate the approach | ✅ Done |
-| **M1** | Local engine | Xcode project, LocalCopyEngine, Verifier, `.blitpart` handling, command-line test harness. Target ≥ 105 MB/s SSD → NAS. | Next |
-| **M2** | SFTP engine | Evaluate SwiftNIO SSH vs libssh2, then build pipelined reads, window tuning, connection pool, chunked files, remote checksums, resume. Target ≥ 55 MB/s from the reference server. | |
-| **M3** | App | Finder-style browser (sorted newest first, alternating rows, ⌘K, optional second pane), transfer strip, durable queue, server editor, Keychain, host-key pinning, notifications, menu bar icon, "Blit to…" Quick Action | |
-| **M4** | Hardening | Handling network changes, sleep and wake, drive ejection, transfer log export, signing and notarization | |
+| **M1** | SSH spike | Throwaway code: raw SwiftNIO SSH channel throughput with a ≥ 8 MB window against the real server, then a minimal pipelined read loop that handles shortened replies, plus `sha256sum` over an exec channel (also check it on DSM). Fix the probe to time from first byte. **Done when one connection sustains more than 24.6 MB/s from the reference server.** This settles the library choice, the window ceiling, and the number of connections. | Next |
+| **M2** | SFTP engine | Pipelined reads, connection pool with staggered setup, chunked files, remote checksums with hash cache, resume, stability gate, filename policy. Target ≥ 55 MB/s from the reference server. | |
+| **M3** | Local engine | LocalCopyEngine, NAS-side checksums over SSH, `.blitpart` handling, queue-wide disk-space checks, command-line test harness. Target ≥ 105 MB/s SSD → NAS. | |
+| **M4** | App | Finder-style browser (sorted newest first, alternating rows, ⌘K, optional second pane), transfer strip, durable queue, server editor, Keychain, host-key pinning, notifications, menu bar icon, "Blit to…" Quick Action | |
+| **M5** | Hardening | Handling network changes, sleep and wake, drive ejection, transfer log export, signing and notarization | |
 
 ## Open questions
 
-1. **SSH library:** SwiftNIO SSH (pure Swift, async, but needs a hand-written SFTP layer and control over window sizes) or libssh2 (proven SFTP support, C interop, historically limited pipelining). Decide with a spike in M2.
-2. **Window ceiling:** is 24.6 MB/s per connection a server TCP-buffer limit (~4 MB) or a client choice? Measure with a custom client and a 16 MB+ window.
+1. ~~**SSH library**~~ **Answered:** SwiftNIO SSH with our own SFTP client; libssh2 and Citadel were ruled out (see [SFTP engine design notes](#sftp-engine-design-notes)). M1 confirms it against the real server.
+2. **Per-connection ceiling:** is Transmit's 24.6 MB/s its own limit, or the server's TCP buffers? The M1 spike measures it with 8 and 16 MB windows. If one connection can't beat about 25 MB/s, the design moves toward more connections.
 3. **Fair use:** what the remote provider allows for simultaneous connections. Defaults should be modest (3–4).
-4. **Server-side hashing cost:** `sha256sum` reads each file again from the server's disk, adding load to the 86 MB/s ceiling. Options: hash on the server while the download runs (so the file may already be in the server's cache), or hash per chunk.
-5. **SMB engine:** keep using the macOS SMB client, or embed `libsmb2` if measurements show the macOS client is the bottleneck after the 10 GbE upgrade.
+4. **Server-side hashing cost:** reduced by hashing each file as soon as it finishes, while it's in the server's cache, and by the hash cache (R4.1). Measure the real impact on the seedbox's disk in M2.
+5. **SMB at 10 GbE:** keep using the macOS SMB client with `nsmb.conf` and multichannel tuning, or embed `libsmb2` if measurements show the macOS client is the bottleneck after the upgrade.
 6. **Uploads:** out of scope for v1, but the engine shouldn't rule them out.
-7. **Browse-only File Provider:** worth it after v1? It depends on how reliable a browse-only File Provider proves on macOS 27, and whether Finder's "download" action can be handed off to Blit cleanly.
+7. **Browse-only File Provider:** worth it after v1? Handing downloads from the extension to Blit's engine is feasible. Still to check: whether File Provider on macOS 27 can place files on an external APFS drive rather than the boot drive, and how reliable it is.
+8. **Connection ramp:** does the seedbox's sshd drop near-simultaneous logins above `MaxStartups`? M1 checks it by opening 8–16 connections at once and a moment apart.
 
 ## Repository layout
 
@@ -325,7 +336,7 @@ blit/
     └── sftp-bench.sh     longer parallel-file / chunked-file benchmark with checksums
 ```
 
-The Xcode project will be added in M1.
+Throwaway spike code arrives in M1. The Xcode project arrives with M2.
 
 ## Benchmark tools
 
@@ -340,6 +351,8 @@ PORT=3232 scripts/sftp-bench.sh user@host "path/to/folder/"
 ```
 
 `SHELL_PORT` / `SSH_PORT` set the SSH shell endpoint used for the server's disk-read test and checksums, when it differs from the SFTP port. Connect once with `ssh -p PORT user@host` first, so the host key is trusted before running the scripts.
+
+**Known limitation:** `sftp-probe.sh` starts timing before login, so higher connection counts pay more login time within the 20-second window. That understates their speed; fixing it to time from first byte is part of M1.
 
 ## License
 
