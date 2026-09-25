@@ -1,0 +1,276 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0070D78B9CBF86CD05DA5E92 /* BlitLocal in Frameworks */ = {isa = PBXBuildFile; productRef = 9E73C8E9DF9E24D437044B45 /* BlitLocal */; };
+		BFAD78460733F91A0F9EF512 /* BlitRemote in Frameworks */ = {isa = PBXBuildFile; productRef = DC9DF049EAC40AE148D40519 /* BlitRemote */; };
+		5E8C258AD25D807D639691B8 /* BlitSFTP in Frameworks */ = {isa = PBXBuildFile; productRef = F2F8900B77EC139D492B726B /* BlitSFTP */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		C15DFBBA5FE238E142821665 /* Blit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Blit.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		BFB79A8E546AF5FD1E928774 /* Blit */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Blit;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		7F5F838C4791045637C2CF65 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0070D78B9CBF86CD05DA5E92 /* BlitLocal in Frameworks */,
+				BFAD78460733F91A0F9EF512 /* BlitRemote in Frameworks */,
+				5E8C258AD25D807D639691B8 /* BlitSFTP in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		D003AC060A88B855242830CE = {
+			isa = PBXGroup;
+			children = (
+				BFB79A8E546AF5FD1E928774 /* Blit */,
+				A3546F213762D9E9E60449AB /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A3546F213762D9E9E60449AB /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C15DFBBA5FE238E142821665 /* Blit.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		400CF11DAE4A07B5764D7D13 /* Blit */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D611AF4920CFAC58FCCF32A4 /* Build configuration list for PBXNativeTarget "Blit" */;
+			buildPhases = (
+				1EBD5F47905EA43981E56969 /* Sources */,
+				7F5F838C4791045637C2CF65 /* Frameworks */,
+				C424D51CA0953E8EB499D9C2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BFB79A8E546AF5FD1E928774 /* Blit */,
+			);
+			name = Blit;
+			packageProductDependencies = (
+				DC9DF049EAC40AE148D40519 /* BlitRemote */,
+				9E73C8E9DF9E24D437044B45 /* BlitLocal */,
+				F2F8900B77EC139D492B726B /* BlitSFTP */,
+			);
+			productName = Blit;
+			productReference = C15DFBBA5FE238E142821665 /* Blit.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		8556BABBCCD8964272BFB809 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					400CF11DAE4A07B5764D7D13 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+				};
+			};
+			buildConfigurationList = 6523021966650B24DD124729 /* Build configuration list for PBXProject "Blit" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = D003AC060A88B855242830CE;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				283220D5994FC5E10989B263 /* XCLocalSwiftPackageReference "BlitKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A3546F213762D9E9E60449AB /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				400CF11DAE4A07B5764D7D13 /* Blit */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C424D51CA0953E8EB499D9C2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1EBD5F47905EA43981E56969 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		E12D503FEFDB5208C9CC0137 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		F5B8197EB08FBB4F84EE094F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 6.0;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		D90A619DF5CC3F6D17F5C7F3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Blit;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.banastas.Blit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		1B1EF522D75449B3FD3EAB48 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Blit;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.banastas.Blit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6523021966650B24DD124729 /* Build configuration list for PBXProject "Blit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E12D503FEFDB5208C9CC0137 /* Debug */,
+				F5B8197EB08FBB4F84EE094F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D611AF4920CFAC58FCCF32A4 /* Build configuration list for PBXNativeTarget "Blit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D90A619DF5CC3F6D17F5C7F3 /* Debug */,
+				1B1EF522D75449B3FD3EAB48 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		283220D5994FC5E10989B263 /* XCLocalSwiftPackageReference "BlitKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = BlitKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		9E73C8E9DF9E24D437044B45 /* BlitLocal */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BlitLocal;
+		};
+		DC9DF049EAC40AE148D40519 /* BlitRemote */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BlitRemote;
+		};
+		F2F8900B77EC139D492B726B /* BlitSFTP */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BlitSFTP;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 8556BABBCCD8964272BFB809 /* Project object */;
+}
