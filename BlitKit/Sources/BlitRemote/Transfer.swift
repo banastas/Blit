@@ -221,15 +221,15 @@ public struct RemoteHasher: Sendable {
     static func isHash(_ s: String) -> Bool { s.count == 64 && s.allSatisfy(\.isHexDigit) }
 }
 
-/// Limits how many server-side hashes run at once (they share the server's disk).
-actor AsyncLimiter {
+/// Limits how many operations run at once (e.g. server-side hashes sharing a disk).
+public actor AsyncLimiter {
     private let limit: Int
     private var running = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    init(_ limit: Int) { self.limit = max(1, limit) }
+    public init(_ limit: Int) { self.limit = max(1, limit) }
 
-    func run<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T {
+    public func run<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T {
         if running >= limit { await withCheckedContinuation { waiters.append($0) } } else { running += 1 }
         defer {
             if waiters.isEmpty { running -= 1 } else { waiters.removeFirst().resume() }

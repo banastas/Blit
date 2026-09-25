@@ -8,6 +8,7 @@ let package = Package(
     products: [
         .library(name: "BlitSFTP", targets: ["BlitSFTP"]),
         .library(name: "BlitRemote", targets: ["BlitRemote"]),
+        .library(name: "BlitLocal", targets: ["BlitLocal"]),
         .executable(name: "blit", targets: ["blit"]),
     ],
     dependencies: [
@@ -30,8 +31,11 @@ let package = Package(
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
             ]
         ),
-        .executableTarget(name: "blit", dependencies: ["BlitRemote", "BlitSFTP"]),
+        // Verified copies between local volumes and SMB-mounted NAS shares.
+        .target(name: "BlitLocal", dependencies: ["BlitRemote", "BlitSFTP"]),
+        .executableTarget(name: "blit", dependencies: ["BlitRemote", "BlitSFTP", "BlitLocal"]),
         .testTarget(name: "BlitSFTPTests", dependencies: ["BlitSFTP"]),
         .testTarget(name: "BlitRemoteTests", dependencies: ["BlitRemote", "BlitSFTP"]),
+        .testTarget(name: "BlitLocalTests", dependencies: ["BlitLocal", "BlitRemote"]),
     ]
 )

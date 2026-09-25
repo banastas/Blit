@@ -1,6 +1,7 @@
 // blit — command-line front end to BlitKit, for exercising the engine
 // against real servers before the app exists.
 
+import BlitLocal
 import BlitRemote
 import BlitSFTP
 import Darwin
@@ -24,6 +25,7 @@ func usage() -> Never {
     usage:
       blit ls  user@host[:port] <remote-folder>
       blit get user@host[:port] <remote-path> <local-folder> [options]
+      blit copy <source> <destination-folder> [--nas user@host[:port]] [options]
       blit hostkeys                      list host keys Blit trusts
       blit hostkeys forget host[:port]   forget them
 
@@ -35,7 +37,13 @@ func usage() -> Never {
       --overwrite        replace files that already exist locally
       --progress-lines   print progress as one line per second
 
-    The password comes from $BLIT_PASSWORD or a prompt. Host keys are checked
+    copy options:
+      --nas user@host[:port]  verify each copy with sha256sum on the NAS (over SSH)
+      --nas-root PATH    the share's path on the NAS (default: asks the NAS, e.g. /volume1/Media)
+      --conns N          files copied at once (default 2)
+      --no-verify / --overwrite / --trust SHA256:… / --progress-lines   as for get
+
+    The password comes from $BLIT_PASSWORD or a prompt (NAS: $BLIT_NAS_PASSWORD). Host keys are checked
     against Blit's store and ~/.ssh/known_hosts; an unknown key (or a new key
     type) prompts before it's trusted and remembered. A changed key is refused.
     """)
@@ -92,9 +100,9 @@ func formatDate(_ seconds: UInt32?) -> String {
 }
 
 /// Connects once, asking before trusting an unknown host key (PRD R1.3).
-func connectAskingTrust(_ a: Arguments, credential: SSHCredential, verifier: BlitHostKeyVerifier) async throws -> SSHConnection {
+func connectAskingTrust(_ endpoint: SSHEndpoint, credential: SSHCredential, verifier: BlitHostKeyVerifier) async throws -> SSHConnection {
     do {
-        return try await SSHConnection.connect(to: a.endpoint, credential: credential, verifier: verifier)
+        return try await SSHConnection.connect(to: endpoint, credential: credential, verifier: verifier)
     } catch let error as SSHError {
         guard case .hostKeyRejected(let host, let port, let presented, let known) = error else { throw error }
         if error.isChangedHostKey {
@@ -121,7 +129,7 @@ func connectAskingTrust(_ a: Arguments, credential: SSHCredential, verifier: Bli
         }
         try verifier.store.pin(presented, host: host, port: port)
         print("Remembered in \(verifier.store.path)")
-        return try await SSHConnection.connect(to: a.endpoint, credential: credential, verifier: verifier)
+        return try await SSHConnection.connect(to: endpoint, credential: credential, verifier: verifier)
     }
 }
 
@@ -129,7 +137,7 @@ func connectAskingTrust(_ a: Arguments, credential: SSHCredential, verifier: Bli
 /// host-key trust; the rest follow `staggerMS` apart.
 func openClients(_ a: Arguments, count: Int, credential: SSHCredential) async throws -> [SFTPClient] {
     let verifier = BlitHostKeyVerifier(knownHosts: KnownHostsVerifier(pinnedFingerprints: a.trust))
-    let first = try await SFTPClient.open(on: try await connectAskingTrust(a, credential: credential, verifier: verifier))
+    let first = try await SFTPClient.open(on: try await connectAskingTrust(a.endpoint, credential: credential, verifier: verifier))
     guard count > 1 else { return [first] }
     return try await withThrowingTaskGroup(of: (Int, SFTPClient).self) { group in
         for i in 1..<count {
@@ -171,6 +179,9 @@ func hostKeysCommand(_ args: [String]) -> Never {
 
 if CommandLine.arguments.dropFirst().first == "hostkeys" {
     hostKeysCommand(Array(CommandLine.arguments.dropFirst(2)))
+}
+if CommandLine.arguments.dropFirst().first == "copy" {
+    await copyCommand(Array(CommandLine.arguments.dropFirst(2)))
 }
 let a = parseArguments()
 let credential = SSHCredential.password(readPassword("Password for \(a.endpoint.username)@\(a.endpoint.host): "))
@@ -291,4 +302,150 @@ final class ProgressState: Sendable {
 
 extension String {
     func leftPad(_ width: Int) -> String { count >= width ? self : String(repeating: " ", count: width - count) + self }
+}
+
+// MARK: - blit copy
+
+func parseEndpoint(_ target: String) -> SSHEndpoint? {
+    guard let at = target.lastIndex(of: "@") else { return nil }
+    var host = String(target[target.index(after: at)...])
+    var port = 22
+    if let colon = host.lastIndex(of: ":"), let p = Int(host[host.index(after: colon)...]) {
+        port = p
+        host = String(host[..<colon])
+    }
+    return SSHEndpoint(host: host, port: port, username: String(target[..<at]))
+}
+
+/// The nearest existing folder at or above `path`.
+func existingAncestor(_ path: String) -> String {
+    var p = path
+    while !FileManager.default.fileExists(atPath: p), p != "/" { p = (p as NSString).deletingLastPathComponent }
+    return p
+}
+
+func copyCommand(_ raw: [String]) async -> Never {
+    var args = raw
+    var positional: [String] = []
+    var nasTarget: String?
+    var nasRoot: String?
+    var trust: Set<String> = []
+    var options = CopyOptions()
+    var progressLines = false
+    while !args.isEmpty {
+        let arg = args.removeFirst()
+        switch arg {
+        case "--nas": nasTarget = args.isEmpty ? nil : args.removeFirst()
+        case "--nas-root": nasRoot = args.isEmpty ? nil : args.removeFirst()
+        case "--conns": options.concurrentFiles = max(1, Int(args.isEmpty ? "" : args.removeFirst()) ?? 2)
+        case "--trust": if !args.isEmpty { trust.insert(args.removeFirst()) }
+        case "--no-verify": options.verify = false
+        case "--overwrite": options.overwrite = true
+        case "--progress-lines": progressLines = true
+        default:
+            if arg.hasPrefix("--") { usage() }
+            positional.append(arg)
+        }
+    }
+    guard positional.count == 2 else { usage() }
+    let source = (positional[0] as NSString).expandingTildeInPath
+    let destination = (positional[1] as NSString).expandingTildeInPath
+
+    do {
+        let files = try localFiles(at: source)
+        let total = files.reduce(UInt64(0)) { $0 + $1.size }
+        let mount = MountInfo.of(existingAncestor(destination))
+
+        // Where the traffic goes (PRD R1.7).
+        var nasHost: String? = nasTarget.flatMap { parseEndpoint($0)?.host }
+        if nasHost == nil, let mount, mount.isSMB, let server = mount.source.split(separator: "@").last?.split(separator: "/").first {
+            nasHost = String(server).replacingOccurrences(of: "._smb._tcp", with: "")
+        }
+        if let nasHost, let path = NetworkPath.to(host: nasHost) {
+            print("route to \(nasHost): \(path.interface) (\(path.localAddress))\(path.isWiFi ? ", Wi-Fi" : "")")
+            if path.wifiDespiteWired {
+                print("""
+                WARNING: this copy would go over Wi-Fi even though a wired link is up (\(path.activeWired.joined(separator: ", "))).
+                macOS picks Wi-Fi when it's on the NAS's subnet and the wired port isn't. Put the wired port on
+                the NAS's network (or turn Wi-Fi off) and remount the share; existing mounts keep their interface.
+                """)
+            }
+        }
+
+        var nas: NASVerifier?
+        if let nasTarget, options.verify {
+            guard let endpoint = parseEndpoint(nasTarget), let mount else { usage() }
+            let password = ProcessInfo.processInfo.environment["BLIT_NAS_PASSWORD"]
+                ?? readPassword("NAS password for \(endpoint.username)@\(endpoint.host): ")
+            let verifier = BlitHostKeyVerifier(knownHosts: KnownHostsVerifier(pinnedFingerprints: trust))
+            let connection = try await connectAskingTrust(endpoint, credential: .password(password), verifier: verifier)
+            var root = nasRoot
+            if root == nil { root = try await NASVerifier.findShareRoot(mount.shareName, on: connection) }
+            guard let root else {
+                print("error: couldn't find share \"\(mount.shareName)\" on the NAS; pass --nas-root /volumeN/\(mount.shareName)")
+                exit(1)
+            }
+            nas = NASVerifier(connection: connection, mountPoint: mount.mountPoint, nasRoot: root)
+            print("verifying on the NAS: \(mount.mountPoint) = \(endpoint.host):\(root)")
+        } else if options.verify {
+            print("verifying by reading back through this Mac (pass --nas user@host to verify on the NAS)")
+        }
+        print(String(format: "%d file%@, %@ → %@", files.count, files.count == 1 ? "" : "s", formatBytes(Double(total)), destination))
+
+        let counter = ByteCounter()
+        let start = Date()
+        let progress = ProgressState()
+        let ticker = Task {
+            var last = (time: Date(), bytes: 0)
+            while true {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                let now = Date()
+                let bytes = counter.total
+                let rate = Double(bytes - last.bytes) / now.timeIntervalSince(last.time)
+                last = (now, bytes)
+                let verifying = progress.verifying
+                let status = bytes >= Int(total) && verifying > 0
+                    ? "verifying \(verifying) file\(verifying == 1 ? "" : "s")…" : String(format: "%.1f MB/s", rate / 1e6)
+                if progressLines {
+                    print(String(format: "  %5.0f s  %@ of %@ · %@", now.timeIntervalSince(start), formatBytes(Double(bytes)),
+                                 formatBytes(Double(total)), status))
+                } else {
+                    print("\r  \(formatBytes(Double(bytes))) of \(formatBytes(Double(total))) · \(status)          ", terminator: "")
+                    fflush(stdout)
+                }
+            }
+        }
+
+        let summary = try await copy(files, into: destination, nas: nas, options: options, counter: counter) { event in
+            switch event {
+            case .fileStarted: break
+            case .fileCopied: progress.downloaded()
+            case .fileFinished(let f, let v):
+                progress.finished()
+                let check: String
+                switch v {
+                case .nas: check = "✓ sha256 on NAS"
+                case .readBack(_, let why): check = "✓ read-back" + (why.map { " (\($0))" } ?? "")
+                case .cloned: check = "cloned (same volume)"
+                case .skipped: check = "not verified"
+                }
+                print("\r  \(f.relativePath)  \(formatBytes(Double(f.size)))  \(check)            ")
+            case .fileFailed(let f, let reason):
+                progress.finished()
+                print("\r  ✗ \(f.relativePath): \(reason)            ")
+            }
+        }
+        ticker.cancel()
+        _ = await ticker.result
+        let end = Date()
+        let copySeconds = (progress.lastDownload ?? end).timeIntervalSince(start)
+        print(String(format: "\rdone: %d/%d files, %d verified on NAS · %@ copied in %.1f s (%.1f MB/s) · %.1f s total            ",
+                     summary.finished.count, files.count, summary.verifiedOnNAS, formatBytes(Double(counter.total)),
+                     copySeconds, Double(counter.total) / max(copySeconds, 0.001) / 1e6, end.timeIntervalSince(start)))
+        await nas?.hasher.connection.close()
+        exit(summary.failed.isEmpty ? 0 : 1)
+    } catch {
+        print("error: \(error)")
+        exit(1)
+    }
 }
