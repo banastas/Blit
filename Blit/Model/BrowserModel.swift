@@ -47,12 +47,26 @@ final class BrowserModel {
 
     let servers: ServerStore
     let connections: ConnectionManager
+    /// Recently visited folders, newest first (for ⌘K).
+    private(set) var recents: [BrowseLocation] = []
+    private static let recentsKey = "recentLocations"
     private var backStack: [BrowseLocation] = []
     private var forwardStack: [BrowseLocation] = []
 
     init(servers: ServerStore, connections: ConnectionManager) {
         self.servers = servers
         self.connections = connections
+        if let data = UserDefaults.standard.data(forKey: Self.recentsKey),
+           let saved = try? JSONDecoder().decode([BrowseLocation].self, from: data) {
+            recents = saved
+        }
+    }
+
+    private func remember(_ location: BrowseLocation) {
+        recents.removeAll { $0 == location }
+        recents.insert(location, at: 0)
+        if recents.count > 20 { recents.removeLast(recents.count - 20) }
+        if let data = try? JSONEncoder().encode(recents) { UserDefaults.standard.set(data, forKey: Self.recentsKey) }
     }
 
     var sortedItems: [FileItem] { items.sorted(using: sortOrder) }
@@ -122,6 +136,7 @@ final class BrowserModel {
                 }
                 guard location == current else { return }
                 items = listed
+                remember(location)
             } catch {
                 guard location == current else { return }
                 items = []

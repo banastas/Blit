@@ -31,6 +31,7 @@ struct BlitApp: App {
     @State private var servers: ServerStore
     @State private var connections: ConnectionManager
     @State private var transfers: TransferManager
+    @AppStorage("showMenuBarExtra") private var showMenuBarExtra = true
 
     init() {
         HUDFont.registerBundled()
@@ -42,7 +43,7 @@ struct BlitApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Blit") {
+        WindowGroup("Blit", id: "main") {
             ContentView()
                 .environment(sidebar)
                 .environment(servers)
@@ -53,6 +54,19 @@ struct BlitApp: App {
         }
         .windowToolbarStyle(.unified)
         .commands { BrowserCommands() }
+
+        MenuBarExtra(isInserted: $showMenuBarExtra) {
+            MenuBarPanel()
+                .environment(transfers)
+        } label: {
+            MenuBarLabel()
+                .environment(transfers)
+        }
+        .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 

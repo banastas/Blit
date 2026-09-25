@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var browser: BrowserModel?
     @State private var transferError: String?
     @State private var nasShare: VolumeLocation?
+    @State private var showPalette = false
     @State private var selection: BrowseLocation?
     @State private var editing: EditingServer?
     @State private var removing: ServerConfig?
@@ -58,6 +59,12 @@ struct ContentView: View {
                 servers.save(server, password: password)
                 connections.disconnect(server)
                 if item.isNew { selection = server.startLocation } else if selection?.serverID == server.id { browser?.reload() }
+            }
+        }
+        .sheet(isPresented: $showPalette) {
+            CommandPalette(entries: paletteEntries) { location in
+                selection = location
+                browser?.open(location)
             }
         }
         .sheet(item: $nasShare) { share in
@@ -113,6 +120,9 @@ struct ContentView: View {
                 .keyboardShortcut("]", modifiers: .command)
         }
         ToolbarItemGroup {
+            Button("Go to…", systemImage: "magnifyingglass") { showPalette = true }
+                .keyboardShortcut("k", modifiers: .command)
+                .help("Go to a favorite, server, drive or recent folder (⌘K)")
             Button("Enclosing Folder", systemImage: "arrow.up") { browser?.goUp() }
                 .disabled(!(browser?.canGoUp ?? false))
                 .keyboardShortcut(.upArrow, modifiers: .command)
@@ -123,6 +133,44 @@ struct ContentView: View {
             .keyboardShortcut("d", modifiers: .command)
             .help("Add this folder to Favorites (⌘D)")
         }
+    }
+
+    /// Everything ⌘K can jump to, deduplicated by location.
+    private var paletteEntries: [PaletteEntry] {
+        var seen = Set<BrowseLocation>()
+        var entries: [PaletteEntry] = []
+        func add(_ location: BrowseLocation, _ name: String, _ detail: String, _ symbol: String, _ group: PaletteEntry.Group) {
+            guard seen.insert(location).inserted else { return }
+            entries.append(PaletteEntry(location: location, name: name, detail: detail, symbol: symbol, group: group))
+        }
+        func describe(_ location: BrowseLocation) -> (name: String, detail: String) {
+            switch location {
+            case .local(let url):
+                return (url.path == "/" ? "Macintosh HD" : url.lastPathComponent, (url.path as NSString).abbreviatingWithTildeInPath)
+            case .remote(let id, let bytes):
+                let server = servers.server(id)?.displayName ?? "Server"
+                let path = bytes.isEmpty ? "~" : String(decoding: bytes, as: UTF8.self)
+                return (location.lastComponent.isEmpty ? server : location.lastComponent, "\(server):\(path)")
+            }
+        }
+        for favorite in sidebar.favorites {
+            let d = describe(favorite.location)
+            add(favorite.location, d.name, d.detail, "star", .favorite)
+        }
+        for server in servers.browsable {
+            add(server.startLocation, server.displayName, "\(server.username)@\(server.host)", "server.rack", .server)
+        }
+        for drive in sidebar.drives {
+            add(.local(drive.url), drive.name, drive.url.path, drive.isInternal ? "internaldrive" : "externaldrive", .drive)
+        }
+        for share in sidebar.networkShares {
+            add(.local(share.url), share.name, share.url.path, "externaldrive.connected.to.line.below", .nas)
+        }
+        for recent in browser?.recents ?? [] {
+            let d = describe(recent)
+            add(recent, d.name, d.detail, "clock", .recent)
+        }
+        return entries
     }
 
     private var trustBinding: Binding<TrustRequest?> {
