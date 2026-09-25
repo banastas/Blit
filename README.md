@@ -10,7 +10,7 @@ Blit moves data between three places, and does nothing else:
 
 The name comes from *bit block transfer*: copy a block of memory as fast as the hardware allows.
 
-> **Status:** pre-alpha. Benchmarking (M0) is complete and the PRD has had a technical review. Next up is the SSH spike (M1). The app itself hasn't been started yet. This README is the living product requirements document (PRD).
+> **Status:** pre-alpha. Benchmarking (M0) and the SSH spike (M1) are complete: one SwiftNIO SSH connection reached **42.9 MB/s**, and 3 connections reached **~90 MB/s, verified**. Next up is the SFTP engine (M2). This README is the living product requirements document (PRD).
 
 ---
 
@@ -129,7 +129,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 
 - **R1.1** SFTP connections with password or SSH key auth. Secrets are stored in the Keychain.
 - **R1.2** Per-server settings: host, port, username, starting path, maximum connections, and an optional separate **shell endpoint** for server-side checksums. Some servers run SFTP and shell on different ports with different path roots; see [findings](#benchmark-findings).
-- **R1.3** Check host keys on first connect and pin them after that. Refuse to connect if a host key changes.
+- **R1.3** Check host keys on first connect and pin them in Blit's own store, which can be seeded from `~/.ssh/known_hosts`. SwiftNIO SSH takes the **server's** preferred key type, which may differ from the one on file. For example, SFTPGo presents Ed25519 while `known_hosts` has only its ECDSA key. When that happens, show both fingerprints and ask; never accept silently. Refuse to connect if a pinned key changes.
 - **R1.4** Local and external volumes appear automatically. Blit notices when a drive is ejected mid-transfer and recovers when it reconnects.
 - **R1.5** NAS shares mounted through macOS SMB are used as normal filesystem paths. Blit can save and remount favorite shares.
 - **R1.6** A NAS entry can have an SSH endpoint, used to compute checksums on the NAS (R4.2). This requires SSH enabled in DSM and an account in the administrators group.
@@ -188,9 +188,9 @@ Derived from the measurements below.
 
 | Path | Target | Ceiling / notes |
 |---|---|---|
-| Remote → SSD, pack of many files | **≥ 55 MB/s** sustained | Remote disk: 86 MB/s for one reader. Measured 57 MB/s with 8 connections. |
-| Remote → SSD, single large file | **≥ 50 MB/s** | Needs chunked downloads. Transmit manages 24.6 MB/s on one connection. |
-| Remote, per connection | **≥ 24 MB/s** | Needs a larger in-flight window than OpenSSH's (OpenSSH: 10.7 MB/s). M1 exit criterion: more than 24.6 MB/s. |
+| Remote → SSD, pack of many files | **≥ 55 MB/s** sustained | Remote disk: 86 MB/s for one reader. lftp: 57 MB/s with 8 connections. M1 spike: ~90 MB/s with 3 (file probably in the server's cache). |
+| Remote → SSD, single large file | **≥ 50 MB/s** | Needs chunked downloads. Transmit: 24.6 MB/s on one connection. M1 spike: 88.9–93.0 MB/s split 3 ways, written to disk and verified. |
+| Remote, per connection | **≥ 24 MB/s** ✅ | **M1: 42.9 MB/s** (255 KB reads, 16 MB window, 7 MB receive buffer). OpenSSH: 10.7 MB/s. |
 | SSD → NAS, today (1 GbE) | **≥ 105 MB/s** | Link maximum is about 113 MB/s. |
 | SSD → NAS, after the 10 GbE upgrade | Limited by the NAS disks | See [reference environment](#reference-environment). |
 | Integrity | 100% of files verified | Zero silent corruption |
@@ -232,9 +232,37 @@ Measured on 2026-09-24 from the [reference environment](#reference-environment) 
 1. **The SFTPGo endpoint was the ceiling, not the server.** It levels off around 27 MB/s. Over OpenSSH on the same machine, speed scales almost linearly up to 8 connections.
 2. **64 KB reads through SFTPGo collapsed to 0.36 MB/s, but the problem was lftp, not the server.** SFTPGo is built on `pkg/sftp`, which caps read replies at 32,768 bytes. A 64 KB request gets a shortened 32 KB reply, which the protocol allows, and lftp handles that badly. SFTPGo also doesn't support `limits@openssh.com`, so read-size discovery wouldn't help there. The fix is handling shortened replies correctly (R3.4). A client that does can use 64 KB requests against SFTPGo safely.
 3. **OpenSSH's client caps each connection at about 10.7 MB/s** at 148 ms. That fits its fixed 2 MiB channel window (`CHAN_SES_WINDOW_DEFAULT` = 64 × 32 KB, which can't be changed). 2 MiB every 148 ms is about 14.2 MB/s at best. `sftp`'s `-B` and `-R` options add more requests in flight, but the window still caps the total.
-4. **Transmit reached 24.6 MB/s on one connection,** which means about 3.6 MB in flight. Where the next ceiling sits is **unknown**. Linux counts buffer overhead against its TCP send-buffer limit, so a default 4 MB limit carries only about half that in data. Transmit's 3.6 MB means either the seedbox's buffers are already tuned above the default, or Transmit limits itself (a ~4 MB window inside the app). The M1 spike answers this.
+4. **Transmit reached 24.6 MB/s on one connection,** which means about 3.6 MB in flight. **M1 answered why: the limit was the Mac.** macOS lets each TCP connection's automatic receive buffer grow only to 4 MB (`net.inet.tcp.autorcvbufmax`). With that default, the spike also stopped at 24.5 MB/s. Setting `SO_RCVBUF` to 7 MB on the connection raised it to 32–43 MB/s. See [M1 spike results](#m1-spike-results).
 5. **16 connections was slower than 8 (46.9 vs 57.1 MB/s), and the cause is unknown.** Possible causes: disk seeking from many readers, sshd's `MaxStartups` (default `10:30:100`) randomly dropping near-simultaneous logins, 16 logins at 148 ms eating into the 20-second test, or ordinary variation between single runs on a shared server. Through SFTPGo, 16 connections was level with 8 rather than slower. The target is **3–4 connections with large windows** either way, for fair use and because of the disk ceiling.
 6. **The SFTP and shell endpoints use different path roots.** `/files/…` in SFTPGo is `~/files/…` over OpenSSH. Blit needs a per-server path mapping between them (R1.2).
+
+### M1 spike results
+
+Measured on 2026-09-24 with [`spike/`](spike/): SwiftNIO SSH 0.15.0 and a minimal pipelined SFTP v3 client, against the OpenSSH endpoint unless noted. The 923 MB file had been read repeatedly that day and was probably in the server's cache.
+
+| Test | MB/s |
+|---|---:|
+| SSH channel (`cat`), 2 MB window, automatic receive buffer | 10.3 |
+| SSH channel, 8 MB window, automatic receive buffer (4 MB macOS cap) | 24.5 |
+| SSH channel, 8 MB window, **7 MB `SO_RCVBUF`** | 32.5 |
+| SSH channel, 16 MB window, 7 MB `SO_RCVBUF` | 35.1 |
+| SFTP, 1 connection, 64 × 32 KB in flight (2 MB) | 12.8 |
+| SFTP, 1 connection, 128 × 64 KB in flight | 39.8 |
+| **SFTP, 1 connection, 32 × 255 KB in flight** | **42.9** |
+| SFTP, 3 connections, file split 3 ways | 81.5–90.9 |
+| SFTP, 3 connections, **written to disk + SHA-256 verified against the server** | **91.6–93.0** ✓ |
+| SFTP, 4 connections | 89.7 |
+| SFTPGo endpoint, 1 connection, 64 KB requests (7,204 short reads handled) | 23.7 |
+
+What it settled:
+
+1. **SwiftNIO SSH is confirmed as the library.** Host-key checks, password login, AES-GCM, window control through `maximumPacketSize`, exec channels, and half-closing stdin all work against the real server.
+2. **The per-connection ceiling was the Mac's TCP receive buffer,** not the server and not the SSH window. Blit sets `SO_RCVBUF` to 7 MB before connecting. The maximum is about 7.1 MB under the default `kern.ipc.maxsockbuf` of 8 MB, and no system changes are needed.
+3. **Keeping enough requests in flight matters as much as the window.** 64 × 32 KB fills only 2 MB and stays at 12.8 MB/s even with a 16 MB window.
+4. **Handling shortened replies fixes SFTPGo.** One connection gets 23.7 MB/s, about what lftp needed 8 connections for.
+5. **Writing to disk costs nothing at these speeds.** Saved runs matched discarded ones. An earlier 54 MB/s run coincided with 3.6 s connection setup (normally 1.2–1.9 s), so it was the server being busy.
+6. **Server-side `sha256sum` with the path sent NUL-delimited over stdin works:** 923 MB in about 7 s (from cache), and it matched every time.
+7. **SwiftNIO SSH reports failures but leaves the TCP connection open,** so the engine must close on error and apply handshake timeouts. The spike initially hung without them.
 
 ### LAN
 
@@ -267,6 +295,7 @@ Measured on 2026-09-24 from the [reference environment](#reference-environment) 
 ### SFTP engine design notes
 
 - **Protocol:** SFTP version 3, which covers every server that matters.
+- **Defaults (from M1):** `SO_RCVBUF` 7 MB, set before connect; 256 KB maximum packet (16 MB window); reads at the server's `limits@openssh.com` maximum read size (255 KB on OpenSSH) with 32 in flight, or 64 KB × 128 with short-read handling where the extension is missing (SFTPGo); 3 connections, 250 ms apart. Connection setup takes about 1.2–1.9 s (key exchange and password login at 148 ms).
 - **Library: SwiftNIO SSH, with our own SFTP client.** SwiftNIO SSH sets each channel's window at the maximum packet size × 64. The default 128 KB packet gives an 8 MB window (about 54 MB/s at 148 ms). Raising the packet size to 256 KB gives 16 MB. There's no direct window setting. It supports key renegotiation (servers typically renegotiate every 1–4 GB, so 20 GB files depend on this) and AES-GCM, which matches the cipher plan.
 - **Ruled out:** Citadel's SFTP client waits for each read before sending the next (no pipelining), so its wire-format types may be worth borrowing but not its read path. libssh2 has a fixed 2 MiB window, caps SFTP reads at 30,000 bytes, and gives no window control through its SFTP API, which puts it at OpenSSH's ~14 MB/s. It stays a fallback only if SwiftNIO SSH fails the M1 spike.
 - **Per connection:** window ≥ 8 MB (packet size 128–256 KB), 64+ read requests in flight, and correct handling of shortened read replies (R3.4).
@@ -274,7 +303,8 @@ Measured on 2026-09-24 from the [reference environment](#reference-environment) 
 - **Auth:** password or key. Host keys are pinned.
 - **Cipher:** prefer `aes128-gcm@openssh.com` (the server already negotiates it; it's hardware-accelerated on Apple Silicon). Compression is off.
 - **Checksums:** use a second session to the shell endpoint to run `sha256sum` the moment each file finishes, and store the results in a hash cache (R4.1). The same code verifies NAS copies (R4.2).
-- **Connection setup:** open connections a moment apart rather than all at once, to stay under sshd's `MaxStartups` limit.
+- **Connection setup:** open connections a moment apart rather than all at once, to stay under sshd's `MaxStartups` limit. Close the TCP connection on any SwiftNIO SSH error, and time out handshakes. SwiftNIO SSH won't do either by itself.
+- **Disk I/O:** writing from the network event loop cost nothing at ~93 MB/s in M1. The engine still moves file writes off the network threads to leave headroom.
 
 ### Local / SMB engine design notes
 
@@ -309,8 +339,8 @@ The setup Blit is tuned against:
 | | Milestone | Scope | Status |
 |---|---|---|---|
 | **M0** | Benchmarks | Measure the network ceilings, find the bottlenecks, validate the approach | ✅ Done |
-| **M1** | SSH spike | Throwaway code: raw SwiftNIO SSH channel throughput with a ≥ 8 MB window against the real server, then a minimal pipelined read loop that handles shortened replies, plus `sha256sum` over an exec channel (also check it on DSM). Fix the probe to time from first byte. **Done when one connection sustains more than 24.6 MB/s from the reference server.** This settles the library choice, the window ceiling, and the number of connections. | Next |
-| **M2** | SFTP engine | Pipelined reads, connection pool with staggered setup, chunked files, remote checksums with hash cache, resume, stability gate, filename policy. Target ≥ 55 MB/s from the reference server. | |
+| **M1** | SSH spike | Throwaway code: raw SwiftNIO SSH channel throughput with a ≥ 8 MB window against the real server, then a minimal pipelined read loop that handles shortened replies, plus `sha256sum` over an exec channel. **Done when one connection sustains more than 24.6 MB/s from the reference server.** Result: 42.9 MB/s on one connection, ~90 MB/s on 3, verified ([results](#m1-spike-results)). Carried into M2: `sha256sum` on DSM, and fixing the probe to time from first byte. | ✅ Done |
+| **M2** | SFTP engine | Pipelined reads, connection pool with staggered setup, chunked files, remote checksums with hash cache, resume, stability gate, filename policy, host-key pin store. Target ≥ 55 MB/s from the reference server. Requires full Xcode (only the Command Line Tools are installed now). | Next |
 | **M3** | Local engine | LocalCopyEngine, NAS-side checksums over SSH, `.blitpart` handling, queue-wide disk-space checks, command-line test harness. Target ≥ 105 MB/s SSD → NAS. | |
 | **M4** | App | Finder-style browser (sorted newest first, alternating rows, ⌘K, optional second pane), transfer strip, durable queue, server editor, Keychain, host-key pinning, notifications, menu bar icon, "Blit to…" Quick Action | |
 | **M5** | Hardening | Handling network changes, sleep and wake, drive ejection, transfer log export, signing and notarization | |
@@ -318,25 +348,31 @@ The setup Blit is tuned against:
 ## Open questions
 
 1. ~~**SSH library**~~ **Answered:** SwiftNIO SSH with our own SFTP client; libssh2 and Citadel were ruled out (see [SFTP engine design notes](#sftp-engine-design-notes)). M1 confirms it against the real server.
-2. **Per-connection ceiling:** is Transmit's 24.6 MB/s its own limit, or the server's TCP buffers? The M1 spike measures it with 8 and 16 MB windows. If one connection can't beat about 25 MB/s, the design moves toward more connections.
+2. ~~**Per-connection ceiling**~~ **Answered (M1):** the Mac's 4 MB automatic TCP receive-buffer cap. With a 7 MB `SO_RCVBUF`, one connection reached 42.9 MB/s.
 3. **Fair use:** what the remote provider allows for simultaneous connections. Defaults should be modest (3–4).
 4. **Server-side hashing cost:** reduced by hashing each file as soon as it finishes, while it's in the server's cache, and by the hash cache (R4.1). Measure the real impact on the seedbox's disk in M2.
 5. **SMB at 10 GbE:** keep using the macOS SMB client with `nsmb.conf` and multichannel tuning, or embed `libsmb2` if measurements show the macOS client is the bottleneck after the upgrade.
 6. **Uploads:** out of scope for v1, but the engine shouldn't rule them out.
 7. **Browse-only File Provider:** worth it after v1? Handing downloads from the extension to Blit's engine is feasible. Still to check: whether File Provider on macOS 27 can place files on an external APFS drive rather than the boot drive, and how reliable it is.
-8. **Connection ramp:** does the seedbox's sshd drop near-simultaneous logins above `MaxStartups`? M1 checks it by opening 8–16 connections at once and a moment apart.
+8. **Connection ramp:** does the seedbox's sshd drop near-simultaneous logins above `MaxStartups`? Opening 3–4 connections 250 ms apart worked every time in M1. 8–16 at once wasn't tested, and isn't needed at 3–4 connections.
+9. **Cold-file throughput:** every M1 figure came from a file in the server's cache. Measure an unread file in M2 to find the real disk-limited ceiling.
 
 ## Repository layout
 
 ```
 blit/
 ├── README.md             this document (the PRD)
-└── scripts/
-    ├── sftp-probe.sh     quick per-method SFTP speed probe (20 s each)
-    └── sftp-bench.sh     longer parallel-file / chunked-file benchmark with checksums
+├── scripts/
+│   ├── sftp-probe.sh     quick per-method SFTP speed probe (20 s each)
+│   └── sftp-bench.sh     longer parallel-file / chunked-file benchmark with checksums
+└── spike/                M1 throwaway: SwiftNIO SSH + minimal pipelined SFTP client
+    ├── Package.swift
+    ├── Sources/blit-spike/main.swift
+    ├── run-m1.sh         the M1 test matrix
+    └── run-m1b.sh        M1 follow-ups (SFTPGo, 255 KB reads, disk-write cost)
 ```
 
-Throwaway spike code arrives in M1. The Xcode project arrives with M2.
+The Xcode project arrives with M2.
 
 ## Benchmark tools
 
