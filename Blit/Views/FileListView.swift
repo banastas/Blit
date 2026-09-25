@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 
 struct FileListView: View {
     @Bindable var browser: BrowserModel
+    @Environment(TransferManager.self) private var transfers
     @State private var isTargeted = false
     @AppStorage("showPathBar") private var showPathBar = true
 
@@ -22,7 +23,11 @@ struct FileListView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if showPathBar, browser.current != nil { PathBar(browser: browser) }
+            // With no HUD below, the path bar is the window's bottom edge: pad it
+            // clear of the rounded corners (the window's safe area is ignored).
+            if showPathBar, browser.current != nil {
+                PathBar(browser: browser, bottomPadding: transfers.featured == nil ? 10 : 0)
+            }
         }
         .debugHeight("list")
         .confirmationDialog(deleteTitle, isPresented: deleteShown, presenting: browser.deleteRequest) { items in

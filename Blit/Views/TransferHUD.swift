@@ -346,6 +346,20 @@ extension View {
     }
 }
 
+extension View {
+    /// Debug builds: logs changes to this view's safe-area insets.
+    @ViewBuilder func debugSafeArea(_ label: String) -> some View {
+        #if DEBUG
+        onGeometryChange(for: EdgeInsets.self, of: { $0.safeAreaInsets }) { old, new in
+            guard old != new else { return }
+            LayoutLog.write("\(label) safe area top \(old.top)→\(new.top) bottom \(old.bottom)→\(new.bottom)")
+        }
+        #else
+        self
+        #endif
+    }
+}
+
 #if DEBUG
 enum LayoutLog {
     static let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/Blit/layout.log")

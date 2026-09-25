@@ -58,11 +58,19 @@ struct ContentView: View {
                                     TransferStrip(job: job).transition(.crt)
                                 }
                             }
-                            .padding(8)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 8)
+                            .padding(.bottom, 12)
                             .debugHeight("inset")
                             .transition(.crt)
                         }
                     }
+                    // Anchor to the window's real bottom edge: macOS briefly changes
+                    // the bottom safe area (13 pt → 0) during downloads, which made
+                    // the path bar and HUD jump. The extra bottom padding keeps
+                    // the HUD clear of the window's rounded corners.
+                    .ignoresSafeArea(.container, edges: .bottom)
+                    .debugSafeArea("detail")
                     .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: transfers.isExpanded)
                     .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: transfers.featured == nil)
             }

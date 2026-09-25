@@ -15,6 +15,8 @@ struct PathSegment: Identifiable {
 
 struct PathBar: View {
     let browser: BrowserModel
+    /// Extra space below the bar when it sits on the window's bottom edge.
+    var bottomPadding: CGFloat = 0
 
     var body: some View {
         let segments = self.segments
@@ -37,6 +39,7 @@ struct PathBar: View {
         .padding(.horizontal, 8)
         .frame(height: 24)
         .frame(maxWidth: .infinity)
+        .padding(.bottom, bottomPadding)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
         .debugHeight("pathbar")
