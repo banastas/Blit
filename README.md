@@ -132,7 +132,15 @@ Native macOS first, with a restrained "dark hacker" touch:
 
 ### Transfer HUD
 
-The transfer strip expands into a 1-bit, pixel-terminal HUD (references: 1-bit pixel art, pixel icon sets, the *Alien* Nostromo interface). Collapsed, it's a single line: segmented progress, rate, and the latest log line.
+The transfer strip expands into a 1-bit, pixel-terminal HUD (references: 1-bit pixel art, pixel icon sets, the *Alien* Nostromo interface).
+
+**Condensed (default), two lines:**
+1. `▲ 02/05` transfer count (click to expand) · item `→` destination · 24-cell segmented progress · percent · mini 30-second throughput histogram · large rate · one square per active connection (or file stream), with a short link summary (`3× · 148MS` for SFTP, `SMB · EN7` for copies).
+2. The latest log line: verification results, resumes, ETA.
+
+A failure adds a compact red `✕ N warning` tag in the top line (in place of the histogram) and turns the log line muted red; clicking it opens the full HUD at the WARNING panel.
+
+**Expanded:** the full HUD described below.
 
 - **Type:** pixel uppercase for labels (Silkscreen) and large terminal numerals for readouts (VT323). Both are SIL Open Font License, so they can be bundled with the app. The file browser keeps the system font and SF Mono.
 - **Panels:** boxed readouts with 1-pixel borders: *Item* (name, route, segmented progress, per-connection chunk rows), *Throughput · 60 s* (big rate plus a pixel-column histogram, peak, ETA), *Link data* (connections, cipher, window, receive buffer, read size and depth, RTT, verification method), and *Log*.
