@@ -20,15 +20,16 @@ The name comes from *bit block transfer*: copy a block of memory as fast as the 
 2. [Goals and non-goals](#goals-and-non-goals)
 3. [Target platform](#target-platform)
 4. [Primary workflow](#primary-workflow)
-5. [Requirements](#requirements)
-6. [Performance targets](#performance-targets)
-7. [Benchmark findings](#benchmark-findings)
-8. [Architecture](#architecture)
-9. [Reference environment](#reference-environment)
-10. [Milestones](#milestones)
-11. [Open questions](#open-questions)
-12. [Repository layout](#repository-layout)
-13. [Benchmark tools](#benchmark-tools)
+5. [Design](#design)
+6. [Requirements](#requirements)
+7. [Performance targets](#performance-targets)
+8. [Benchmark findings](#benchmark-findings)
+9. [Architecture](#architecture)
+10. [Reference environment](#reference-environment)
+11. [Milestones](#milestones)
+12. [Open questions](#open-questions)
+13. [Repository layout](#repository-layout)
+14. [Benchmark tools](#benchmark-tools)
 
 ---
 
@@ -84,6 +85,44 @@ remote SFTP server ──(parallel SFTP, verified)──▶ external SSD ──(
 3. Each file is checked against a SHA-256 computed on the server. Only then does it get its final name.
 4. After manual review, move the files from the SSD to the NAS in one step, with verification.
 
+## Design
+
+**One minimal window that feels like Finder, with a transfer engine underneath.**
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│ ● ● ●   ‹ ›   seedbox › downloads › 2026.09.16 Weekly Pack    ⌘K   │
+├──────────────┬─────────────────────────────────────────────────────┤
+│ Servers      │   Name             Date modified ▼  Size      Status│
+│  ● seedbox   │ ▓ Main Week        Today 09:41      6.12 GB   64%   │
+│ Drives       │   INDIE Week       Today 09:12      2.58 GB   ✓     │
+│  Scratch SSD │ ▓ Manga Week       Yesterday        1.94 GB   queued│
+│  Macintosh HD│   readme.nfo       Sep 16           4 KB            │
+│ NAS          │ ▓                                                   │
+│  RS1619xs+   │                                                     │
+│  DS920+      │                                                     │
+├──────────────┴─────────────────────────────────────────────────────┤
+│ ↓ Main Week → Scratch SSD  ▬▬▬▬▬ ▬▬▬▬ ▬▬▬▬▬  58.4 MB/s · 3 conn    │
+└────────────────────────────────────────────────────────────────────┘
+  ▓ = alternating row background
+```
+
+### Principles
+
+- **Finder's layout, with nothing new to learn.** A sidebar grouped into Servers, Drives, and NAS, and one file list. A second pane is one keystroke away and hidden by default.
+- **Copy and paste starts a transfer.** ⌘C on the seedbox, then ⌘V on the SSD, is a parallel, verified download. Drag and drop works the same way.
+- **⌘K jumps anywhere.** Fuzzy search across servers, drives, and recent folders.
+- **One transfer strip at the bottom.** It shows the current job, one bar per connection, total speed, and time left. Click it to expand the full queue.
+- **Quiet status.** A checkmark means verified. A dot in the sidebar shows connection health. There are no popups unless a decision is needed.
+- **Standard controls.** Built from standard SwiftUI and AppKit components, so it picks up the macOS 27 look (Liquid Glass) automatically. A menu bar icon shows progress when the window is closed.
+
+### Finder integration
+
+Apple doesn't let third-party apps put their own interface in a Finder tab. What Blit does instead:
+
+- **Quick Action (App Intents): "Blit to…"** Right-click reviewed files in Finder and send them to a NAS through Blit's verified copy engine. It's also available in Shortcuts. *(M3)*
+- **Browse-only File Provider (later option).** The seedbox would appear under Locations in Finder's sidebar, but actual downloads are handed to Blit's engine. macOS's own File Provider transfers would lose parallel connections, split files, and checksums.
+
 ## Requirements
 
 ### Connections
@@ -99,6 +138,11 @@ remote SFTP server ──(parallel SFTP, verified)──▶ external SSD ──(
 - **R2.1** Two-pane browser, with any connection on either side.
 - **R2.2** Keyboard-first: arrow keys, type-to-select, and copy with ⌘C or Return.
 - **R2.3** Drag and drop between panes and to and from Finder.
+- **R2.4** **Sort by date modified, newest first, by default.** Clicking a column header changes the sort. The choice is remembered per location, and the default is always newest at the top.
+- **R2.5** **Alternating row backgrounds** in every file list, using the standard macOS alternating row colors so they match light and dark mode.
+- **R2.6** Columns: Name, Date modified, Size, Status (queued, percent done, verified, failed). Columns can be shown, hidden, and resized.
+- **R2.7** ⌘K command palette to jump to any server, drive, or recent folder.
+- **R2.8** A single pane by default, with a keyboard shortcut to toggle a second pane.
 
 ### Transfer engine
 
@@ -126,6 +170,12 @@ remote SFTP server ──(parallel SFTP, verified)──▶ external SSD ──(
 - **R5.4** Show live throughput per connection and overall, plus time remaining.
 - **R5.5** Send a notification when a queue finishes or fails.
 - **R5.6** Keep the Mac awake while transfers run.
+- **R5.7** A menu bar icon shows overall progress and speed when the main window is closed.
+
+### Finder integration
+
+- **R6.1** A "Blit to…" Quick Action (App Intents) for files selected in Finder, with destinations chosen from saved NAS and drive locations. It's also available in Shortcuts.
+- **R6.2** *(Later)* A browse-only File Provider extension for servers. Downloads started from Finder go through Blit's engine.
 
 ## Performance targets
 
@@ -252,7 +302,7 @@ The setup Blit is tuned against:
 | **M0** | Benchmarks | Measure the network ceilings, find the bottlenecks, validate the approach | ✅ Done |
 | **M1** | Local engine | Xcode project, LocalCopyEngine, Verifier, `.blitpart` handling, command-line test harness. Target ≥ 105 MB/s SSD → NAS. | Next |
 | **M2** | SFTP engine | Evaluate SwiftNIO SSH vs libssh2, then build pipelined reads, window tuning, connection pool, chunked files, remote checksums, resume. Target ≥ 55 MB/s from the reference server. | |
-| **M3** | App | Two-pane browser, durable queue, server editor, Keychain, host-key pinning, notifications | |
+| **M3** | App | Finder-style browser (sorted newest first, alternating rows, ⌘K, optional second pane), transfer strip, durable queue, server editor, Keychain, host-key pinning, notifications, menu bar icon, "Blit to…" Quick Action | |
 | **M4** | Hardening | Handling network changes, sleep and wake, drive ejection, transfer log export, signing and notarization | |
 
 ## Open questions
@@ -263,6 +313,7 @@ The setup Blit is tuned against:
 4. **Server-side hashing cost:** `sha256sum` reads each file again from the server's disk, adding load to the 86 MB/s ceiling. Options: hash on the server while the download runs (so the file may already be in the server's cache), or hash per chunk.
 5. **SMB engine:** keep using the macOS SMB client, or embed `libsmb2` if measurements show the macOS client is the bottleneck after the 10 GbE upgrade.
 6. **Uploads:** out of scope for v1, but the engine shouldn't rule them out.
+7. **Browse-only File Provider:** worth it after v1? It depends on how reliable a browse-only File Provider proves on macOS 27, and whether Finder's "download" action can be handed off to Blit cleanly.
 
 ## Repository layout
 
