@@ -169,8 +169,14 @@ struct TransferStrip: View {
     }
 
     @ViewBuilder private var logLine: some View {
-        if job.status == .preparing {
-            Text("PREPARING · LISTING FILES…").foregroundStyle(HUDColor.dim)
+        if case .waiting(let until, let reason) = job.status {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let left = max(0, Int(until.timeIntervalSince(context.date)))
+                Text("RETRY IN \(left / 60):\(String(format: "%02d", left % 60)) · \(reason.uppercased())")
+                    .foregroundStyle(Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
+            }
+        } else if job.status == .preparing {
+            Text(job.attempt > 0 ? "RECONNECTING · ATTEMPT \(job.attempt + 1)…" : "PREPARING · LISTING FILES…").foregroundStyle(HUDColor.dim)
         } else if !job.isActive, job.status != .queued {
             let queued = transfers.queuedCount
             hudText(summary + (queued > 0 ? " · \(queued) QUEUED" : ""))

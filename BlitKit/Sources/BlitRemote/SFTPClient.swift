@@ -190,6 +190,9 @@ final class SFTPChannelHandler: ChannelInboundHandler {
 
     /// Stop issuing reads while this many writes are waiting for the disk.
     static let maxPendingWrites = 32
+    /// With requests outstanding and nothing received for this long, the link is
+    /// treated as dead so the transfer fails (and can retry) instead of hanging.
+    static let stallTimeout: TimeAmount = .seconds(60)
 
     private let version: EventLoopPromise<[SFTPExtension]>
     private var context: ChannelHandlerContext?
@@ -199,11 +202,30 @@ final class SFTPChannelHandler: ChannelInboundHandler {
     private var jobsByRead: [UInt32: DownloadJob] = [:]
     private var closedError: Error?
     private var versionReceived = false
+    private var lastActivity = NIODeadline.now()
+    private var watchdog: RepeatedTask?
 
     init(version: EventLoopPromise<[SFTPExtension]>) { self.version = version }
 
-    func handlerAdded(context: ChannelHandlerContext) { self.context = context }
-    func handlerRemoved(context: ChannelHandlerContext) { self.context = nil }
+    func handlerAdded(context: ChannelHandlerContext) {
+        self.context = context
+        let bound = NIOLoopBound(self, eventLoop: context.eventLoop)
+        watchdog = context.eventLoop.scheduleRepeatedTask(initialDelay: .seconds(10), delay: .seconds(10)) { _ in
+            bound.value.checkForStall()
+        }
+    }
+
+    func handlerRemoved(context: ChannelHandlerContext) {
+        watchdog?.cancel()
+        watchdog = nil
+        self.context = nil
+    }
+
+    private func checkForStall() {
+        let waiting = !pending.isEmpty || !jobsByRead.isEmpty
+        guard waiting, closedError == nil, NIODeadline.now() - lastActivity > Self.stallTimeout else { return }
+        shutDown(SSHError.disconnected("no data from the server for \(Self.stallTimeout.nanoseconds / 1_000_000_000) s"))
+    }
 
     private func takeID() -> UInt32 {
         defer { nextID &+= 1 }
@@ -227,6 +249,7 @@ final class SFTPChannelHandler: ChannelInboundHandler {
         if let closedError { return context.eventLoop.makeFailedFuture(closedError) }
         let id = takeID()
         let promise = context.eventLoop.makePromise(of: SFTPResponse.self)
+        if pending.isEmpty, jobsByRead.isEmpty { lastActivity = .now() }   // idle until now: start the clock fresh
         pending[id] = promise
         write(make(id), flush: true)
         return promise.futureResult
@@ -237,6 +260,7 @@ final class SFTPChannelHandler: ChannelInboundHandler {
         let loop = version.futureResult.eventLoop
         if let closedError { return loop.makeFailedFuture(closedError) }
         let job = DownloadJob(planner: planner, handle: handle, file: file, progress: progress, promise: loop.makePromise())
+        if pending.isEmpty, jobsByRead.isEmpty { lastActivity = .now() }
         pump(job)
         return job.promise.futureResult
     }
@@ -284,6 +308,7 @@ final class SFTPChannelHandler: ChannelInboundHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let message = unwrapInboundIn(data)
         guard message.type == .channel, case .byteBuffer(let bytes) = message.data else { return }
+        lastActivity = .now()
         framer.append(bytes)
         do {
             while let (type, body) = try framer.next() {

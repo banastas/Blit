@@ -75,6 +75,7 @@ struct TransferHUD: View {
         case .running: return route + (job.restored ? " · RESUMED" : "")
         case .finished: return (job.allAlreadyPresent ? "ALREADY PRESENT · " : "DONE · ") + route
         case .failed: return "FAILED · " + route
+        case .waiting: return "WAITING TO RETRY · " + route
         }
     }
 

@@ -5,8 +5,10 @@
 import BlitLocal
 import BlitRemote
 import BlitSFTP
+import AppKit
 import CoreTransferable
 import Foundation
+import Network
 import Observation
 import UniformTypeIdentifiers
 import UserNotifications
@@ -35,7 +37,11 @@ struct LogLine: Identifiable {
 @Observable
 final class TransferJob: Identifiable {
     enum Kind { case download(ServerConfig), copy }
-    enum Status: Equatable { case queued, preparing, running, finished, failed(String) }
+    enum Status: Equatable {
+        case queued, preparing, running, finished, failed(String)
+        /// Waiting to retry after a recoverable failure (connection lost, drive unmounted).
+        case waiting(until: Date, reason: String)
+    }
 
     let id = UUID()
     let kind: Kind
@@ -55,6 +61,10 @@ final class TransferJob: Identifiable {
     var presentBytes: Int64 = 0
     /// Brought back from a previous run (Blit quit or the Mac restarted).
     var restored = false
+    /// Retry attempt (0 for the first run). Later attempts don't re-count resumed bytes.
+    var attempt = 0
+    /// Files already counted, so a retry's "already present" doesn't count them twice.
+    var completedPaths: Set<String> = []
     /// Per-connection (download) or per-stream (copy) throughput, MB/s.
     var connectionRates: [Double] = []
     @ObservationIgnored var connectionCounters: [ByteCounter] = []
@@ -83,7 +93,12 @@ final class TransferJob: Identifiable {
     /// Every file was already there; nothing was transferred.
     var allAlreadyPresent: Bool { fileCount > 0 && filesAlreadyPresent == fileCount }
     var progress: Double { totalBytes > 0 ? min(1, Double(transferred) / Double(totalBytes)) : 0 }
-    var isActive: Bool { status == .preparing || status == .running }
+    var isActive: Bool {
+        switch status {
+        case .preparing, .running, .waiting: true
+        default: false
+        }
+    }
     /// How files are verified, for the HUD.
     var verificationMethod: String {
         if case .download = kind { return "SERVER SHA256" }
@@ -112,6 +127,9 @@ final class TransferManager {
     @ObservationIgnored private var liveConnections: [SSHConnection] = []
     @ObservationIgnored private var isQuitting = false
     @ObservationIgnored private var notificationProblemReported = false
+    /// Held while transferring so the Mac doesn't idle-sleep (PRD R5.6).
+    @ObservationIgnored private var keepAwake: NSObjectProtocol?
+    @ObservationIgnored private var wakeObserver: NSObjectProtocol?
 
     var hasActiveWork: Bool { jobs.contains { $0.isActive } }
 
@@ -133,6 +151,12 @@ final class TransferManager {
     init(servers: ServerStore, verifier: BlitHostKeyVerifier) {
         self.servers = servers
         self.verifier = verifier
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
+                                                                          object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.jobs.first(where: \.isActive)?.note("WOKE FROM SLEEP · CHECKING CONNECTIONS")
+            }
+        }
     }
 
     /// The full HUD is open (click the count in the condensed strip).
@@ -284,24 +308,119 @@ final class TransferManager {
         }
     }
 
+    /// Failure reasons a retry can't fix (from BlitKit's messages).
+    private static let permanentMarkers = [
+        "already exists", "same local name", "changed since it was listed", "changed on the server",
+        "shorter than listed", "no such file", "permission denied", "status 2", "status 3",
+        "server refused", "authentication failed", "host key", "no password", "no longer exists",
+    ]
+
+    static func isRetryable(_ reason: String) -> Bool {
+        let r = reason.lowercased()
+        return !permanentMarkers.contains { r.contains($0) }
+    }
+
+    /// Delay before retry n (0-based); attempts that made progress reset n.
+    private static let backoff: [Int] = [10, 30, 60, 120, 300]
+    private static let maxAttemptsWithoutProgress = 5
+
     private func run(_ job: TransferJob) async {
         job.status = .preparing
         job.startedAt = Date()
         saveQueue()
         let sampler = Task { await sample(job) }
         defer { sampler.cancel() }
-        do {
-            switch job.kind {
-            case .download(let server): try await download(job, from: server)
-            case .copy: try await copy(job)
+        if keepAwake == nil {
+            keepAwake = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled],
+                                                              reason: "Blit is transferring files")
+        }
+        defer {
+            if let activity = keepAwake { ProcessInfo.processInfo.endActivity(activity) }
+            keepAwake = nil
+        }
+
+        var stalled = 0
+        while true {
+            let before = job.counter.total
+            var fatal: String?
+            do {
+                switch job.kind {
+                case .download(let server): try await download(job, from: server)
+                case .copy: try await copy(job)
+                }
+            } catch {
+                fatal = "\(error)"
             }
-            job.status = job.failures.isEmpty ? .finished : .failed("\(job.failures.count) failed")
-        } catch {
-            job.status = .failed("\(error)")
-            job.note("✕ \(error)", failure: true)
+            if isQuitting { break }
+            if fatal == nil, job.failures.isEmpty {
+                job.status = .finished
+                break
+            }
+            let reasons = fatal.map { [$0] } ?? job.failures
+            guard reasons.contains(where: Self.isRetryable) else {
+                if let fatal { job.note("✕ \(fatal)".uppercased(), failure: true) }
+                job.status = .failed(fatal ?? "\(job.failures.count) failed")
+                break
+            }
+            stalled = job.counter.total > before ? 0 : stalled + 1
+            guard stalled < Self.maxAttemptsWithoutProgress else {
+                job.note("✕ GAVE UP AFTER \(stalled) ATTEMPTS WITHOUT PROGRESS", failure: true)
+                job.status = .failed(fatal ?? "gave up after \(stalled) retries")
+                break
+            }
+            let delay = Self.backoff[min(stalled, Self.backoff.count - 1)]
+            let reason = Self.shortReason(reasons.first(where: Self.isRetryable) ?? "error")
+            job.note("RETRY IN \(delay) S · \(reason)".uppercased(), failure: true)
+            job.status = .waiting(until: Date().addingTimeInterval(TimeInterval(delay)), reason: reason)
+            try? await Task.sleep(for: .seconds(delay))
+            await waitForNetwork(job)
+            await waitForDestination(job)
+            if isQuitting { break }
+            job.attempt += 1
+            job.failures = []
+            job.verifying = [:]
+            job.status = .preparing
+            job.note("RETRY \(job.attempt) · RESUMING")
         }
         job.finishedAt = Date()
         job.rate = 0
+    }
+
+    /// "disconnected: no data from the server for 60 s" → "NO DATA FROM THE SERVER FOR 60 S"
+    private static func shortReason(_ reason: String) -> String {
+        let trimmed = reason.split(separator: ":", maxSplits: 1).last.map(String.init) ?? reason
+        return String(trimmed.trimmingCharacters(in: .whitespaces).prefix(80))
+    }
+
+    /// Waits until macOS reports a usable network path.
+    private func waitForNetwork(_ job: TransferJob) async {
+        final class Once: @unchecked Sendable {
+            private let lock = NSLock()
+            private var done = false
+            func claim() -> Bool { lock.lock(); defer { lock.unlock() }; if done { return false }; done = true; return true }
+        }
+        let monitor = NWPathMonitor()
+        let once = Once()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            monitor.pathUpdateHandler = { path in
+                if path.status == .satisfied, once.claim() { continuation.resume() }
+            }
+            monitor.start(queue: .global(qos: .utility))
+        }
+        monitor.cancel()
+    }
+
+    /// Waits for the destination folder (an SSD or NAS share may be unmounted), up to an hour.
+    private func waitForDestination(_ job: TransferJob) async {
+        var noted = false
+        for _ in 0..<720 where !FileManager.default.fileExists(atPath: job.destination.path) {
+            if isQuitting { return }
+            if !noted {
+                job.note("WAITING FOR \(job.destinationName.uppercased()) TO COME BACK", failure: true)
+                noted = true
+            }
+            try? await Task.sleep(for: .seconds(5))
+        }
     }
 
     /// Samples throughput once a second for the rate and histogram.
@@ -454,6 +573,7 @@ extension TransferJob {
     }
 
     func handle(_ event: TransferEvent) {
+        if case .fileFinished(let f, _) = event, completedPaths.contains(f.relativePath) { return }
         if case .fileFinished(let f, let v) = event {
             let (hash, method): (String?, String) = switch v {
             case .sha256(let h, _): (h, "server-sha256")
@@ -467,7 +587,8 @@ extension TransferJob {
         }
         switch event {
         case .fileResumed(let f, let bytes):
-            resumedBytes += Int64(bytes)
+            // Bytes from an earlier attempt of this job are already in the counter.
+            if attempt == 0 { resumedBytes += Int64(bytes) }
             note("RESUME \(f.relativePath.uppercased()) · \(Self.bytes(Int64(bytes))) ON DISK")
         case .fileStarted(let f): note("GET \(f.relativePath.uppercased())")
         case .fileDownloaded(let f):
@@ -475,6 +596,7 @@ extension TransferJob {
             note("DOWNLOADED \(f.relativePath.uppercased()) · VERIFYING")
         case .fileFinished(let f, let v):
             verifying[f.relativePath] = nil
+            guard completedPaths.insert(f.relativePath).inserted else { return }
             filesFinished += 1
             switch v {
             case .sha256(let hash, let cached):
@@ -495,6 +617,7 @@ extension TransferJob {
     }
 
     func handle(_ event: CopyEvent) {
+        if case .fileFinished(let f, _) = event, completedPaths.contains(f.relativePath) { return }
         if case .fileFinished(let f, let v) = event {
             let (hash, method): (String?, String) = switch v {
             case .nas(let h): (h, "nas-sha256")
@@ -514,6 +637,7 @@ extension TransferJob {
             note("COPIED \(f.relativePath.uppercased()) · VERIFYING")
         case .fileFinished(let f, let v):
             verifying[f.relativePath] = nil
+            guard completedPaths.insert(f.relativePath).inserted else { return }
             filesFinished += 1
             switch v {
             case .nas(let hash):

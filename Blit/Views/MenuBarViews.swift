@@ -20,6 +20,7 @@ struct MenuBarLabel: View {
     private func rateText(_ job: TransferJob) -> String {
         if !job.verifying.isEmpty, job.transferred >= job.totalBytes { return "SHA256" }
         if job.status == .preparing { return "…" }
+        if case .waiting = job.status { return "RETRY" }
         return String(format: "%.0f MB/s", job.rate)
     }
 }

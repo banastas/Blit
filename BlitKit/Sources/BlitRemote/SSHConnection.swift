@@ -32,6 +32,12 @@ public struct SSHTuning: Sendable {
     public var maximumPacketSize = 256 * 1024
     public var connectTimeout: TimeAmount = .seconds(10)
     public var handshakeTimeout: TimeAmount = .seconds(30)
+    /// TCP keepalive: probe after this much silence, then every `keepAliveInterval`,
+    /// giving up after `keepAliveProbes` misses. Detects a dead link (Wi-Fi drop,
+    /// router restart) in about a minute, even while waiting on a server hash.
+    public var keepAliveIdle: Int32 = 30
+    public var keepAliveInterval: Int32 = 10
+    public var keepAliveProbes: Int32 = 3
 
     public init() {}
 }
@@ -81,6 +87,10 @@ public final class SSHConnection: Sendable {
             .channelOption(ChannelOptions.socket(IPPROTO_TCP, TCP_NODELAY), value: 1)
             // Set before connect so TCP window scaling is negotiated for it.
             .channelOption(ChannelOptions.socketOption(.so_rcvbuf), value: SocketOptionValue(tuning.receiveBufferBytes))
+            .channelOption(ChannelOptions.socketOption(.so_keepalive), value: 1)
+            .channelOption(ChannelOptions.socket(IPPROTO_TCP, TCP_KEEPALIVE), value: tuning.keepAliveIdle)
+            .channelOption(ChannelOptions.socket(IPPROTO_TCP, TCP_KEEPINTVL), value: tuning.keepAliveInterval)
+            .channelOption(ChannelOptions.socket(IPPROTO_TCP, TCP_KEEPCNT), value: tuning.keepAliveProbes)
             .channelInitializer { channel in
                 channel.eventLoop.makeCompletedFuture {
                     let watcher = ConnectionWatcher(ready: ready)
