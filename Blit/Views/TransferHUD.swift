@@ -73,7 +73,7 @@ struct TransferHUD: View {
         case .queued: return "QUEUED · " + route
         case .preparing: return "PREPARING · " + route
         case .running: return route + (job.restored ? " · RESUMED" : "")
-        case .finished: return "DONE · " + route
+        case .finished: return (job.allAlreadyPresent ? "ALREADY PRESENT · " : "DONE · ") + route
         case .failed: return "FAILED · " + route
         }
     }
@@ -122,6 +122,8 @@ struct TransferHUD: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if job.isActive, !job.verifying.isEmpty, job.transferred >= job.totalBytes {
                     Text("SHA256").font(HUDFont.terminal(40))
+                } else if !job.isActive, job.allAlreadyPresent {
+                    Text("PRESENT").font(HUDFont.terminal(40))
                 } else {
                     Text(String(format: "%.1f", job.isActive ? job.rate : averageRate)).font(HUDFont.terminal(40))
                     Text("MB/S").font(HUDFont.terminal(18)).foregroundStyle(HUDColor.dim)
@@ -202,7 +204,7 @@ struct TransferHUD: View {
         default:
             from = ""
         }
-        return "\(from) → \(job.destination.path)".uppercased()
+        return "\(from) → \(job.destinationName)".uppercased()
     }
 
     private var averageRate: Double {

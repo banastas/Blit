@@ -132,7 +132,7 @@ struct TransferStrip: View {
     }
 
     private var countLabel: String {
-        let arrow = job.isActive ? "▲" : (job.status == .finished ? "✓" : "✕")
+        let arrow = job.isActive ? "▲" : (job.status == .finished ? (job.allAlreadyPresent ? "=" : "✓") : "✕")
         guard job.fileCount > 0 else { return "\(arrow) --/--" }
         let width = max(2, String(job.fileCount).count)
         let done = String(job.filesFinished).leftPadded(width)
@@ -147,6 +147,10 @@ struct TransferStrip: View {
     @ViewBuilder private var rate: some View {
         if isVerifyingOnly {
             Text("SHA256")
+                .font(HUDFont.terminal(26))
+                .fixedSize()
+        } else if !job.isActive, job.allAlreadyPresent {
+            Text("PRESENT")
                 .font(HUDFont.terminal(26))
                 .fixedSize()
         } else {
@@ -189,6 +193,9 @@ struct TransferStrip: View {
         let verified = "\(job.filesVerified)/\(job.fileCount) VERIFIED"
         let size = TransferJob.bytes(job.totalBytes)
         if case .failed(let why) = job.status, job.fileCount == 0 { return "✕ \(why.uppercased())" }
+        if job.allAlreadyPresent, job.failures.isEmpty {
+            return "= \(job.fileCount)/\(job.fileCount) ALREADY PRESENT · \(size) → \(job.destinationName.uppercased())"
+        }
         return "\(job.failures.isEmpty ? "✓" : "✕") \(verified) · \(size) → \(job.destinationName.uppercased())"
             + (job.filesAlreadyPresent > 0 ? " · \(job.filesAlreadyPresent) ALREADY THERE" : "")
             + (job.failures.isEmpty ? "" : " · \(job.failures.count) FAILED")

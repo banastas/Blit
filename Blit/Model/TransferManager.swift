@@ -51,6 +51,8 @@ final class TransferJob: Identifiable {
     var filesFinished = 0
     var filesVerified = 0
     var filesAlreadyPresent = 0
+    /// Bytes of files that were already at the destination (count as done).
+    var presentBytes: Int64 = 0
     /// Brought back from a previous run (Blit quit or the Mac restarted).
     var restored = false
     /// Per-connection (download) or per-stream (copy) throughput, MB/s.
@@ -77,7 +79,9 @@ final class TransferJob: Identifiable {
         self.destinationName = destinationName
     }
 
-    var transferred: Int64 { Int64(counter.total) + resumedBytes }
+    var transferred: Int64 { Int64(counter.total) + resumedBytes + presentBytes }
+    /// Every file was already there; nothing was transferred.
+    var allAlreadyPresent: Bool { fileCount > 0 && filesAlreadyPresent == fileCount }
     var progress: Double { totalBytes > 0 ? min(1, Double(transferred) / Double(totalBytes)) : 0 }
     var isActive: Bool { status == .preparing || status == .running }
     /// How files are verified, for the HUD.
@@ -104,6 +108,27 @@ final class TransferManager {
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let verifier: BlitHostKeyVerifier
     @ObservationIgnored private var running = false
+    /// Connections held by the running job, closed if Blit quits mid-transfer.
+    @ObservationIgnored private var liveConnections: [SSHConnection] = []
+    @ObservationIgnored private var isQuitting = false
+    @ObservationIgnored private var notificationProblemReported = false
+
+    var hasActiveWork: Bool { jobs.contains { $0.isActive } }
+
+    /// Called when Blit is quitting mid-transfer: keeps the queue (including the
+    /// running job) saved for next launch, then closes connections so the
+    /// engines stop promptly. Resume data is already on disk.
+    func prepareForQuit() async {
+        saveQueue()
+        isQuitting = true
+        let connections = liveConnections
+        liveConnections.removeAll()
+        await withTaskGroup(of: Void.self) { group in
+            for connection in connections { group.addTask { await connection.close() } }
+            group.addTask { try? await Task.sleep(for: .seconds(1)) }
+            await group.next()
+        }
+    }
 
     init(servers: ServerStore, verifier: BlitHostKeyVerifier) {
         self.servers = servers
@@ -169,6 +194,8 @@ final class TransferManager {
 
     /// Saves unfinished jobs, so a quit or restart doesn't lose them.
     private func saveQueue() {
+        // While quitting, the running job fails as its connections close; keep it saved.
+        guard !isQuitting else { return }
         let pending = jobs.filter { $0.status == .queued || $0.isActive }.map { job -> SavedJob in
             var serverID: UUID?
             if case .download(let server) = job.kind { serverID = server.id }
@@ -207,14 +234,26 @@ final class TransferManager {
     // MARK: Notifications (PRD R5.5)
 
     private func notify(_ job: TransferJob) async {
+        guard !isQuitting else { return }
         let center = UNUserNotificationCenter.current()
-        guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
+        do {
+            guard try await center.requestAuthorization(options: [.alert, .sound]) else { return }
+        } catch {
+            // Typically an ad-hoc signed build: macOS refuses notifications until the
+            // app is signed with a development team. Say so once instead of failing silently.
+            if !notificationProblemReported {
+                notificationProblemReported = true
+                job.note("✕ NOTIFICATIONS UNAVAILABLE · \(error.localizedDescription)".uppercased(), failure: true)
+            }
+            return
+        }
         let content = UNMutableNotificationContent()
         let size = job.totalBytes.formatted(.byteCount(style: .file))
         if job.failures.isEmpty {
             content.title = "\(job.title) → \(job.destinationName)"
             var body = "\(job.filesVerified) of \(job.fileCount) files verified · \(size)"
-            if job.filesAlreadyPresent > 0 { body += " · \(job.filesAlreadyPresent) already there" }
+            if job.allAlreadyPresent { body = "All \(job.fileCount) already there · \(size)" }
+            else if job.filesAlreadyPresent > 0 { body += " · \(job.filesAlreadyPresent) already there" }
             content.body = body
         } else {
             content.title = "\(job.failures.count) problem\(job.failures.count == 1 ? "" : "s"): \(job.title)"
@@ -307,7 +346,11 @@ final class TransferManager {
             for try await c in group { opened.append(c) }
             return opened.sorted { $0.0 < $1.0 }.map(\.1)
         }
-        defer { for c in clients { Task { await c.connection.close() } } }
+        liveConnections = clients.map(\.connection)
+        defer {
+            liveConnections.removeAll()
+            for c in clients { Task { await c.connection.close() } }
+        }
         let strategy = clients[0].strategy
         job.connections = clients.count
         job.link = "\(clients.count)× · \(strategy.readSize / 1024)K×\(strategy.maxInFlight)"
@@ -369,6 +412,7 @@ final class TransferManager {
                 let connection = try await SSHConnection.connect(to: login.endpoint, credential: .password(password),
                                                                  verifier: verifier)
                 nasConnection = connection
+                liveConnections = [connection]
                 nas = NASVerifier(connection: connection, mountPoint: mount.mountPoint, nasRoot: root)
                 job.nasVerified = true
                 job.note("NAS \(login.host.uppercased()) · VERIFYING ON \(root.uppercased())")
@@ -376,7 +420,10 @@ final class TransferManager {
                 job.note("✕ NAS LOGIN FAILED · FALLING BACK TO READ-BACK · \(error)".uppercased(), failure: true)
             }
         }
-        defer { if let nasConnection { Task { await nasConnection.close() } } }
+        defer {
+            liveConnections.removeAll()
+            if let nasConnection { Task { await nasConnection.close() } }
+        }
 
         job.status = .running
         var options = CopyOptions()
@@ -410,6 +457,7 @@ extension TransferJob {
             case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
             case .alreadyPresent:
                 filesAlreadyPresent += 1
+                presentBytes += Int64(f.size)
                 note("= ALREADY PRESENT · \(f.relativePath.uppercased())")
             }
         case .fileFailed(let f, let reason):
@@ -439,6 +487,7 @@ extension TransferJob {
             case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
             case .alreadyPresent:
                 filesAlreadyPresent += 1
+                presentBytes += Int64(f.size)
                 note("= ALREADY PRESENT · \(f.relativePath.uppercased())")
             }
         case .fileFailed(let f, let reason):
@@ -449,6 +498,6 @@ extension TransferJob {
     }
 
     static func bytes(_ n: Int64) -> String {
-        n.formatted(.byteCount(style: .file)).uppercased()
+        n == 0 ? "0 B" : n.formatted(.byteCount(style: .file)).uppercased()
     }
 }

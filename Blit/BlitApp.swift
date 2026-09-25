@@ -1,9 +1,32 @@
 // Blit — a native macOS utility that moves big files fast and verifies every byte.
 
+import AppKit
 import SwiftUI
+
+/// Quitting mid-transfer: save the queue, close connections, then exit. A
+/// short watchdog guarantees the process ends even if something still holds
+/// it open; resume data (queue.json, .blitpart state) is already on disk.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var transfers: TransferManager?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let transfers, transfers.hasActiveWork else { return .terminateNow }
+        Task { @MainActor in
+            await transfers.prepareForQuit()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        UserDefaults.standard.synchronize()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { _exit(0) }
+    }
+}
 
 @main
 struct BlitApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var sidebar = SidebarModel()
     @State private var servers: ServerStore
     @State private var connections: ConnectionManager
@@ -25,6 +48,7 @@ struct BlitApp: App {
                 .environment(servers)
                 .environment(connections)
                 .environment(transfers)
+                .onAppear { appDelegate.transfers = transfers }
                 .frame(minWidth: 760, minHeight: 440)
         }
         .windowToolbarStyle(.unified)
