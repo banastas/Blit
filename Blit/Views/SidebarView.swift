@@ -12,12 +12,14 @@ struct SidebarView: View {
     var onAddServer: () -> Void
     var onEditServer: (ServerConfig) -> Void
     var onRemoveServer: (ServerConfig) -> Void
+    var onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
 
     var body: some View {
         List(selection: $selection) {
             Section("Favorites") {
                 ForEach(sidebar.favorites) { favorite in
                     FavoriteRow(favorite: favorite)
+                        .transferTarget(favorite.location, name: favorite.location.lastComponent, onTransfer: onTransfer)
                         .tag(favorite.location)
                         .contextMenu {
                             if let url = favorite.location.localURL {
@@ -74,6 +76,7 @@ struct SidebarView: View {
             Section("Drives") {
                 ForEach(sidebar.drives) { drive in
                     Label(drive.name, systemImage: drive.isInternal ? "internaldrive" : "externaldrive")
+                        .transferTarget(.local(drive.url), name: drive.name, onTransfer: onTransfer)
                         .tag(BrowseLocation.local(drive.url))
                 }
             }
@@ -82,12 +85,48 @@ struct SidebarView: View {
                 Section("NAS") {
                     ForEach(sidebar.networkShares) { share in
                         Label(share.name, systemImage: "externaldrive.connected.to.line.below")
+                            .transferTarget(.local(share.url), name: share.name, onTransfer: onTransfer)
                             .tag(BrowseLocation.local(share.url))
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+    }
+}
+
+/// Makes a sidebar row accept dragged files and folders (PRD R2.10).
+private struct TransferTarget: ViewModifier {
+    let location: BrowseLocation
+    let name: String
+    let onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
+    @State private var isTargeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .dropDestination(for: TransferPayload.self) { payloads, _ in
+                let sources = payloads.flatMap(\.locations)
+                guard !sources.isEmpty else { return false }
+                onTransfer(sources, location, name)
+                return true
+            } isTargeted: { isTargeted = $0 }
+            .overlay {
+                if isTargeted {
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        .foregroundStyle(.primary)
+                        .padding(-3)
+                }
+            }
+    }
+}
+
+extension View {
+    func transferTarget(_ location: BrowseLocation, name: String,
+                        onTransfer: @escaping ([BrowseLocation], BrowseLocation, String) -> Void) -> some View {
+        modifier(TransferTarget(location: location, name: name, onTransfer: onTransfer))
     }
 }
 

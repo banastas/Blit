@@ -6,7 +6,10 @@ import UniformTypeIdentifiers
 
 struct FileListView: View {
     @Bindable var browser: BrowserModel
+    /// Starts a transfer of the dropped locations into the given folder.
+    var onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
     @State private var selection = Set<FileItem.ID>()
+    @State private var isTargeted = false
 
     var body: some View {
         Group {
@@ -21,7 +24,7 @@ struct FileListView: View {
     }
 
     private var table: some View {
-        Table(browser.sortedItems, selection: $selection, sortOrder: $browser.sortOrder) {
+        Table(of: FileItem.self, selection: $selection, sortOrder: $browser.sortOrder) {
             TableColumn("Name", value: \.name) { item in
                 Label {
                     Text(item.name).lineLimit(1)
@@ -52,8 +55,28 @@ struct FileListView: View {
                 Text(item.kind).foregroundStyle(.secondary).lineLimit(1)
             }
             .width(min: 80, ideal: 140)
+        } rows: {
+            ForEach(browser.sortedItems) { item in
+                TableRow(item).draggable(payload(for: item))
+            }
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
+        .dropDestination(for: TransferPayload.self) { payloads, _ in
+            guard let here = browser.current else { return false }
+            let sources = payloads.flatMap(\.locations).filter { $0.parent != here }
+            guard !sources.isEmpty else { return false }
+            onTransfer(sources, here, browser.title)
+            return true
+        } isTargeted: { isTargeted = $0 }
+        .overlay {
+            if isTargeted {
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                    .foregroundStyle(.primary)
+                    .padding(3)
+                    .allowsHitTesting(false)
+            }
+        }
         .contextMenu(forSelectionType: FileItem.ID.self) { locations in
             let urls = locations.compactMap(\.localURL)
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
@@ -75,6 +98,12 @@ struct FileListView: View {
             }
         }
         .onChange(of: browser.current) { selection.removeAll() }
+    }
+
+    /// Dragging a selected row drags the whole selection, in list order.
+    private func payload(for item: FileItem) -> TransferPayload {
+        guard selection.contains(item.id) else { return TransferPayload(locations: [item.location]) }
+        return TransferPayload(locations: browser.sortedItems.filter { selection.contains($0.id) }.map(\.location))
     }
 }
 

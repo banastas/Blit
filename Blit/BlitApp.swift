@@ -5,8 +5,18 @@ import SwiftUI
 @main
 struct BlitApp: App {
     @State private var sidebar = SidebarModel()
-    @State private var servers = ServerStore()
-    @State private var connections = ConnectionManager()
+    @State private var servers: ServerStore
+    @State private var connections: ConnectionManager
+    @State private var transfers: TransferManager
+
+    init() {
+        HUDFont.registerBundled()
+        let servers = ServerStore()
+        let connections = ConnectionManager()
+        _servers = State(initialValue: servers)
+        _connections = State(initialValue: connections)
+        _transfers = State(initialValue: TransferManager(servers: servers, verifier: connections.verifier))
+    }
 
     var body: some Scene {
         WindowGroup("Blit") {
@@ -14,6 +24,7 @@ struct BlitApp: App {
                 .environment(sidebar)
                 .environment(servers)
                 .environment(connections)
+                .environment(transfers)
                 .frame(minWidth: 760, minHeight: 440)
         }
         .windowToolbarStyle(.unified)

@@ -5,7 +5,9 @@ struct ContentView: View {
     @Environment(SidebarModel.self) private var sidebar
     @Environment(ServerStore.self) private var servers
     @Environment(ConnectionManager.self) private var connections
+    @Environment(TransferManager.self) private var transfers
     @State private var browser: BrowserModel?
+    @State private var transferError: String?
     @State private var selection: BrowseLocation?
     @State private var editing: EditingServer?
     @State private var removing: ServerConfig?
@@ -21,11 +23,18 @@ struct ContentView: View {
             SidebarView(selection: $selection,
                         onAddServer: { editing = EditingServer(server: ServerConfig(), isNew: true) },
                         onEditServer: { editing = EditingServer(server: $0, isNew: false) },
-                        onRemoveServer: { removing = $0 })
+                        onRemoveServer: { removing = $0 },
+                        onTransfer: startTransfer)
                 .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 300)
         } detail: {
             if let browser {
-                FileListView(browser: browser)
+                FileListView(browser: browser, onTransfer: startTransfer)
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        if let job = transfers.featured {
+                            TransferStrip(job: job)
+                                .padding(8)
+                        }
+                    }
             }
         }
         .navigationTitle(browser?.title ?? "Blit")
@@ -67,6 +76,15 @@ struct ContentView: View {
         } message: { _ in
             Text("Its saved password is removed from your Keychain, along with any favorites on it.")
         }
+        .alert("Can't Transfer", isPresented: Binding(get: { transferError != nil }, set: { if !$0 { transferError = nil } })) {
+            Button("OK") { transferError = nil }
+        } message: {
+            Text(transferError ?? "")
+        }
+    }
+
+    private func startTransfer(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
+        transferError = transfers.enqueue(sources, to: destination, destinationName: name.isEmpty ? "Folder" : name)
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
@@ -101,6 +119,11 @@ struct ContentView: View {
 
     private func start() {
         if browser == nil { browser = BrowserModel(servers: servers, connections: connections) }
+        transfers.onFinished = { [weak browser] destination in
+            if let browser, browser.current?.localURL?.standardizedFileURL == destination.standardizedFileURL {
+                browser.reload()
+            }
+        }
         if selection == nil {
             selection = sidebar.favorites.first(where: sidebar.isAvailable)?.location
                 ?? sidebar.drives.first(where: { !$0.isInternal }).map { .local($0.url) }
