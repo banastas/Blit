@@ -27,16 +27,6 @@ struct SidebarView: View {
                     FavoriteRow(favorite: favorite)
                         .transferTarget(favorite.location, name: favorite.location.lastComponent, onTransfer: onTransfer)
                         .tag(favorite.location)
-                        .contextMenu {
-                            Button("Refresh") { onRefresh(favorite.location, false) }
-                                .disabled(!sidebar.isAvailable(favorite))
-                            Divider()
-                            if let url = favorite.location.localURL {
-                                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                                    .disabled(!sidebar.isAvailable(favorite))
-                            }
-                            Button("Remove from Favorites") { sidebar.removeFavorite(favorite) }
-                        }
                 }
                 .onMove { sidebar.moveFavorites(from: $0, to: $1) }
                 .onInsert(of: [.blitLocations, .fileURL]) { index, providers in
@@ -64,16 +54,6 @@ struct SidebarView: View {
                         StatusDot(state: connections.state(server))
                     }
                     .tag(server.startLocation)
-                    .contextMenu {
-                        Button("Refresh") { onRefresh(server.startLocation, false) }
-                        Button("Reconnect") { onRefresh(server.startLocation, true) }
-                        Divider()
-                        Button("Edit…") { onEditServer(server) }
-                        Button("Disconnect") { connections.disconnect(server) }
-                            .disabled(connections.state(server) != .connected)
-                        Divider()
-                        Button("Remove…", role: .destructive) { onRemoveServer(server) }
-                    }
                 }
                 if servers.browsable.isEmpty {
                     Button("Add Server…", action: onAddServer)
@@ -96,11 +76,6 @@ struct SidebarView: View {
                     Label(drive.name, systemImage: drive.isInternal ? "internaldrive" : "externaldrive")
                         .transferTarget(.local(drive.url), name: drive.name, onTransfer: onTransfer)
                         .tag(BrowseLocation.local(drive.url))
-                        .contextMenu {
-                            Button("Refresh") { onRefresh(.local(drive.url), false) }
-                            Divider()
-                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([drive.url]) }
-                        }
                 }
             }
 
@@ -121,6 +96,48 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // One menu for the whole list, built for the row that was right-clicked.
+        // (Per-row menus didn't open on some rows in the selectable sidebar.)
+        .contextMenu(forSelectionType: BrowseLocation.self) { locations in
+            if locations.count == 1, let location = locations.first {
+                menu(for: location)
+            }
+        }
+    }
+
+    /// The right-click menu for a sidebar row, by what the row is.
+    @ViewBuilder private func menu(for location: BrowseLocation) -> some View {
+        if let server = servers.browsable.first(where: { $0.startLocation == location }) {
+            Button("Refresh") { onRefresh(location, false) }
+            Button("Reconnect") { onRefresh(location, true) }
+            Divider()
+            Button("Edit…") { onEditServer(server) }
+            Button("Disconnect") { connections.disconnect(server) }
+                .disabled(connections.state(server) != .connected)
+            Divider()
+            Button("Remove…", role: .destructive) { onRemoveServer(server) }
+        } else if let favorite = sidebar.favorites.first(where: { $0.location == location }) {
+            Button("Refresh") { onRefresh(location, false) }
+                .disabled(!sidebar.isAvailable(favorite))
+            Divider()
+            if let url = location.localURL {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    .disabled(!sidebar.isAvailable(favorite))
+            }
+            Button("Remove from Favorites") { sidebar.removeFavorite(favorite) }
+        } else if let url = location.localURL {
+            Button("Refresh") { onRefresh(location, false) }
+            Divider()
+            if let share = sidebar.networkShares.first(where: { $0.url == url }) {
+                let login = servers.nasLogin(forMount: share.url.path)
+                Button(login == nil ? "Verify Copies on NAS…" : "NAS Verification…") { onNASVerification(share) }
+                if let login {
+                    Button("Turn Off NAS Verification") { servers.remove(login) }
+                }
+                Divider()
+            }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        }
     }
 
     /// Network devices start expanded; collapsing is remembered for the session.
@@ -146,16 +163,6 @@ struct SidebarView: View {
             }
             .transferTarget(.local(share.url), name: share.name, onTransfer: onTransfer)
             .tag(BrowseLocation.local(share.url))
-            .contextMenu {
-                Button("Refresh") { onRefresh(.local(share.url), false) }
-                Divider()
-                Button(login == nil ? "Verify Copies on NAS…" : "NAS Verification…") { onNASVerification(share) }
-                if let login {
-                    Button("Turn Off NAS Verification") { servers.remove(login) }
-                }
-                Divider()
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([share.url]) }
-            }
         }
     }
 }
