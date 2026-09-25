@@ -357,7 +357,10 @@ final class TransferManager {
                 break
             }
             let reasons = fatal.map { [$0] } ?? job.failures
-            guard reasons.contains(where: Self.isRetryable) else {
+            // A drive or share that went away turns into "no such file"-style errors;
+            // that's worth waiting for, whatever the message says (PRD R1.4).
+            let missing = missingVolumes(job)
+            guard !missing.isEmpty || reasons.contains(where: Self.isRetryable) else {
                 if let fatal { job.note("✕ \(fatal)".uppercased(), failure: true) }
                 job.status = .failed(fatal ?? "\(job.failures.count) failed")
                 break
@@ -369,12 +372,14 @@ final class TransferManager {
                 break
             }
             let delay = Self.backoff[min(stalled, Self.backoff.count - 1)]
-            let reason = Self.shortReason(reasons.first(where: Self.isRetryable) ?? "error")
+            let reason = missing.isEmpty
+                ? Self.shortReason(reasons.first(where: Self.isRetryable) ?? "error")
+                : "\(missing.joined(separator: ", ")) is unavailable"
             job.note("RETRY IN \(delay) S · \(reason)".uppercased(), failure: true)
             job.status = .waiting(until: Date().addingTimeInterval(TimeInterval(delay)), reason: reason)
             try? await Task.sleep(for: .seconds(delay))
             await waitForNetwork(job)
-            await waitForDestination(job)
+            await waitForVolumes(job)
             if isQuitting { break }
             job.attempt += 1
             job.failures = []
@@ -410,14 +415,27 @@ final class TransferManager {
         monitor.cancel()
     }
 
-    /// Waits for the destination folder (an SSD or NAS share may be unmounted), up to an hour.
-    private func waitForDestination(_ job: TransferJob) async {
-        var noted = false
-        for _ in 0..<720 where !FileManager.default.fileExists(atPath: job.destination.path) {
-            if isQuitting { return }
-            if !noted {
-                job.note("WAITING FOR \(job.destinationName.uppercased()) TO COME BACK", failure: true)
-                noted = true
+    /// Names of the job's destination and local source folders that are missing
+    /// (an SSD unplugged, a NAS share unmounted).
+    private func missingVolumes(_ job: TransferJob) -> [String] {
+        let fm = FileManager.default
+        var missing: [String] = []
+        if !fm.fileExists(atPath: job.destination.path) { missing.append(job.destinationName) }
+        for url in job.sources.compactMap(\.localURL) where !fm.fileExists(atPath: url.path) {
+            let volume = url.pathComponents.count > 2 && url.pathComponents[1] == "Volumes" ? url.pathComponents[2] : url.lastPathComponent
+            if !missing.contains(volume) { missing.append(volume) }
+        }
+        return missing
+    }
+
+    /// Waits (up to an hour) for missing drives or shares to come back.
+    private func waitForVolumes(_ job: TransferJob) async {
+        var noted = Set<String>()
+        for _ in 0..<720 {
+            let missing = missingVolumes(job)
+            if missing.isEmpty || isQuitting { return }
+            for name in missing where noted.insert(name).inserted {
+                job.note("WAITING FOR \(name.uppercased()) TO COME BACK", failure: true)
             }
             try? await Task.sleep(for: .seconds(5))
         }
