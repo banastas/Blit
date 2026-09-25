@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 struct FileListView: View {
     @Bindable var browser: BrowserModel
     @State private var isTargeted = false
+    @AppStorage("showPathBar") private var showPathBar = true
 
     var body: some View {
         Group {
@@ -18,6 +19,9 @@ struct FileListView: View {
             } else {
                 table
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if showPathBar, browser.current != nil { PathBar(browser: browser) }
         }
         .alert(browser.namePrompt?.title ?? "", isPresented: promptShown, presenting: browser.namePrompt) { prompt in
             TextField("Name", text: promptName)
@@ -247,6 +251,15 @@ struct FileListView: View {
 final class IconCache {
     static let shared = IconCache()
     private var cache: [String: NSImage] = [:]
+    private var pathCache: [String: NSImage] = [:]
+
+    /// Finder's icon for a folder or volume (drive icons, shared-folder badges).
+    func icon(forPath path: String) -> NSImage {
+        if let cached = pathCache[path] { return cached }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        pathCache[path] = image
+        return image
+    }
 
     func icon(for item: FileItem) -> NSImage {
         let key = item.isDirectory ? "/folder" : (item.name as NSString).pathExtension.lowercased()

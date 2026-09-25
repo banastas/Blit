@@ -105,9 +105,12 @@ extension FocusedValues {
 struct BrowserCommands: Commands {
     @FocusedValue(\.browser) private var browser
     @AppStorage("showSecondPane") private var showSecondPane = false
+    @AppStorage("showPathBar") private var showPathBar = true
 
     var body: some Commands {
         CommandGroup(after: .sidebar) {
+            Button(showPathBar ? "Hide Path Bar" : "Show Path Bar") { showPathBar.toggle() }
+                .keyboardShortcut("p", modifiers: [.command, .option])
             Button(browser?.showHidden == true ? "Hide Hidden Files" : "Show Hidden Files") {
                 browser?.toggleHidden()
             }

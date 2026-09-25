@@ -183,6 +183,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R2.10** **Dropping files on any sidebar item** (favorite, drive, share, server) starts a transfer to it: download, copy, or clone as appropriate, with the same verification as any other transfer. The target highlights while dragging. Dropping onto a folder in the file list works the same way.
 - **R2.13** **Expand folders in place:** a disclosure triangle beside each folder (or → and ←) shows its contents nested in the list without leaving the current folder, as in Finder's list view. Expanded folders refresh with the list.
 - **R2.14** **Persistent server sessions:** each server's browsing session opens at launch when its password is saved, stays open (a tiny request every 2 minutes keeps servers with idle timeouts from dropping it), and reopens in the background after sleep. The last listing of each folder shows at once while a fresh one loads.
+- **R2.15** **Path bar** under the file list, as in Finder (View › Show/Hide Path Bar, ⌥⌘P; on by default). It shows the path of the selected item, or of the current folder, from its drive, share or server down. Click any folder in it to go there, or drop items on one to move or copy them into it (R2.11 rules). Each pane has its own.
 - **R2.11** **Drag rules follow Finder:** a drag within one volume or one server moves (a rename, instant); a drag across devices copies; holding ⌥ always copies.
 - **R2.12** **File management** on drives, NAS shares and servers:
   - New Folder (⇧⌘N), Rename…, Duplicate (local).
