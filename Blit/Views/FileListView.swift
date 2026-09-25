@@ -76,6 +76,12 @@ struct FileListView: View {
                     proxy.scrollTo(first.id)
                 }
         }
+        // SwiftUI's Table shows no menu for right-clicks below the last row;
+        // EmptySpaceMenu handles those (New Folder, Paste, Refresh).
+        .background {
+            ViewAnchor { EmptySpaceMenu.register($0, browser: browser) }
+                .allowsHitTesting(false)
+        }
     }
 
     private var tableContent: some View {
@@ -293,4 +299,95 @@ final class IconCache {
         cache[key] = image
         return image
     }
+}
+
+/// Right-clicks on empty space in a file list. SwiftUI's Table doesn't show
+/// its context menu there, so Blit shows the folder menu itself, as Finder does.
+@MainActor
+enum EmptySpaceMenu {
+    private final class Anchor {
+        weak var view: NSView?
+        weak var browser: BrowserModel?
+    }
+    private static var anchors: [Anchor] = []
+    private static var monitor: Any?
+
+    /// `view` covers a file list; right-clicks on its empty space act on `browser`.
+    static func register(_ view: NSView, browser: BrowserModel) {
+        anchors.removeAll { $0.view == nil || $0.view === view }
+        let anchor = Anchor()
+        anchor.view = view
+        anchor.browser = browser
+        anchors.append(anchor)
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
+            nonisolated(unsafe) let event = event
+            return MainActor.assumeIsolated { handle(event) } ? nil : event
+        }
+    }
+
+    private static func handle(_ event: NSEvent) -> Bool {
+        guard let window = event.window, let content = window.contentView,
+              let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)) else { return false }
+        var table: NSTableView?
+        var view: NSView? = hit
+        while let current = view {
+            if current is NSTableHeaderView { return false }   // column headers keep their own behavior
+            if let found = current as? NSTableView { table = found; break }
+            if let scroll = current as? NSScrollView, let found = scroll.documentView as? NSTableView { table = found; break }
+            view = current.superview
+        }
+        // Only file lists (they have column headers; the sidebar doesn't), and only below the rows.
+        guard let table, table.headerView != nil,
+              table.row(at: table.convert(event.locationInWindow, from: nil)) < 0 else { return false }
+        guard let browser = anchors.first(where: { anchor in
+            guard let view = anchor.view, view.window === window else { return false }
+            return view.convert(view.bounds, to: nil).contains(event.locationInWindow)
+        })?.browser, browser.current != nil else { return false }
+
+        browser.selection = []
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(ClosureMenuItem("New Folder") { browser.promptNewFolder() })
+        menu.addItem(.separator())
+        let paste = ClosureMenuItem("Paste") { browser.paste(move: false) }
+        paste.isEnabled = browser.operations.canPaste
+        menu.addItem(paste)
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem("Refresh") { browser.reload() })
+        NSMenu.popUpContextMenu(menu, with: event, for: table)
+        return true
+    }
+}
+
+/// A menu item that runs a closure.
+final class ClosureMenuItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(_ title: String, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("not used") }
+
+    @objc private func fire() { handler() }
+}
+
+/// Hands over an invisible NSView that tracks a SwiftUI view's frame.
+struct ViewAnchor: NSViewRepresentable {
+    let onView: (NSView) -> Void
+
+    final class PassthroughView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = PassthroughView()
+        DispatchQueue.main.async { onView(view) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
 }
