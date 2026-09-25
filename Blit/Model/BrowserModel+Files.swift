@@ -3,6 +3,7 @@
 
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 extension BrowserModel {
     var selectedItems: [FileItem] { rows.filter { selection.contains($0.id) } }
@@ -47,12 +48,33 @@ extension BrowserModel {
 
     func cancelRename() { renaming = nil }
 
+    /// Keeps a file's type on rename: if the old name had a real extension
+    /// (.mp4, .mkv, .nfo…) and the new name has none (or only dots that aren't
+    /// one, like "…MP4-VACCiNE[XC]"), the old extension is added back. A
+    /// different real extension typed on purpose is kept.
+    nonisolated static func keepingExtension(of oldName: String, in newName: String, isDirectory: Bool) -> String {
+        guard !isDirectory else { return newName }
+        func realExtension(_ name: String) -> String? {
+            let ext = (name as NSString).pathExtension
+            guard !ext.isEmpty, !ext.contains(" ") else { return nil }
+            if let type = UTType(filenameExtension: ext), !type.isDynamic { return ext }
+            // Short letters-and-digits endings macOS doesn't know (.nfo, .srt, .sfv),
+            // but not dates or release tags ("16", "MP4-VACCiNE[XC]").
+            let plain = ext.count <= 5 && ext.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+            return plain && ext.contains(where: \.isLetter) ? ext : nil
+        }
+        guard let old = realExtension(oldName), realExtension(newName) == nil else { return newName }
+        return newName + "." + old
+    }
+
     /// Ends editing; renames if the name changed. Safe to call more than once.
     func commitRename(_ item: FileItem, to newName: String) {
         guard renaming == item.location else { return }
         renaming = nil
-        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != item.name else { return }
+        var name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        name = Self.keepingExtension(of: item.name, in: name, isDirectory: item.isDirectory)
+        guard name != item.name else { return }
         Task {
             do {
                 selection = [try await operations.rename(item.location, to: name)]

@@ -170,6 +170,9 @@ final class FileOperations {
             problems = await track("MOVE", done: "MOVED", sources, to: destination.lastComponent) { source in
                 guard let path = source.remotePath else { return }
                 let target = folder.appending(path.lastComponent)
+                if source.parent?.remotePath == target {
+                    throw Self.sameNameAsFolder(path.lastComponent.description, into: destination.lastComponent)
+                }
                 try await Self.ensureMissing(target, on: client, in: destination.lastComponent)
                 try await client.rename(path, to: target)
             }
@@ -335,6 +338,12 @@ final class FileOperations {
         return name
     }
 
+    /// Moving an item up out of a folder with the same name: the folder itself
+    /// is the "existing item", which the generic message makes confusing.
+    nonisolated private static func sameNameAsFolder(_ name: String, into destination: String) -> FileOperationError {
+        .message("“\(name)” has the same name as the folder it's in, so it can't sit next to that folder in “\(destination)”. Rename it first (for a video, add its extension, such as .mp4), then move it.")
+    }
+
     /// Fails if `path` exists: SFTP servers differ on whether a rename replaces its target.
     private static func ensureMissing(_ path: RemotePath, on client: SFTPClient, in folder: String) async throws {
         if (try? await client.stat(path)) != nil {
@@ -362,6 +371,9 @@ final class FileOperations {
     nonisolated private static func moveLocal(_ url: URL, into folder: URL) throws {
         let fm = FileManager.default
         let target = folder.appendingPathComponent(url.lastPathComponent)
+        if target.standardizedFileURL.path == url.deletingLastPathComponent().standardizedFileURL.path {
+            throw sameNameAsFolder(url.lastPathComponent, into: folder.lastPathComponent)
+        }
         if fm.fileExists(atPath: target.path) {
             throw FileOperationError.message("already exists in “\(folder.lastPathComponent)”")
         }
