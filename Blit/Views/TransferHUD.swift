@@ -12,13 +12,13 @@ struct TransferHUD: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             HStack(alignment: .top, spacing: 10) {
-                itemPanel.frame(maxWidth: .infinity).debugHeight("item")
-                throughputPanel.frame(maxWidth: .infinity).debugHeight("throughput")
-                linkPanel.frame(width: 210).debugHeight("link")
+                itemPanel.frame(maxWidth: .infinity)
+                throughputPanel.frame(maxWidth: .infinity)
+                linkPanel.frame(width: 210)
             }
             .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 10) {
-                logPanel.frame(maxWidth: .infinity).debugHeight("log")
+                logPanel.frame(maxWidth: .infinity)
                 if !job.failures.isEmpty {
                     warningPanel.frame(width: 260)
                 }
@@ -30,7 +30,6 @@ struct TransferHUD: View {
         .background(HUDColor.background, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(HUDColor.border, lineWidth: 0.5))
         .environment(\.colorScheme, .dark)
-        .debugHeight("HUD")
     }
 
     // MARK: Header
@@ -363,6 +362,7 @@ extension View {
 #if DEBUG
 enum LayoutLog {
     static let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/Blit/layout.log")
+
 
     static func write(_ line: String) {
         let stamp = Date().formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits).secondFraction(.fractional(2)))

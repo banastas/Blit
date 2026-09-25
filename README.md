@@ -155,6 +155,8 @@ A failure adds a compact red `✕ N warning` tag in the top line (in place of th
 
 **Expanded:** the full HUD described below. It opens by itself when a transfer starts (Settings; collapsing it keeps it collapsed until that batch finishes). File operations (delete, move…) only use the condensed strip. Switching between the two, or the HUD appearing and leaving, animates like a CRT: a bright line sweeps out, then opens vertically.
 
+**Layout:** the HUD and strip float over the bottom of the window (an overlay), with matching space reserved below the file list. As a safe-area inset, every HUD update during a download (the percent ticking) re-sized the window's content; macOS then briefly reported a shorter toolbar for one layout pass and the list and HUD jumped.
+
 **Verification progress:** the seedbox starts hashing each file when its first range is handed out, so the hash reads the file alongside the download instead of re-reading it cold afterwards. Where the server's `dd` supports `status=progress` (GNU coreutils), it reports bytes hashed about once a second. The HUD shows a *Server SHA256* row per file, the hash rate, and a verify ETA. Once only checksums remain, the strip's progress cells, percent and log line switch to verification progress, and the histogram shows the hash rate.
 
 **Menu bar panel:** the condensed HUD stacked into a 320-pt column: count and item, destination, progress, big rate or SHA256 with ETA, and a warning tag.

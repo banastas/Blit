@@ -19,6 +19,8 @@ struct ContentView: View {
     @State private var selection: BrowseLocation?
     @State private var editing: EditingServer?
     @State private var removing: ServerConfig?
+    /// Height of the floating transfer HUD or strip, reserved below the list.
+    @State private var hudHeight: CGFloat = 0
 
     struct EditingServer: Identifiable {
         var server: ServerConfig
@@ -48,7 +50,14 @@ struct ContentView: View {
                         FileListView(browser: browser)
                     }
                 }
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                    // Room at the bottom for the transfer HUD, which floats over it.
+                    .safeAreaPadding(.bottom, transfers.featured == nil ? 0 : hudHeight)
+                    .overlay(alignment: .bottom) {
+                        // An overlay, not a safe-area inset: overlays don't take part in
+                        // sizing the window. As an inset, every HUD update (the percent
+                        // ticking during a download) re-sized the window's content,
+                        // macOS briefly reported a shorter toolbar, and the list and
+                        // HUD jumped.
                         if let job = transfers.featured {
                             Group {
                                 // File operations only ever use the condensed strip.
@@ -58,19 +67,13 @@ struct ContentView: View {
                                     TransferStrip(job: job).transition(.crt)
                                 }
                             }
-                            .padding(.horizontal, 8)
-                            .padding(.top, 8)
-                            .padding(.bottom, 12)
-                            .debugHeight("inset")
+                            .padding(8)
+                            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { _, height in
+                                hudHeight = height
+                            }
                             .transition(.crt)
                         }
                     }
-                    // Anchor to the window's real bottom edge: macOS briefly changes
-                    // the bottom safe area (13 pt → 0) during downloads, which made
-                    // the path bar and HUD jump. The extra bottom padding keeps
-                    // the HUD clear of the window's rounded corners.
-                    .ignoresSafeArea(.container, edges: .bottom)
-                    .debugSafeArea("detail")
                     .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: transfers.isExpanded)
                     .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: transfers.featured == nil)
             }
@@ -309,6 +312,9 @@ struct ContentView: View {
         if showSecondPane { openSecondPaneIfNeeded() }
         BrowserModel.active = active
         transfers.restoreQueue()
+        #if DEBUG
+        transfers.startFakeTransferIfRequested()
+        #endif
         connections.warmUp(servers.browsable)
         // Refresh whichever panes show a folder that changed: a transfer's
         // destination (and a move's sources), or a file operation's folders.

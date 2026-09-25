@@ -203,9 +203,6 @@ final class BrowserModel {
     }
 
     private func show(_ location: BrowseLocation) {
-        #if DEBUG
-        LayoutLog.write("browser show \(location.lastComponent)")
-        #endif
         if location != current {
             // A new folder: start collapsed, showing the last listing (if any)
             // at once while a fresh one loads.

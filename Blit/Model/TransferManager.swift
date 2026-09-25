@@ -188,13 +188,12 @@ final class TransferJob: Identifiable {
     /// file is removed once its copy is verified by SHA-256. Anything not
     /// verified that way stays where it was.
     var deleteSources = false
+    /// Saved to the durable queue (false only for debug simulations).
+    var persistent = true
     @ObservationIgnored let verifiedSources = VerifiedSources()
     var removedSources = 0
 
     func note(_ text: String, failure: Bool = false) {
-        #if DEBUG
-        LayoutLog.write("note \(text.prefix(60))")
-        #endif
         log.append(LogLine(text: text, isFailure: failure))
         if log.count > 200 { log.removeFirst(log.count - 200) }
     }
@@ -273,6 +272,44 @@ final class TransferManager {
         jobs.filter(\.isActive).max { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
             ?? jobs.last(where: { $0.status != .queued }) ?? jobs.first
     }
+
+    #if DEBUG
+    /// `-BlitFakeTransfer YES`: a simulated download in the HUD (percent ticking,
+    /// connection rates changing) to reproduce layout issues without a server.
+    func startFakeTransferIfRequested() {
+        guard UserDefaults.standard.bool(forKey: "BlitFakeTransfer") else { return }
+        let job = TransferJob(kind: .copy, sources: [.local(URL(fileURLWithPath: "/tmp/fake.mkv"))],
+                              destination: URL(fileURLWithPath: "/tmp"), title: "FAKE.TRANSFER.2160P.MKV",
+                              destinationName: "Somewhere")
+        job.persistent = false
+        job.status = .running
+        job.startedAt = Date()
+        job.fileCount = 1
+        job.totalBytes = 4_000_000_000
+        job.connections = 3
+        job.link = "3× · 255K×32"
+        job.connectionCounters = (0..<3).map { _ in ByteCounter() }
+        job.note("FAKE TRANSFER FOR LAYOUT TESTING")
+        jobs.append(job)
+        isExpanded = true
+        Task {
+            var tick = 0
+            while job.transferred < job.totalBytes {
+                try? await Task.sleep(for: .milliseconds(250))
+                tick += 1
+                let chunk = Int.random(in: 4_000_000...8_000_000)
+                job.counter.add(chunk)
+                if tick % 4 == 0 {
+                    job.rate = Double.random(in: 18...32)
+                    job.peakRate = max(job.peakRate, job.rate)
+                    job.history.append(job.rate)
+                    if job.history.count > 60 { job.history.removeFirst() }
+                    job.connectionRates = (0..<3).map { _ in Double.random(in: 5...12) }
+                }
+            }
+        }
+    }
+    #endif
 
     // MARK: File operations in the strip
 
@@ -367,7 +404,7 @@ final class TransferManager {
     private func saveQueue() {
         // While quitting, the running job fails as its connections close; keep it saved.
         guard !isQuitting else { return }
-        let pending = jobs.filter { !$0.isOperation && ($0.status == .queued || $0.isActive) }.map { job -> SavedJob in
+        let pending = jobs.filter { $0.persistent && !$0.isOperation && ($0.status == .queued || $0.isActive) }.map { job -> SavedJob in
             var serverID: UUID?
             if case .download(let server) = job.kind { serverID = server.id }
             return SavedJob(serverID: serverID, sources: job.sources, destination: job.destination, title: job.title,
@@ -609,9 +646,6 @@ final class TransferManager {
                 job.connectionRates = zip(per, lastPer).map { Double($0 - $1) / seconds / 1e6 }
             }
             lastPer = per
-            #if DEBUG
-            LayoutLog.write("sample rate \(String(format: "%.1f", rate)) conns \(job.connectionRates.map { String(format: "%.1f", $0) }.joined(separator: " "))")
-            #endif
             let hashedNow = job.hashedTotal
             job.hashRate = Double(hashedNow - min(lastHashed, hashedNow)) / seconds / 1e6
             lastHashed = hashedNow
