@@ -1,5 +1,10 @@
-// Blit app icon: 1-bit pixel art — a download arrow over a row of HUD progress
-// cells, white on a near-black macOS rounded square.
+// Renders Blit's app icon as an Icon Composer document (Blit/AppIcon.icon):
+// a solid near-black fill plus one full-bleed pixel-art layer (a download
+// arrow over a row of HUD progress cells). macOS 26+ applies the icon shape
+// itself; artwork drawn with its own rounded rect and margins gets placed in
+// a grey container instead.
+//
+//   swift scripts/make-icon.swift Blit/AppIcon.icon
 import AppKit
 
 let art = [
@@ -16,36 +21,25 @@ let art = [
     "..............",
     "##.##.##.##.::",   // progress cells: last one dim
 ]
-let out = CommandLine.arguments[1]
+let bundle = CommandLine.arguments[1]
+let canvas = 1024
 
-func render(_ px: Int) -> Data {
-    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8,
+func renderArt() -> Data {
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: canvas, pixelsHigh: canvas, bitsPerSample: 8,
                                samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
                                bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
     let ctx = NSGraphicsContext.current!.cgContext
-    ctx.interpolationQuality = .none
-    ctx.setShouldAntialias(px >= 64)
-    let size = CGFloat(px)
-    // macOS icon grid: the shape fills ~80% of the canvas, centred.
-    let inset = (size * 0.1).rounded()
-    let body = CGRect(x: inset, y: inset, width: size - 2 * inset, height: size - 2 * inset)
-    let radius = body.width * 0.225
-    ctx.addPath(CGPath(roundedRect: body, cornerWidth: radius, cornerHeight: radius, transform: nil))
-    ctx.setFillColor(CGColor(gray: 0.045, alpha: 1))
-    ctx.fillPath()
     ctx.setShouldAntialias(false)
-    // Pixel art: whole device pixels per cell so every edge is crisp.
+    ctx.clear(CGRect(x: 0, y: 0, width: canvas, height: canvas))
     let cols = art[0].count, rows = art.count
-    let cell = max(1, Int((body.width * 0.62) / CGFloat(cols)))
-    let artW = cell * cols, artH = cell * rows
-    let x0 = Int(body.midX) - artW / 2
-    let y0 = Int(body.midY) - artH / 2
+    let cell = Int(Double(canvas) * 0.56) / cols           // whole pixels per cell
+    let x0 = (canvas - cell * cols) / 2
+    let y0 = (canvas - cell * rows) / 2
     for (r, line) in art.enumerated() {
         for (c, ch) in line.enumerated() where ch != "." {
-            ctx.setFillColor(CGColor(gray: ch == ":" ? 0.28 : 0.94, alpha: 1))
-            // Core Graphics' origin is bottom-left; row 0 is the top of the art.
+            ctx.setFillColor(CGColor(gray: ch == ":" ? 0.3 : 0.95, alpha: 1))
             ctx.fill(CGRect(x: x0 + c * cell, y: y0 + (rows - 1 - r) * cell, width: cell, height: cell))
         }
     }
@@ -53,16 +47,32 @@ func render(_ px: Int) -> Data {
     return rep.representation(using: .png, properties: [:])!
 }
 
-var images: [[String: String]] = []
-for (point, scales) in [(16, [1, 2]), (32, [1, 2]), (128, [1, 2]), (256, [1, 2]), (512, [1, 2])] {
-    for scale in scales {
-        let px = point * scale
-        let name = "icon_\(point)x\(point)\(scale == 2 ? "@2x" : "").png"
-        try! render(px).write(to: URL(fileURLWithPath: "\(out)/\(name)"))
-        images.append(["idiom": "mac", "size": "\(point)x\(point)", "scale": "\(scale)x", "filename": name])
+let fm = FileManager.default
+try? fm.removeItem(atPath: bundle)
+try! fm.createDirectory(atPath: bundle + "/Assets", withIntermediateDirectories: true)
+try! renderArt().write(to: URL(fileURLWithPath: bundle + "/Assets/blit.png"))
+let json = """
+{
+  "fill" : {
+    "solid" : "extended-srgb:0.04500,0.04500,0.04500,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "blit.png",
+          "name" : "blit"
+        }
+      ]
     }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
 }
-let contents: [String: Any] = ["images": images, "info": ["author": "xcode", "version": 1]]
-try! JSONSerialization.data(withJSONObject: contents, options: [.prettyPrinted, .sortedKeys])
-    .write(to: URL(fileURLWithPath: "\(out)/Contents.json"))
-print("wrote \(images.count) icon images")
+"""
+try! json.write(toFile: bundle + "/icon.json", atomically: true, encoding: .utf8)
+print("wrote \(bundle)")

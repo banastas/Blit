@@ -425,14 +425,14 @@ blit/
 ├── scripts/
 │   ├── sftp-probe.sh     quick per-method SFTP speed probe (20 s each)
 │   ├── sftp-bench.sh     longer parallel-file / chunked-file benchmark with checksums
-│   └── make-icon.swift   renders the pixel-art app icon into Blit/Assets.xcassets
+│   └── make-icon.swift   renders the pixel-art app icon (Blit/AppIcon.icon)
 ├── spike/                M1 throwaway: SwiftNIO SSH + minimal pipelined SFTP client
 │   ├── Package.swift
 │   ├── Sources/blit-spike/main.swift
 │   ├── run-m1.sh         the M1 test matrix
 │   └── run-m1b.sh        M1 follow-ups (SFTPGo, 255 KB reads, disk-write cost)
 ├── Blit.xcodeproj/       the Mac app (macOS 27, SwiftUI); Blit/ is a folder-synced group
-├── Blit/                 app sources: BlitApp, Model/, Views/, Intents/, Resources/Fonts/, Assets.xcassets
+├── Blit/                 app sources: BlitApp, Model/, Views/, Intents/, Resources/Fonts/, AppIcon.icon
 ├── Support/Info.plist    merged into the generated Info.plist (drag type, Services)
 └── BlitKit/              the transfer engine (Swift package; the app links it locally)
     ├── Package.swift
