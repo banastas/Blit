@@ -133,7 +133,8 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R1.3** Check host keys on first connect and pin them in Blit's own store, which can be seeded from `~/.ssh/known_hosts`. SwiftNIO SSH takes the **server's** preferred key type, which may differ from the one on file. For example, SFTPGo presents Ed25519 while `known_hosts` has only its ECDSA key. When that happens, show both fingerprints and ask; never accept silently. Refuse to connect if a pinned key changes.
 - **R1.4** Local and external volumes appear automatically. Blit notices when a drive is ejected mid-transfer and recovers when it reconnects.
 - **R1.5** NAS shares mounted through macOS SMB are used as normal filesystem paths. Blit can save and remount favorite shares.
-- **R1.6** A NAS entry can have an SSH endpoint, used to compute checksums on the NAS (R4.2). This requires SSH enabled in DSM and an account in the administrators group.
+- **R1.6** A NAS entry can have an SSH endpoint, used to compute checksums on the NAS (R4.2). This requires SSH enabled in DSM and an account in the administrators group. The entry maps the Mac's mount point to the share's path on the NAS (for example `/Volumes/Media` ↔ `/volume1/Media`).
+- **R1.7** Warn when a NAS (or server) is reached over Wi-Fi while a wired interface is up, and name the cause (which interface macOS routes through, and why). This silently halved SSD → NAS throughput in the reference setup.
 
 ### Browser
 
@@ -289,6 +290,7 @@ What it means:
 ### LAN
 
 - The Mac's 2.5 GbE USB adapter negotiates **1000baseT**, because the core switch has only gigabit ports. Every wired path is limited to about 113 MB/s.
+- **The Mac reached the NAS over Wi-Fi, not the wire (found and fixed in M2/M3).** Its Wi-Fi was on the NAS's subnet (192.168.20.x) while the wired port was on 192.168.10.x, so macOS routed all NAS traffic over Wi-Fi. Reading a file from the Media share ran at **58.7 MB/s over Wi-Fi**; after the Mac's switch port was moved to the 20.x network and the shares remounted, the same test ran at **105.6 MB/s over the wire**. Existing SMB connections stay on the interface they were made on until the share is remounted. Blit should detect and warn when a NAS is reached over Wi-Fi while a wired interface is up (see R1.7).
 - SMB to both Synology units uses SMB 3.1.1 with signing and encryption off. **At 1 GbE**, no `/etc/nsmb.conf` tuning is needed, because the link is the bottleneck. That's unproven for the planned 10 GbE upgrade, where `nsmb.conf` settings and SMB multichannel can matter.
 
 ## Architecture
@@ -341,7 +343,7 @@ The setup Blit is tuned against:
 | Component | Details | Limit today |
 |---|---|---|
 | Mac | Mac mini M2 Pro (`Mac14,12`), macOS 27, 4× Thunderbolt 4 | Built-in Ethernet is 1 GbE only |
-| Mac NIC | USB-C 2.5 GbE adapter | Negotiates 1 GbE (switch limit) |
+| Mac NIC | USB-C 2.5 GbE adapter, on 192.168.20.x (same network as both NAS units) | Negotiates 1 GbE (switch limit) |
 | Router | UniFi Dream Machine Pro | 10G SFP+ LAN port unused |
 | Core switch | UniFi USW-24-PoE | Gigabit copper ports |
 | NAS 1 | Synology RS1619xs+, main switch | 4× 1 GbE, **PCIe slot (10 GbE capable)** |
@@ -363,7 +365,7 @@ The setup Blit is tuned against:
 | **M0** | Benchmarks | Measure the network ceilings, find the bottlenecks, validate the approach | ✅ Done |
 | **M1** | SSH spike | Throwaway code: raw SwiftNIO SSH channel throughput with a ≥ 8 MB window against the real server, then a minimal pipelined read loop that handles shortened replies, plus `sha256sum` over an exec channel. **Done when one connection sustains more than 24.6 MB/s from the reference server.** Result: 42.9 MB/s on one connection, ~90 MB/s on 3, verified ([results](#m1-spike-results)). Carried into M2: `sha256sum` on DSM, and fixing the probe to time from first byte. | ✅ Done |
 | **M2** | SFTP engine | `BlitKit` Swift package. Pipelined reads, connection pool with staggered setup, chunked files, remote checksums with hash cache, resume, stability gate, filename policy, host-key pin store. Target ≥ 55 MB/s from the reference server. **Delivered:** SFTP v3 protocol layer and read planner; SSH connections with M1 tuning, host-key verification (known_hosts + pinned fingerprints), close-on-error and handshake timeout; SFTP client with pipelined downloads and backpressured writes; parallel verified downloads (shared range queue, `.blitpart`, `F_FULLFSYNC`, server `sha256sum`, mtime, rename); **resume** (`.blitpart.state` with completed ranges, 256 MB chunks); server hash starts when the last range is handed out; **server-side hash cache** (`~/.cache/blit/sha256`); **stability gate**; `blit ls` / `blit get`. **Live (2026-09-24, 3 connections, 923.5 MB file):** fresh 64.8 MB/s, verified 4.8 s after the last byte; repeat 74.1 MB/s with the hash cached (0.7 s); killed at 339.6 MB then resumed with 232.8 MB reused and the whole file verified. 26-file pack: 26/26 verified. Host-key store with trust prompt (`blit hostkeys`); filename collision detection; SFTPGo endpoint verified live (35.1 MB/s over 3 connections, size-check fallback without a shell); cold-file throughput measured ([results](#cold-file-results-m2)). 38 unit tests. | ✅ Done |
-| **M3** | Local engine | LocalCopyEngine, NAS-side checksums over SSH (first: confirm `sha256sum` and `stat -c` on DSM), `.blitpart` handling, queue-wide disk-space checks, `blit copy` in the CLI. Target ≥ 105 MB/s SSD → NAS. | Next |
+| **M3** | Local engine | LocalCopyEngine, NAS-side checksums over SSH, `.blitpart` handling, queue-wide disk-space checks, Wi-Fi path warning (R1.7), `blit copy` in the CLI. Target ≥ 105 MB/s SSD → NAS. **Prerequisites confirmed:** DSM (RS1619xs+, OpenSSH 8.2) has `sha256sum`, GNU `stat -c`, `xargs`; Media share at `/volume1/Media`; no home folder for the SSH user, so NAS-side hashes aren't cached (fine: each copy is verified once). Baseline SMB read over the wire: 105.6 MB/s. | Next |
 | **M4** | App | `Blit.xcodeproj` (bundle, signing, entitlements) depending on BlitKit as a local package. Finder-style browser (sorted newest first, alternating rows, ⌘K, optional second pane), transfer strip, durable queue, server editor, Keychain, host-key pinning, notifications, menu bar icon, "Blit to…" Quick Action | |
 | **M5** | Hardening | Handling network changes, sleep and wake, drive ejection, transfer log export, signing and notarization | |
 
