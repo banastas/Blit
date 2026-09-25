@@ -5,15 +5,23 @@ import SwiftUI
 
 struct MenuBarLabel: View {
     @Environment(TransferManager.self) private var transfers
+    /// Animation frame for the pixel arrow's marching stem.
+    @State private var frame = 0
 
     var body: some View {
-        if let job = transfers.featured, job.isActive {
-            HStack(spacing: 3) {
-                Image(systemName: "arrow.down.circle")
+        if let job = transfers.featured, job.isActive, !job.isOperation {
+            HStack(spacing: 4) {
+                Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: frame), cell: 1.5))
                 Text(rateText(job)).monospacedDigit()
             }
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(160))
+                    frame = (frame + 1) % 3
+                }
+            }
         } else {
-            Image(systemName: "arrow.down.circle")
+            Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: nil), cell: 1.5))
         }
     }
 

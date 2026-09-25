@@ -155,9 +155,8 @@ struct SidebarView: View {
                 Label(share.name, systemImage: "externaldrive.connected.to.line.below")
                 Spacer(minLength: 4)
                 if login != nil {
-                    Image(systemName: "checkmark.shield")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    Image(nsImage: PixelArt.image(PixelArt.shield, cell: 1))
+                        .foregroundStyle(.secondary)
                         .help("Copies here are verified with sha256sum on the NAS")
                 }
             }
@@ -186,10 +185,7 @@ private struct TransferTarget: ViewModifier {
             } isTargeted: { isTargeted = $0 }
             .overlay {
                 if isTargeted {
-                    RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                        .foregroundStyle(.primary)
-                        .padding(-3)
+                    PixelMarchingAnts(cell: 1.5).padding(-3)
                 }
             }
     }

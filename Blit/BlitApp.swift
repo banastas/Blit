@@ -87,6 +87,7 @@ struct BlitApp: App {
         let transfers = TransferManager(servers: servers, verifier: connections.verifier)
         _transfers = State(initialValue: transfers)
         _operations = State(initialValue: FileOperations(servers: servers, connections: connections, transfers: transfers))
+        VerifiedIndex.shared.load()
         // "Copy with Blit" (App Intent) enqueues through the same manager.
         AppDependencyManager.shared.add(dependency: transfers)
     }
@@ -106,6 +107,7 @@ struct BlitApp: App {
         .commands {
             BrowserCommands()
             FileCommands()
+            AboutCommands()
             CommandGroup(after: .importExport) {
                 Button("Export Transfer Log…") { TransferLog.export() }
             }
@@ -123,6 +125,13 @@ struct BlitApp: App {
         Settings {
             SettingsView()
         }
+
+        Window("About Blit", id: "about") {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
+        .restorationBehavior(.disabled)
     }
 }
 
@@ -215,6 +224,17 @@ struct FileCommands: Commands {
             NSApp.sendAction(textAction, to: nil, from: nil)
         } else if let browser {
             files(browser)
+        }
+    }
+}
+
+/// Blit › About Blit opens the pixel-terminal About window.
+struct AboutCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About Blit") { openWindow(id: "about") }
         }
     }
 }

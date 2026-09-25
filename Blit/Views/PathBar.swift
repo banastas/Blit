@@ -146,7 +146,7 @@ struct LoadingIndicator: View {
         Group {
             if visible {
                 HStack(spacing: 5) {
-                    ProgressView().controlSize(.mini)
+                    PixelSpinner(cell: 1.5)
                     Text(browser.items.isEmpty ? "Loading…" : "Refreshing…")
                         .foregroundStyle(.secondary)
                         .fixedSize()

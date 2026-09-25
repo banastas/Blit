@@ -22,11 +22,48 @@ enum UITestHarness {
             .background(scheme == .dark ? Color(white: 0.16) : Color(white: 0.93))
             .environment(\.colorScheme, scheme)
         }
-        let renderer = ImageRenderer(content: VStack(spacing: 0) { row(.light); row(.dark) })
+        let extras = { (scheme: ColorScheme) in
+            HStack(spacing: 14) {
+                PixelSpinner(cell: 1.5)
+                Image(nsImage: PixelArt.image(PixelArt.shield, cell: 1)).foregroundStyle(.tertiary)
+                Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: nil), cell: 1.5))
+                ForEach(0..<3) { Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: $0), cell: 1.5)) }
+                Text("name.mkv").font(.system(size: 11))
+                Image(nsImage: PixelGlyph.check.image(size: 9)).foregroundStyle(.secondary)
+                PixelMarchingAnts(cell: 1.5).frame(width: 40, height: 16)
+            }
+            .padding(6)
+            .background(scheme == .dark ? Color(white: 0.16) : Color(white: 0.93))
+            .environment(\.colorScheme, scheme)
+        }
+        let renderer = ImageRenderer(content: VStack(spacing: 0) { row(.light); row(.dark); extras(.light); extras(.dark) })
         renderer.scale = 8
         if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
            let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
             try? png.write(to: URL(fileURLWithPath: path))
+        }
+        // The About window, at 2×.
+        let about = ImageRenderer(content: AboutView())
+        about.scale = 2
+        if let image = about.nsImage, let tiff = image.tiffRepresentation,
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path.replacingOccurrences(of: ".png", with: "-about.png")))
+        }
+        // The Dock tile mid-transfer, then done.
+        DockProgress.shared.update(0.42)
+        if let view = NSApp.dockTile.contentView {
+            view.frame = NSRect(x: 0, y: 0, width: 256, height: 256)
+            if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?
+                    .write(to: URL(fileURLWithPath: path.replacingOccurrences(of: ".png", with: "-dock.png")))
+            }
+        }
+        DockProgress.shared.finish(verified: true)
+        if let view = NSApp.dockTile.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: path.replacingOccurrences(of: ".png", with: "-dock-done.png")))
         }
     }
 

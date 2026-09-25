@@ -91,7 +91,16 @@ struct FileListView: View {
                     if item.depth > 0 { Spacer().frame(width: CGFloat(item.depth) * 16) }
                     disclosure(for: item)
                     Label {
-                        Text(item.name).lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(item.name).lineLimit(1)
+                            if !item.isDirectory, let url = item.location.localURL,
+                               let verified = VerifiedIndex.shared.entry(for: url, size: item.size) {
+                                Image(nsImage: PixelGlyph.check.image(size: 9))
+                                    .foregroundStyle(.secondary)
+                                    .help(verified.summary)
+                                    .accessibilityLabel("Verified")
+                            }
+                        }
                     } icon: {
                         FileIcon(item: item)
                     }
@@ -133,11 +142,7 @@ struct FileListView: View {
         } isTargeted: { isTargeted = $0 }
         .overlay {
             if isTargeted {
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                    .foregroundStyle(.primary)
-                    .padding(3)
-                    .allowsHitTesting(false)
+                PixelMarchingAnts(cell: 2).padding(3)
             }
         }
         .contextMenu(forSelectionType: FileItem.ID.self) { locations in
@@ -170,7 +175,7 @@ struct FileListView: View {
         .onKeyPress(.leftArrow) { expandSelection(false) }
         .overlay {
             if browser.isLoading, browser.items.isEmpty {
-                ProgressView()
+                PixelSpinner(cell: 3)
             } else if browser.items.isEmpty {
                 Text("Empty Folder").foregroundStyle(.tertiary)
             }
@@ -227,7 +232,7 @@ struct FileListView: View {
             } label: {
                 Group {
                     if open, browser.loadingChildren.contains(item.location) {
-                        ProgressView().controlSize(.mini)
+                        PixelSpinner(cell: 1.5)
                     } else {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 9, weight: .bold))

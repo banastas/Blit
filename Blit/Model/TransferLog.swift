@@ -32,6 +32,7 @@ enum TransferLog {
     }()
 
     static func append(_ record: TransferRecord) {
+        VerifiedIndex.shared.record(record)
         guard var line = try? encoder.encode(record) else { return }
         line.append(0x0A)
         let fm = FileManager.default
@@ -45,7 +46,9 @@ enum TransferLog {
         }
     }
 
-    static func records() -> [TransferRecord] {
+    static func records() -> [TransferRecord] { readRecords(at: url) }
+
+    nonisolated static func readRecords(at url: URL) -> [TransferRecord] {
         guard let data = try? Data(contentsOf: url) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

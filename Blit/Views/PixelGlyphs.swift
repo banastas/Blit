@@ -8,7 +8,7 @@ import SwiftUI
 enum PixelGlyph: Character, CaseIterable {
     case check = "✓", cross = "✕", up = "▲", down = "▼", arrow = "→"
 
-    private var rows: [String] {
+    var rows: [String] {
         switch self {
         case .check: [".......", "......#", ".....#.", "#...#..", ".#.#...", "..#....", "......."]
         case .cross: ["#.....#", ".#...#.", "..#.#..", "...#...", "..#.#..", ".#...#.", "#.....#"]

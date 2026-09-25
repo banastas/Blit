@@ -142,7 +142,16 @@ The transfer strip expands into a 1-bit, pixel-terminal HUD (references: 1-bit p
 
 A failure adds a compact red `✕ N warning` tag in the top line (in place of the histogram) and turns the log line muted red; clicking it opens the full HUD at the WARNING panel.
 
-**Sidebar status:** the one pixel-art touch outside the HUD. Each server's browsing connection shows as 7×7 pixel signal bars: all lit when connected, filling left to right in a loop while connecting, dim when not connected, and a pixel ✕ in muted red on failure (hover for the reason).
+**Pixel accents outside the HUD** (status and motion only; everything you read or click stays native):
+- **Menu bar:** a pixel arrow into a tray; its stem's dashes march down while a transfer runs.
+- **Dock icon:** a strip of pixel progress cells while transferring; a pixel ✓ for five seconds when a batch finishes verified.
+- **Verified badge:** a small pixel ✓ after the names of local files Blit copied and verified by SHA-256 (server, NAS or read-back), from the transfer log, while their size still matches; hover for how and when. Renames and moves in Blit keep it for the session.
+- **Spinners:** a pixel dot chasing round a 3×3 ring (Refreshing…, expanding folders, first load).
+- **Drop targets:** pixel marching ants instead of a dashed outline.
+- **NAS verification shield:** a pixel shield with a check knocked out.
+- **About Blit:** the pixel-terminal style, with version and build.
+
+**Sidebar status:** each server's browsing connection shows as 7×7 pixel signal bars: all lit when connected, filling left to right in a loop while connecting, dim when not connected, and a pixel ✕ in muted red on failure (hover for the reason).
 
 **Expanded:** the full HUD described below. It opens by itself when a transfer starts (Settings; collapsing it keeps it collapsed until that batch finishes). File operations (delete, move…) only use the condensed strip. Switching between the two, or the HUD appearing and leaving, animates like a CRT: a bright line sweeps out, then opens vertically.
 

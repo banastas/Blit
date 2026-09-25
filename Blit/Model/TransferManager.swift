@@ -446,6 +446,9 @@ final class TransferManager {
             await run(job)
             running = false
             saveQueue()
+            if !isQuitting, !jobs.contains(where: { !$0.isOperation && ($0.status == .queued || $0.isActive) }) {
+                DockProgress.shared.finish(verified: job.status == .finished && job.failures.isEmpty)
+            }
             onFinished?(job)
             await notify(job)
             runNext()
@@ -606,6 +609,7 @@ final class TransferManager {
             let hashedNow = job.hashedTotal
             job.hashRate = Double(hashedNow - min(lastHashed, hashedNow)) / seconds / 1e6
             lastHashed = hashedNow
+            if job.isActive { DockProgress.shared.update(job.isVerifyingOnly ? (job.verifyProgress ?? job.progress) : job.progress) }
             guard job.status == .running else { continue }
             job.rate = rate
             job.peakRate = max(job.peakRate, rate)

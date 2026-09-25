@@ -142,6 +142,7 @@ final class FileOperations {
                 problems += await track("MOVE", done: "MOVED", sameVolume.map { .local($0) }, to: folder.lastPathComponent) { item in
                     guard let url = item.localURL else { return }
                     try await Task.detached { try Self.moveLocal(url, into: folder) }.value
+                    VerifiedIndex.shared.moved(from: url, to: folder.appendingPathComponent(url.lastPathComponent))
                 }
                 onChanged?([here] + sameVolume.map { .local($0.deletingLastPathComponent()) })
             }
@@ -218,6 +219,7 @@ final class FileOperations {
                 }
                 try fm.moveItem(at: url, to: target)
             }.value
+            VerifiedIndex.shared.moved(from: url, to: target)
             renamed = .local(target)
         case .remote(let id, _):
             guard let server = servers.server(id), let path = item.remotePath, let folder = parent.remotePath else {
