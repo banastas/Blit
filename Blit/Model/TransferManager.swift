@@ -28,6 +28,31 @@ struct TransferPayload: Codable, Transferable {
     }
 }
 
+/// Source files whose copies were verified by SHA-256, so a move may remove
+/// them. Filled from the engines' event callbacks, which run off the main actor.
+final class VerifiedSources: @unchecked Sendable {
+    private let lock = NSLock()
+    private var local: [String] = []
+    private var remote: [RemotePath] = []
+
+    func record(_ event: TransferEvent) {
+        guard case .fileFinished(let file, .sha256) = event else { return }
+        lock.withLock { remote.append(file.path) }
+    }
+
+    func record(_ event: CopyEvent) {
+        switch event {
+        case .fileFinished(let file, .nas), .fileFinished(let file, .readBack):
+            lock.withLock { local.append(file.path) }
+        default: break
+        }
+    }
+
+    /// Takes the recorded paths, leaving the ledger empty.
+    func takeLocal() -> [String] { lock.withLock { defer { local = [] }; return local } }
+    func takeRemote() -> [RemotePath] { lock.withLock { defer { remote = [] }; return remote } }
+}
+
 struct LogLine: Identifiable {
     let id = UUID()
     let time = Date()
@@ -109,6 +134,12 @@ final class TransferJob: Identifiable {
     var nasVerified = false
     /// Include hidden files when walking folders (captured at drop time).
     var includeHidden = false
+    /// A move (Cut, then Paste on another drive or from a server): each source
+    /// file is removed once its copy is verified by SHA-256. Anything not
+    /// verified that way stays where it was.
+    var deleteSources = false
+    @ObservationIgnored let verifiedSources = VerifiedSources()
+    var removedSources = 0
 
     func note(_ text: String, failure: Bool = false) {
         log.append(LogLine(text: text, isFailure: failure))
@@ -120,8 +151,9 @@ final class TransferJob: Identifiable {
 @Observable
 final class TransferManager {
     private(set) var jobs: [TransferJob] = []
-    /// Called when a job finishes, with its destination (to refresh the browser).
-    @ObservationIgnored var onFinished: ((URL) -> Void)?
+    /// Called when a job finishes (to refresh browsers showing its destination
+    /// or, for a move, its sources).
+    @ObservationIgnored var onFinished: ((TransferJob) -> Void)?
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let verifier: BlitHostKeyVerifier
     @ObservationIgnored private var running = false
@@ -179,7 +211,7 @@ final class TransferManager {
     /// Queues a transfer of `sources` into `destination`. Returns a message
     /// if it can't be done.
     func enqueue(_ sources: [BrowseLocation], to destination: BrowseLocation, destinationName: String,
-                 includeHidden: Bool = false) -> String? {
+                 includeHidden: Bool = false, move: Bool = false) -> String? {
         guard let folder = destination.localURL else {
             return "Uploading to a server isn't supported yet. Drop onto a local folder, drive or NAS share."
         }
@@ -195,11 +227,14 @@ final class TransferManager {
             let job = TransferJob(kind: .download(server), sources: remote, destination: folder,
                                   title: Self.title(remote.map(\.lastComponent)), destinationName: destinationName)
             job.includeHidden = includeHidden
+            job.deleteSources = move
             jobs.append(job)
         }
         if !local.isEmpty {
-            jobs.append(TransferJob(kind: .copy, sources: local.map { .local($0) }, destination: folder,
-                                    title: Self.title(local.map(\.lastPathComponent)), destinationName: destinationName))
+            let job = TransferJob(kind: .copy, sources: local.map { .local($0) }, destination: folder,
+                                  title: Self.title(local.map(\.lastPathComponent)), destinationName: destinationName)
+            job.deleteSources = move
+            jobs.append(job)
         }
         saveQueue()
         runNext()
@@ -215,6 +250,7 @@ final class TransferManager {
         var title: String
         var destinationName: String
         var includeHidden: Bool
+        var deleteSources: Bool?
     }
 
     private static var queueURL: URL {
@@ -229,7 +265,8 @@ final class TransferManager {
             var serverID: UUID?
             if case .download(let server) = job.kind { serverID = server.id }
             return SavedJob(serverID: serverID, sources: job.sources, destination: job.destination, title: job.title,
-                            destinationName: job.destinationName, includeHidden: job.includeHidden)
+                            destinationName: job.destinationName, includeHidden: job.includeHidden,
+                            deleteSources: job.deleteSources)
         }
         let url = Self.queueURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -252,6 +289,7 @@ final class TransferManager {
             let job = TransferJob(kind: kind, sources: s.sources, destination: s.destination, title: s.title,
                                   destinationName: s.destinationName)
             job.includeHidden = s.includeHidden
+            job.deleteSources = s.deleteSources ?? false
             job.restored = true
             job.note("RESTORED FROM LAST SESSION · RESUMING")
             jobs.append(job)
@@ -304,7 +342,7 @@ final class TransferManager {
             await run(job)
             running = false
             saveQueue()
-            onFinished?(job.destination)
+            onFinished?(job)
             await notify(job)
             runNext()
         }
@@ -512,11 +550,92 @@ final class TransferManager {
         var options = TransferOptions()
         options.skipExistingSameSize = true
         job.connectionCounters = clients.map { _ in ByteCounter() }
+        if job.deleteSources { job.note("MOVE · SOURCES ARE REMOVED ONCE VERIFIED BY SHA256") }
+        let ledger = job.verifiedSources
         _ = await BlitRemote.download(files, into: job.destination.path, clients: clients, hasher: hasher,
                                       options: options, counter: job.counter,
                                       connectionCounters: job.connectionCounters) { event in
+            ledger.record(event)
             Task { @MainActor in job.handle(event) }
         }
+        if job.deleteSources { await removeVerifiedSources(job, using: clients[0]) }
+    }
+
+    /// For a move from a server: deletes the source files verified so far, then
+    /// any source folders left empty.
+    private func removeVerifiedSources(_ job: TransferJob, using client: SFTPClient) async {
+        let roots = job.sources.compactMap(\.remotePath)
+        var folders = Set<RemotePath>()
+        var removed = 0
+        for path in job.verifiedSources.takeRemote() {
+            do {
+                try await client.removeFile(path)
+                removed += 1
+                folders.formUnion(Self.folders(of: path.bytes, under: roots.map(\.bytes)).map { RemotePath(bytes: $0) })
+            } catch {
+                job.note("✕ KEPT \(path.description.uppercased()) · \(error)".uppercased(), failure: true)
+            }
+        }
+        for folder in folders.sorted(by: { $0.bytes.count > $1.bytes.count }) {
+            try? await client.removeDirectory(folder)    // fails, harmlessly, if anything is left in it
+        }
+        job.removedSources += removed
+        noteMoveResult(job, removedNow: removed)
+    }
+
+    /// For a move between drives: deletes the source files verified so far,
+    /// then any source folders left empty (a lone .DS_Store counts as empty).
+    private func removeVerifiedSources(_ job: TransferJob) async {
+        let roots = job.sources.compactMap { $0.localURL?.standardizedFileURL.path }
+        let paths = job.verifiedSources.takeLocal()
+        let result = await Task.detached { () -> (removed: Int, failed: [String]) in
+            let fm = FileManager.default
+            var folders = Set<String>()
+            var removed = 0
+            var failed: [String] = []
+            for path in paths {
+                do {
+                    try fm.removeItem(atPath: path)
+                    removed += 1
+                    for folder in Self.folders(of: Array(path.utf8), under: roots.map { Array($0.utf8) }) {
+                        folders.insert(String(decoding: folder, as: UTF8.self))
+                    }
+                } catch {
+                    failed.append("\(path): \(error.localizedDescription)")
+                }
+            }
+            for folder in folders.sorted(by: { $0.utf8.count > $1.utf8.count }) {
+                guard let contents = try? fm.contentsOfDirectory(atPath: folder),
+                      contents.allSatisfy({ $0 == ".DS_Store" }) else { continue }
+                try? fm.removeItem(atPath: folder)
+            }
+            return (removed, failed)
+        }.value
+        for failure in result.failed { job.note("✕ KEPT \(failure)".uppercased(), failure: true) }
+        job.removedSources += result.removed
+        noteMoveResult(job, removedNow: result.removed)
+    }
+
+    private func noteMoveResult(_ job: TransferJob, removedNow: Int) {
+        if removedNow > 0 { job.note("✓ MOVED · REMOVED \(removedNow) SOURCE FILE\(removedNow == 1 ? "" : "S")") }
+        let kept = job.fileCount - job.removedSources
+        if kept > 0, job.failures.isEmpty {
+            job.note("= \(kept) SOURCE FILE\(kept == 1 ? "" : "S") KEPT · NOT VERIFIED BY SHA256 IN THIS MOVE", failure: true)
+        }
+    }
+
+    /// The folders between `path` and the source root it's under (the root
+    /// included), deepest first. Empty when `path` is itself a root.
+    nonisolated static func folders(of path: [UInt8], under roots: [[UInt8]]) -> [[UInt8]] {
+        let slash = UInt8(ascii: "/")
+        guard let root = roots.first(where: { path.count > $0.count && path.starts(with: $0 + [slash]) }) else { return [] }
+        var result: [[UInt8]] = []
+        var current = path
+        while let cut = current.lastIndex(of: slash), cut >= root.count {
+            current = Array(current[..<cut])
+            result.append(current)
+        }
+        return result
     }
 
     private func copy(_ job: TransferJob) async throws {
@@ -571,10 +690,14 @@ final class TransferManager {
         var options = CopyOptions()
         options.skipExistingSameSize = true
         job.connectionCounters = (0..<options.concurrentFiles).map { _ in ByteCounter() }
+        if job.deleteSources { job.note("MOVE · SOURCES ARE REMOVED ONCE VERIFIED BY SHA256") }
+        let ledger = job.verifiedSources
         _ = try await BlitLocal.copy(files, into: job.destination.path, nas: nas, options: options, counter: job.counter,
                                      streamCounters: job.connectionCounters) { event in
+            ledger.record(event)
             Task { @MainActor in job.handle(event) }
         }
+        if job.deleteSources { await removeVerifiedSources(job) }
     }
 }
 

@@ -31,6 +31,18 @@ import Testing
         #expect(open == [0, 0, 0, 18, 3, 0, 0, 0, 1, 0, 0, 0, 1, 0x61, 0, 0, 0, 1, 0, 0, 0, 0])
     }
 
+    @Test func fileManagementWireFormat() {
+        // SSH_FXP_MKDIR (14): id, path, attrs (flags 0)
+        #expect(encoded(.mkdir(id: 2, path: RemotePath("d"), attributes: SFTPAttributes()))
+                == [0, 0, 0, 14, 14, 0, 0, 0, 2, 0, 0, 0, 1, 0x64, 0, 0, 0, 0])
+        // SSH_FXP_RMDIR (15) and SSH_FXP_REMOVE (13): id, path
+        #expect(encoded(.rmdir(id: 3, path: RemotePath("d"))) == [0, 0, 0, 10, 15, 0, 0, 0, 3, 0, 0, 0, 1, 0x64])
+        #expect(encoded(.remove(id: 4, path: RemotePath("f"))) == [0, 0, 0, 10, 13, 0, 0, 0, 4, 0, 0, 0, 1, 0x66])
+        // SSH_FXP_RENAME (18): id, oldpath, newpath
+        #expect(encoded(.rename(id: 5, from: RemotePath("a"), to: RemotePath("bc")))
+                == [0, 0, 0, 16, 18, 0, 0, 0, 5, 0, 0, 0, 1, 0x61, 0, 0, 0, 2, 0x62, 0x63])
+    }
+
     @Test func decodesVersionWithExtensions() throws {
         var body = allocator.buffer(capacity: 64)
         body.writeInteger(UInt32(3))

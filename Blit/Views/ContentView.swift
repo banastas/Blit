@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(ServerStore.self) private var servers
     @Environment(ConnectionManager.self) private var connections
     @Environment(TransferManager.self) private var transfers
+    @Environment(FileOperations.self) private var operations
     @State private var browser: BrowserModel?
     /// The optional second pane (R2.8) and which pane sidebar picks, ⌘K and
     /// the toolbar act on (the one last clicked).
@@ -31,7 +32,7 @@ struct ContentView: View {
                         onAddServer: { editing = EditingServer(server: ServerConfig(), isNew: true) },
                         onEditServer: { editing = EditingServer(server: $0, isNew: false) },
                         onRemoveServer: { removing = $0 },
-                        onTransfer: startTransfer,
+                        onTransfer: drop,
                         onNASVerification: { nasShare = $0 })
                 .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 300)
         } detail: {
@@ -43,7 +44,7 @@ struct ContentView: View {
                             pane(secondBrowser, isActive: secondActive) { secondActive = true }
                         }
                     } else {
-                        FileListView(browser: browser, onTransfer: startTransfer)
+                        FileListView(browser: browser)
                     }
                 }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -131,6 +132,17 @@ struct ContentView: View {
         }
     }
 
+    /// A drop onto the sidebar: Finder's rules (move within a volume or server,
+    /// copy across), ⌥ copies.
+    private func drop(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
+        let mode: FileOperations.Mode = NSEvent.modifierFlags.contains(.option) ? .copy : .automatic
+        let hidden = active?.showHidden ?? false
+        Task {
+            transferError = await operations.place(sources, into: destination, destinationName: name.isEmpty ? "Folder" : name,
+                                                   mode: mode, includeHidden: hidden)
+        }
+    }
+
     private func startTransfer(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
         transferError = transfers.enqueue(sources, to: destination, destinationName: name.isEmpty ? "Folder" : name,
                                           includeHidden: active?.showHidden ?? false)
@@ -149,6 +161,9 @@ struct ContentView: View {
             Button("Go to…", systemImage: "magnifyingglass") { showPalette = true }
                 .keyboardShortcut("k", modifiers: .command)
                 .help("Go to a favorite, server, drive or recent folder (⌘K)")
+            Button("New Folder", systemImage: "folder.badge.plus") { active?.promptNewFolder() }
+                .disabled(active?.current == nil)
+                .help("New Folder (⇧⌘N)")
             Button("Enclosing Folder", systemImage: "arrow.up") { active?.goUp() }
                 .disabled(!(active?.canGoUp ?? false))
                 .keyboardShortcut(.upArrow, modifiers: .command)
@@ -231,14 +246,16 @@ struct ContentView: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: activate)
             Divider()
-            FileListView(browser: model, onTransfer: startTransfer)
+            FileListView(browser: model)
                 .simultaneousGesture(TapGesture().onEnded(activate))
         }
         .frame(minWidth: 280)
     }
 
     private func openSecondPaneIfNeeded() {
-        if secondBrowser == nil { secondBrowser = BrowserModel(servers: servers, connections: connections) }
+        if secondBrowser == nil {
+            secondBrowser = BrowserModel(servers: servers, connections: connections, operations: operations)
+        }
         guard let secondBrowser, secondBrowser.current == nil else { return }
         let start = sidebar.favorites.dropFirst().first(where: sidebar.isAvailable)?.location
             ?? sidebar.networkShares.first.map { .local($0.url) }
@@ -247,14 +264,20 @@ struct ContentView: View {
     }
 
     private func start() {
-        if browser == nil { browser = BrowserModel(servers: servers, connections: connections) }
+        if browser == nil { browser = BrowserModel(servers: servers, connections: connections, operations: operations) }
         if showSecondPane { openSecondPaneIfNeeded() }
         transfers.restoreQueue()
-        transfers.onFinished = { [weak browser, weak secondBrowser] destination in
-            for model in [browser, secondBrowser].compactMap({ $0 })
-            where model.current?.localURL?.standardizedFileURL == destination.standardizedFileURL {
+        // Refresh whichever panes show a folder that changed: a transfer's
+        // destination (and a move's sources), or a file operation's folders.
+        let refresh: ([BrowseLocation]) -> Void = { [weak browser, weak secondBrowser] folders in
+            for model in [browser, secondBrowser].compactMap({ $0 }) {
+                guard let current = model.current, folders.contains(where: { FileOperations.same($0, current) }) else { continue }
                 model.reload()
             }
+        }
+        operations.onChanged = refresh
+        transfers.onFinished = { job in
+            refresh([.local(job.destination)] + (job.deleteSources ? job.sources.compactMap(\.parent) : []))
         }
         if selection == nil {
             selection = sidebar.favorites.first(where: sidebar.isAvailable)?.location

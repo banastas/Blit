@@ -100,8 +100,8 @@ struct SidebarView: View {
                         } label: {
                             Label(device.name, systemImage: device.symbol)
                                 .help(device.model.map { "\(device.name) (\($0))" } ?? device.name)
+                                .selectionDisabled()
                         }
-                        .selectionDisabled()
                     }
                 }
             }

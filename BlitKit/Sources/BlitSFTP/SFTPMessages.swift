@@ -13,6 +13,10 @@ public enum SFTPRequest: Sendable {
     case opendir(id: UInt32, path: RemotePath)
     case readdir(id: UInt32, handle: ByteBuffer)
     case realpath(id: UInt32, path: RemotePath)
+    case mkdir(id: UInt32, path: RemotePath, attributes: SFTPAttributes)
+    case rmdir(id: UInt32, path: RemotePath)
+    case remove(id: UInt32, path: RemotePath)
+    case rename(id: UInt32, from: RemotePath, to: RemotePath)
     case extended(id: UInt32, name: String, payload: ByteBuffer)
 
     public var type: SFTPPacketType {
@@ -27,6 +31,10 @@ public enum SFTPRequest: Sendable {
         case .opendir: .opendir
         case .readdir: .readdir
         case .realpath: .realpath
+        case .mkdir: .mkdir
+        case .rmdir: .rmdir
+        case .remove: .remove
+        case .rename: .rename
         case .extended: .extended
         }
     }
@@ -52,9 +60,18 @@ public enum SFTPRequest: Sendable {
             buffer.writeSFTPString(handle)
             buffer.writeInteger(offset)
             buffer.writeInteger(length)
-        case .stat(let id, let path), .lstat(let id, let path), .opendir(let id, let path), .realpath(let id, let path):
+        case .stat(let id, let path), .lstat(let id, let path), .opendir(let id, let path), .realpath(let id, let path),
+             .rmdir(let id, let path), .remove(let id, let path):
             buffer.writeInteger(id)
             buffer.writeSFTPString(path.bytes)
+        case .mkdir(let id, let path, let attributes):
+            buffer.writeInteger(id)
+            buffer.writeSFTPString(path.bytes)
+            attributes.write(to: &buffer)
+        case .rename(let id, let from, let to):
+            buffer.writeInteger(id)
+            buffer.writeSFTPString(from.bytes)
+            buffer.writeSFTPString(to.bytes)
         case .extended(let id, let name, let payload):
             buffer.writeInteger(id)
             buffer.writeSFTPString(name)

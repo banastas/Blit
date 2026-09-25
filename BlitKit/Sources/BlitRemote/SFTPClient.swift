@@ -91,6 +91,45 @@ public final class SFTPClient: Sendable {
         }
     }
 
+    // MARK: File management
+
+    public func makeDirectory(_ path: RemotePath) async throws {
+        try expectOK(try await request { .mkdir(id: $0, path: path, attributes: SFTPAttributes()) }, "create folder \(path)")
+    }
+
+    /// Renames or moves within the server. Fails if `to` already exists.
+    public func rename(_ from: RemotePath, to: RemotePath) async throws {
+        try expectOK(try await request { .rename(id: $0, from: from, to: to) }, "rename \(from)")
+    }
+
+    public func removeFile(_ path: RemotePath) async throws {
+        try expectOK(try await request { .remove(id: $0, path: path) }, "delete \(path)")
+    }
+
+    public func removeDirectory(_ path: RemotePath) async throws {
+        try expectOK(try await request { .rmdir(id: $0, path: path) }, "delete folder \(path)")
+    }
+
+    /// Deletes a file, or a folder and everything in it. Symlinks are removed,
+    /// not followed.
+    public func removeRecursively(_ path: RemotePath) async throws {
+        let attributes: SFTPAttributes
+        switch try await request({ .lstat(id: $0, path: path) }) {
+        case .attributes(_, let a): attributes = a
+        case let other: throw Self.failure(other, "stat \(path)")
+        }
+        guard attributes.isDirectory else { return try await removeFile(path) }
+        for entry in try await list(path) {
+            try await removeRecursively(path.appending(entry.filename))
+        }
+        try await removeDirectory(path)
+    }
+
+    private func expectOK(_ response: SFTPResponse, _ what: String) throws {
+        if case .status(_, let code, _) = response, code == SFTPStatusCode.ok.rawValue { return }
+        throw Self.failure(response, what)
+    }
+
     /// Directory entries, excluding `.` and `..`.
     public func list(_ path: RemotePath) async throws -> [SFTPNameEntry] {
         let handle = try await openHandle({ .opendir(id: $0, path: path) }, path)

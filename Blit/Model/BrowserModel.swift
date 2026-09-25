@@ -19,6 +19,28 @@ struct FileItem: Identifiable, Hashable, Sendable {
     var id: BrowseLocation { location }
 }
 
+/// Asking for a name: a new folder, or a new name for an item.
+struct NamePrompt: Identifiable {
+    enum Kind { case newFolder, rename(FileItem) }
+    let id = UUID()
+    let kind: Kind
+    var name: String
+
+    var title: String {
+        switch kind {
+        case .newFolder: "New Folder"
+        case .rename(let item): "Rename “\(item.name)”"
+        }
+    }
+}
+
+extension NamePrompt.Kind {
+    var isNewFolder: Bool {
+        if case .newFolder = self { return true }
+        return false
+    }
+}
+
 /// A server presented a host key Blit hasn't seen (PRD R1.3).
 struct TrustRequest: Identifiable {
     let id = UUID()
@@ -39,6 +61,11 @@ final class BrowserModel {
     var passwordRequest: ServerConfig?
     /// Show names starting with "." (View › Show Hidden Files, ⇧⌘.).
     private(set) var showHidden = false
+    var selection = Set<BrowseLocation>()
+    var namePrompt: NamePrompt?
+    /// Items waiting for the user to confirm a permanent delete.
+    var deleteRequest: [FileItem]?
+    var operationError: String?
 
     func toggleHidden() {
         showHidden.toggle()
@@ -47,15 +74,17 @@ final class BrowserModel {
 
     let servers: ServerStore
     let connections: ConnectionManager
+    let operations: FileOperations
     /// Recently visited folders, newest first (for ⌘K).
     private(set) var recents: [BrowseLocation] = []
     private static let recentsKey = "recentLocations"
     private var backStack: [BrowseLocation] = []
     private var forwardStack: [BrowseLocation] = []
 
-    init(servers: ServerStore, connections: ConnectionManager) {
+    init(servers: ServerStore, connections: ConnectionManager, operations: FileOperations) {
         self.servers = servers
         self.connections = connections
+        self.operations = operations
         if let data = UserDefaults.standard.data(forKey: Self.recentsKey),
            let saved = try? JSONDecoder().decode([BrowseLocation].self, from: data) {
             recents = saved
@@ -96,18 +125,21 @@ final class BrowserModel {
         guard location != current else { return }
         if let current { backStack.append(current) }
         forwardStack.removeAll()
+        selection = []
         show(location)
     }
 
     func goBack() {
         guard let previous = backStack.popLast() else { return }
         if let current { forwardStack.append(current) }
+        selection = []
         show(previous)
     }
 
     func goForward() {
         guard let next = forwardStack.popLast() else { return }
         if let current { backStack.append(current) }
+        selection = []
         show(next)
     }
 
@@ -136,6 +168,7 @@ final class BrowserModel {
                 }
                 guard location == current else { return }
                 items = listed
+                selection.formIntersection(listed.map(\.location))
                 remember(location)
             } catch {
                 guard location == current else { return }

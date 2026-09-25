@@ -180,7 +180,14 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R2.7** ⌘K command palette to jump to any server, drive, or recent folder.
 - **R2.8** A single pane by default, with a keyboard shortcut to toggle a second pane.
 - **R2.9** **Favorites:** pinned folders on any location (local drive, NAS share, remote server) at the top of the sidebar. Add by dragging a folder in or with ⌘D; reorder by dragging; remove from a context menu. Each shows its volume or server, and is dimmed when that isn't mounted or connected.
-- **R2.10** **Dropping files on any sidebar item** (favorite, drive, share, server) starts a transfer to it: download, copy, or clone as appropriate, with the same verification as any other transfer. The target highlights while dragging.
+- **R2.10** **Dropping files on any sidebar item** (favorite, drive, share, server) starts a transfer to it: download, copy, or clone as appropriate, with the same verification as any other transfer. The target highlights while dragging. Dropping onto a folder in the file list works the same way.
+- **R2.11** **Drag rules follow Finder:** a drag within one volume or one server moves (a rename, instant); a drag across devices copies; holding ⌥ always copies.
+- **R2.12** **File management** on drives, NAS shares and servers:
+  - New Folder (⇧⌘N), Rename…, Duplicate (local).
+  - Cut, Copy and Paste (⌘X/⌘C/⌘V), and Move Items Here (⌥⌘V). Local items also go on the pasteboard as file URLs, so copying in Finder and pasting in Blit (or the reverse) works.
+  - Delete (⌘⌫). Local drives use the Trash, with no prompt. Servers and network shares have no Trash, so deletes there are permanent and always ask first.
+  - A move across devices, or from a server, runs through the verified transfer engine. Each source file is removed only after its copy is verified by SHA-256. Files that were already present, only size-checked, or that failed stay where they were, and the log says so.
+  - Uploads, and copies within or between servers, aren't supported yet. Blit says so rather than failing silently.
 
 ### Transfer engine
 
