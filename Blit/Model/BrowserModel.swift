@@ -72,6 +72,8 @@ final class BrowserModel {
     /// Items waiting for the user to confirm a permanent delete.
     var deleteRequest: [FileItem]?
     var operationError: String?
+    /// The file shown in Quick Look, if the panel is open.
+    var previewURL: URL?
 
     func toggleHidden() {
         showHidden.toggle()

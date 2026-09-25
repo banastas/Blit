@@ -2,6 +2,7 @@
 // default, monospaced digits for sizes and dates (PRD R2.4–R2.6), with file
 // management from the context menu and drag and drop (R2.12).
 
+import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -75,9 +76,7 @@ struct FileListView: View {
                     Label {
                         Text(item.name).lineLimit(1)
                     } icon: {
-                        Image(nsImage: IconCache.shared.icon(for: item))
-                            .resizable()
-                            .frame(width: 16, height: 16)
+                        FileIcon(item: item)
                     }
                 }
             }
@@ -135,6 +134,11 @@ struct FileListView: View {
                 NSWorkspace.shared.open(url)
             }
         }
+        .quickLookPreview($browser.previewURL, in: browser.previewURLs)
+        .onChange(of: browser.selection) {
+            // Like Finder: while Quick Look is open, it follows the selection.
+            if browser.previewURL != nil { browser.previewSelection() }
+        }
         .onKeyPress(.rightArrow) { expandSelection(true) }
         .onKeyPress(.leftArrow) { expandSelection(false) }
         .overlay {
@@ -156,6 +160,11 @@ struct FileListView: View {
             let urls = items.compactMap(\.location.localURL)
             if items.count == 1, items[0].isDirectory {
                 Button("Open") { browser.open(items[0].location) }
+            }
+            Button("Quick Look") {
+                browser.selection = Set(items.map(\.id))
+                browser.previewURL = nil
+                browser.previewSelection()
             }
             if !urls.isEmpty {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }

@@ -71,6 +71,9 @@ struct ContentView: View {
             if shown { openSecondPaneIfNeeded() } else { secondActive = false }
         }
         .onAppear(perform: start)
+        .background(WindowReader { BrowserModel.activeWindow = $0 })
+        .onChange(of: secondActive) { BrowserModel.active = active }
+        .onChange(of: showSecondPane) { BrowserModel.active = active }
         .focusedSceneValue(\.browser, active)
         .sheet(item: $editing) { item in
             ServerEditor(server: item.server, isNew: item.isNew) { server, password in
@@ -266,6 +269,7 @@ struct ContentView: View {
     private func start() {
         if browser == nil { browser = BrowserModel(servers: servers, connections: connections, operations: operations) }
         if showSecondPane { openSecondPaneIfNeeded() }
+        BrowserModel.active = active
         transfers.restoreQueue()
         connections.warmUp(servers.browsable)
         // Refresh whichever panes show a folder that changed: a transfer's
@@ -284,5 +288,20 @@ struct ContentView: View {
                 ?? sidebar.drives.first(where: { !$0.isInternal }).map { .local($0.url) }
                 ?? .local(FileManager.default.homeDirectoryForCurrentUser)
         }
+    }
+}
+
+/// Hands over the window hosting a view (for key handling that needs it).
+struct WindowReader: NSViewRepresentable {
+    let onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { onWindow(view.window) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async { onWindow(view.window) }
     }
 }

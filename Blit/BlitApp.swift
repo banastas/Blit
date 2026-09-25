@@ -14,6 +14,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
+        // Space opens and closes Quick Look, as in Finder, unless a text field
+        // or a sheet has the keyboard (PRD R2.17).
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 49, event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+                  !event.isARepeat else { return event }
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard let window = NSApp.keyWindow, window === BrowserModel.activeWindow,
+                      window.attachedSheet == nil, !(window.firstResponder is NSText),
+                      let browser = BrowserModel.active, browser.current != nil else { return false }
+                browser.togglePreview()
+                return true
+            }
+            return handled ? nil : event
+        }
     }
 
     /// Finder › Services › Send to Blit…: bring Blit forward and ask where to copy.
@@ -106,11 +120,13 @@ struct BrowserCommands: Commands {
     @FocusedValue(\.browser) private var browser
     @AppStorage("showSecondPane") private var showSecondPane = false
     @AppStorage("showPathBar") private var showPathBar = true
+    @AppStorage("showIconPreviews") private var showIconPreviews = true
 
     var body: some Commands {
         CommandGroup(after: .sidebar) {
             Button(showPathBar ? "Hide Path Bar" : "Show Path Bar") { showPathBar.toggle() }
                 .keyboardShortcut("p", modifiers: [.command, .option])
+            Toggle("Show Icon Previews", isOn: $showIconPreviews)
             Button(browser?.showHidden == true ? "Hide Hidden Files" : "Show Hidden Files") {
                 browser?.toggleHidden()
             }
@@ -134,6 +150,9 @@ struct FileCommands: Commands {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(browser?.current == nil)
             Divider()
+            Button("Quick Look") { onFiles { $0.togglePreview() } }
+                .keyboardShortcut("y")
+                .disabled(browser?.selection.isEmpty ?? true)
             Button("Rename…") { onFiles { b in b.selectedItems.first.map(b.promptRename) } }
                 .disabled(browser?.selection.count != 1)
             Button("Duplicate") { onFiles { $0.duplicate($0.selectedItems) } }
