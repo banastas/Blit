@@ -127,7 +127,7 @@ Native macOS first, with a restrained "dark hacker" touch:
 
 - **Dark by default:** near-black surfaces, a very subtle alternating row stripe. Light mode still works.
 - **Monospace for anything technical:** paths, sizes, speeds, hashes, timestamps (SF Mono). Names stay in the system font.
-- **One phosphor-green accent,** only for live activity: transfer bars, the connection dot, verified checkmarks, drop highlights. Everything else is grayscale.
+- **Black and grey only, no accent color.** Live activity is shown by brightness: active rows, transfer bars, the connected-server dot and drop targets in near-white; everything else in greys. The one exception is failures (hash mismatch, refused host key), in a muted red so a problem can't blend in. Status is never carried by color alone: every state also has a glyph or word. System window controls stay standard.
 - **A terminal-style log line** in the transfer strip (`09:43:07 ✓ sha256 ef61845e… verified`), expandable into the full log (PRD R4.4).
 
 ### Finder integration
