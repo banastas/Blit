@@ -2,6 +2,7 @@
 
 import AppIntents
 import AppKit
+import Quartz
 import SwiftUI
 
 /// Quitting mid-transfer: save the queue, close connections, then exit. A
@@ -14,16 +15,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
-        // Space opens and closes Quick Look, as in Finder, unless a text field
-        // or a sheet has the keyboard (PRD R2.17).
+        // Quick Look keys, as in Finder (PRD R2.17): Space opens and closes the
+        // panel; while it's open, ↑/↓ preview the previous or next file. Left
+        // alone while a text field or a sheet has the keyboard.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == 49, event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-                  !event.isARepeat else { return event }
+            let key = event.keyCode
+            let space: UInt16 = 49, down: UInt16 = 125, up: UInt16 = 126
+            guard [space, down, up].contains(key),
+                  event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+                  key != space || !event.isARepeat else { return event }
             let handled = MainActor.assumeIsolated { () -> Bool in
-                guard let window = NSApp.keyWindow, window === BrowserModel.activeWindow,
-                      window.attachedSheet == nil, !(window.firstResponder is NSText),
-                      let browser = BrowserModel.active, browser.current != nil else { return false }
-                browser.togglePreview()
+                guard let window = NSApp.keyWindow, let browser = BrowserModel.active, browser.current != nil else { return false }
+                let panelIsKey = window is QLPreviewPanel
+                guard panelIsKey || (window === BrowserModel.activeWindow && window.attachedSheet == nil
+                                     && !(window.firstResponder is NSText)) else { return false }
+                if key == space {
+                    browser.togglePreview()
+                    return true
+                }
+                guard browser.previewURL != nil else { return false }
+                browser.movePreview(by: key == down ? 1 : -1)
                 return true
             }
             return handled ? nil : event

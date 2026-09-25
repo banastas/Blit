@@ -16,11 +16,30 @@ extension BrowserModel {
     @MainActor static weak var active: BrowserModel?
     @MainActor static weak var activeWindow: NSWindow?
 
-    /// Files the Quick Look panel can page through with the arrow keys.
-    var previewURLs: [URL] {
-        let local = rows.filter { !$0.isDirectory }.compactMap(\.location.localURL)
-        if let previewURL, !local.contains(previewURL) { return [previewURL] }
-        return local
+    /// What the Quick Look panel holds: just the file shown. Moving between
+    /// files goes through the list's selection (↑/↓), so the two stay in step.
+    var previewURLs: [URL] { previewURL.map { [$0] } ?? [] }
+
+    /// Files Quick Look can show: any local file, and server files small
+    /// enough to download for a preview. Folders are skipped.
+    func isPreviewable(_ item: FileItem) -> Bool {
+        !item.isDirectory && (item.location.localURL != nil || item.size <= Self.remotePreviewLimit)
+    }
+
+    /// ↑/↓ while Quick Look is open: select the previous or next previewable
+    /// file in the list; the panel follows the selection.
+    func movePreview(by step: Int) {
+        let rows = self.rows
+        let selected = rows.indices.filter { selection.contains(rows[$0].id) }
+        guard let start = step > 0 ? selected.last : selected.first else { return }
+        var index = start + step
+        while rows.indices.contains(index) {
+            if isPreviewable(rows[index]) {
+                selection = [rows[index].id]
+                return
+            }
+            index += step
+        }
     }
 
     func togglePreview() {

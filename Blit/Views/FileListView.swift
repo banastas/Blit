@@ -68,6 +68,17 @@ struct FileListView: View {
     }
 
     private var table: some View {
+        ScrollViewReader { proxy in
+            tableContent
+                .onChange(of: browser.selection) {
+                    // Keep the file Quick Look is showing in view as ↑/↓ move through the list.
+                    guard browser.previewURL != nil, let first = browser.selectedItems.first else { return }
+                    proxy.scrollTo(first.id)
+                }
+        }
+    }
+
+    private var tableContent: some View {
         Table(of: FileItem.self, selection: $browser.selection, sortOrder: $browser.sortOrder) {
             TableColumn("Name", value: \.name) { item in
                 HStack(spacing: 4) {
