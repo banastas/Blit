@@ -401,7 +401,7 @@ The setup Blit is tuned against:
 | **M1** | SSH spike | Throwaway code: raw SwiftNIO SSH channel throughput with a ≥ 8 MB window against the real server, then a minimal pipelined read loop that handles shortened replies, plus `sha256sum` over an exec channel. **Done when one connection sustains more than 24.6 MB/s from the reference server.** Result: 42.9 MB/s on one connection, ~90 MB/s on 3, verified ([results](#m1-spike-results)). Carried into M2: `sha256sum` on DSM, and fixing the probe to time from first byte. | ✅ Done |
 | **M2** | SFTP engine | `BlitKit` Swift package. Pipelined reads, connection pool with staggered setup, chunked files, remote checksums with hash cache, resume, stability gate, filename policy, host-key pin store. Target ≥ 55 MB/s from the reference server. **Delivered:** SFTP v3 protocol layer and read planner; SSH connections with M1 tuning, host-key verification (known_hosts + pinned fingerprints), close-on-error and handshake timeout; SFTP client with pipelined downloads and backpressured writes; parallel verified downloads (shared range queue, `.blitpart`, `F_FULLFSYNC`, server `sha256sum`, mtime, rename); **resume** (`.blitpart.state` with completed ranges, 256 MB chunks); server hash starts when the last range is handed out; **server-side hash cache** (`~/.cache/blit/sha256`); **stability gate**; `blit ls` / `blit get`. **Live (2026-09-24, 3 connections, 923.5 MB file):** fresh 64.8 MB/s, verified 4.8 s after the last byte; repeat 74.1 MB/s with the hash cached (0.7 s); killed at 339.6 MB then resumed with 232.8 MB reused and the whole file verified. 26-file pack: 26/26 verified. Host-key store with trust prompt (`blit hostkeys`); filename collision detection; SFTPGo endpoint verified live (35.1 MB/s over 3 connections, size-check fallback without a shell); cold-file throughput measured ([results](#cold-file-results-m2)). 38 unit tests. | ✅ Done |
 | **M3** | Local engine | LocalCopyEngine, NAS-side checksums over SSH, `.blitpart` handling, queue-wide disk-space checks, Wi-Fi path warning (R1.7), `blit copy` in the CLI. Target ≥ 105 MB/s SSD → NAS. **Delivered:** `BlitLocal` module: 8 MB overlapped copy with the source hashed as it streams, `.blitpart` + sync + rename, mtime, APFS clone on one volume, NAS-side `sha256sum` with automatic share-path lookup (read-back fallback, labelled weaker), space preflight, Wi-Fi route warning, `blit copy`; 46 unit tests. **Live (2026-09-24):** external SSD → RS1619xs+ Media share over wired 1 GbE, 29.90 GB in 7 files at **106.3 MB/s**, 7/7 verified on the NAS, 15.7 s from last byte to verified. **Prerequisites confirmed:** DSM (RS1619xs+, OpenSSH 8.2) has `sha256sum`, GNU `stat -c`, `xargs`; Media share at `/volume1/Media`; no home folder for the SSH user, so NAS-side hashes aren't cached (fine: each copy is verified once). Baseline SMB read over the wire: 105.6 MB/s. | ✅ Done |
-| **M4** | App (next) | `Blit.xcodeproj` (bundle, signing, entitlements) depending on BlitKit as a local package. Finder-style browser (sorted newest first, alternating rows, ⌘K, optional second pane), Favorites with drag-and-drop onto sidebar targets (R2.9, R2.10), dark visual language, transfer strip, durable queue, server editor, Keychain, host-key pinning, notifications, menu bar icon, "Blit to…" Quick Action | |
+| **M4** | App (in progress) | `Blit.xcodeproj` (bundle, signing, entitlements) depending on BlitKit as a local package. Native Finder-style browser (sorted newest first, alternating rows, ⌘K, optional second pane), Favorites with drag-and-drop onto sidebar targets (R2.9, R2.10), pixel-terminal transfer HUD (condensed and expanded), transfer strip, durable queue, server editor, Keychain, host-key pinning, notifications, menu bar icon, "Blit to…" Quick Action **Done so far:** Xcode project (hand-written, folder-synced, BlitKit linked locally; Hardened Runtime, not sandboxed, ad-hoc signed until a team is set); native window with sidebar (Favorites: drag in, ⌘D, reorder, availability; Drives; NAS, live on mount/unmount) and a Finder-style Table (newest first, alternating rows, monospaced digits, back/forward/up, double-click to open). | In progress |
 | **M5** | Hardening | Handling network changes, sleep and wake, drive ejection, transfer log export, signing and notarization | |
 
 ## Open questions
@@ -430,7 +430,9 @@ blit/
 │   ├── Sources/blit-spike/main.swift
 │   ├── run-m1.sh         the M1 test matrix
 │   └── run-m1b.sh        M1 follow-ups (SFTPGo, 255 KB reads, disk-write cost)
-└── BlitKit/              the transfer engine (Swift package; open Package.swift in Xcode)
+├── Blit.xcodeproj/       the Mac app (macOS 27, SwiftUI); Blit/ is a folder-synced group
+├── Blit/                 app sources: BlitApp, Model/ (sidebar, browser), Views/
+└── BlitKit/              the transfer engine (Swift package; the app links it locally)
     ├── Package.swift
     ├── Sources/BlitSFTP/   SFTP v3 protocol: messages, attributes, framer, read planner
     ├── Sources/BlitRemote/ SSH connections, host keys, SFTP client, parallel verified downloads
@@ -439,9 +441,17 @@ blit/
     └── Tests/
 ```
 
-The app's Xcode project (`Blit.xcodeproj`) arrives in M4 and uses BlitKit as a local package.
+`Blit.xcodeproj` links BlitKit as a local package. Files added under `Blit/` are picked up automatically (folder-synced group), so the project file rarely changes.
 
 ## Building
+
+Open `Blit.xcodeproj` in Xcode 27 and run the **Blit** scheme, or:
+
+```bash
+xcodebuild -project Blit.xcodeproj -scheme Blit -configuration Debug build
+```
+
+Engine and command-line tool:
 
 ```bash
 cd BlitKit
