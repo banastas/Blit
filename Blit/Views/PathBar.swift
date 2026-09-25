@@ -30,6 +30,8 @@ struct PathBar: View {
                     .layoutPriority(index == segments.count - 1 ? 2 : index == 0 ? 1 : 0)
             }
             Spacer(minLength: 0)
+            LoadingIndicator(browser: browser)
+                .layoutPriority(3)
         }
         .font(.system(size: 11))
         .padding(.horizontal, 8)
@@ -129,5 +131,40 @@ private struct PathSegmentView: View {
             browser.drop(sources, into: segment.location, name: segment.name)
             return true
         } isTargeted: { isTargeted = $0 && segment.isFolder }
+    }
+}
+
+/// "Refreshing…" with a spinner while a folder loads (PRD R2.18). It appears
+/// only if loading takes more than a moment, so quick local reloads don't flash.
+struct LoadingIndicator: View {
+    let browser: BrowserModel
+    /// In a capsule over the list (when the path bar is hidden).
+    var floating = false
+    @State private var visible = false
+
+    var body: some View {
+        Group {
+            if visible {
+                HStack(spacing: 5) {
+                    ProgressView().controlSize(.mini)
+                    Text(browser.items.isEmpty ? "Loading…" : "Refreshing…")
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+                .padding(.horizontal, floating ? 8 : 0)
+                .padding(.vertical, floating ? 4 : 0)
+                .background(floating ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(.clear), in: Capsule())
+                .transition(.opacity)
+            }
+        }
+        .task(id: browser.isLoading) {
+            guard browser.isLoading else {
+                withAnimation(.easeOut(duration: 0.2)) { visible = false }
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, browser.isLoading else { return }
+            withAnimation(.easeIn(duration: 0.15)) { visible = true }
+        }
     }
 }

@@ -156,6 +156,16 @@ struct FileListView: View {
             // Like Finder: while Quick Look is open, it follows the selection.
             if browser.previewURL != nil { browser.previewSelection() }
         }
+        .overlay(alignment: .topTrailing) {
+            // With the path bar hidden, show loading in the list's corner instead.
+            if !showPathBar {
+                LoadingIndicator(browser: browser, floating: true)
+                    .font(.system(size: 11))
+                    .padding(.top, 30)
+                    .padding(.trailing, 10)
+                    .allowsHitTesting(false)
+            }
+        }
         .onKeyPress(.rightArrow) { expandSelection(true) }
         .onKeyPress(.leftArrow) { expandSelection(false) }
         .overlay {
