@@ -18,15 +18,15 @@ enum HUDFont {
 
     /// Pixel uppercase labels; system monospaced small caps until the font is bundled.
     static func label(_ size: CGFloat = 11) -> Font {
-        NSFont(name: "Silkscreen", size: size) != nil
-            ? .custom("Silkscreen", fixedSize: size)
+        NSFont(name: "Silkscreen-Regular", size: size) != nil
+            ? .custom("Silkscreen-Regular", fixedSize: size)
             : .system(size: size - 1, weight: .medium, design: .monospaced).smallCaps()
     }
 
     /// Terminal numerals and text.
     static func terminal(_ size: CGFloat) -> Font {
-        NSFont(name: "VT323", size: size) != nil
-            ? .custom("VT323", fixedSize: size)
+        NSFont(name: "VT323-Regular", size: size) != nil
+            ? .custom("VT323-Regular", fixedSize: size)
             : .system(size: size * 0.72, design: .monospaced)
     }
 }

@@ -8,6 +8,7 @@ struct ContentView: View {
     @Environment(TransferManager.self) private var transfers
     @State private var browser: BrowserModel?
     @State private var transferError: String?
+    @State private var nasShare: VolumeLocation?
     @State private var selection: BrowseLocation?
     @State private var editing: EditingServer?
     @State private var removing: ServerConfig?
@@ -24,7 +25,8 @@ struct ContentView: View {
                         onAddServer: { editing = EditingServer(server: ServerConfig(), isNew: true) },
                         onEditServer: { editing = EditingServer(server: $0, isNew: false) },
                         onRemoveServer: { removing = $0 },
-                        onTransfer: startTransfer)
+                        onTransfer: startTransfer,
+                        onNASVerification: { nasShare = $0 })
                 .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 300)
         } detail: {
             if let browser {
@@ -50,6 +52,12 @@ struct ContentView: View {
                 servers.save(server, password: password)
                 connections.disconnect(server)
                 if item.isNew { selection = server.startLocation } else if selection?.serverID == server.id { browser?.reload() }
+            }
+        }
+        .sheet(item: $nasShare) { share in
+            NASVerificationSheet(share: share, existing: servers.nasLogin(forMount: share.url.path),
+                                 verifier: connections.verifier) { login, password in
+                servers.save(login, password: password)
             }
         }
         .sheet(item: trustBinding) { request in

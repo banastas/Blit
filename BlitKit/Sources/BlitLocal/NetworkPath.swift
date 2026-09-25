@@ -46,6 +46,11 @@ public struct NetworkPath: Sendable, Equatable {
         return NetworkPath(interface: name, localAddress: localIP, isWiFi: wifi.contains(name), activeWired: wired)
     }
 
+    /// "192.168.20.111" for a host name, if it has an IPv4 address.
+    public static func ipv4Address(_ host: String) -> String? {
+        ipv4(host).map { String(cString: inet_ntoa($0)) }
+    }
+
     static func ipv4(_ host: String) -> in_addr? {
         var hints = addrinfo()
         hints.ai_family = AF_INET

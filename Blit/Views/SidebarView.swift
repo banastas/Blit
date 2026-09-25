@@ -13,6 +13,7 @@ struct SidebarView: View {
     var onEditServer: (ServerConfig) -> Void
     var onRemoveServer: (ServerConfig) -> Void
     var onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
+    var onNASVerification: (VolumeLocation) -> Void
 
     var body: some View {
         List(selection: $selection) {
@@ -42,7 +43,7 @@ struct SidebarView: View {
             }
 
             Section {
-                ForEach(servers.servers) { server in
+                ForEach(servers.browsable) { server in
                     HStack {
                         Label(server.displayName, systemImage: "server.rack")
                         Spacer(minLength: 4)
@@ -57,7 +58,7 @@ struct SidebarView: View {
                         Button("Remove…", role: .destructive) { onRemoveServer(server) }
                     }
                 }
-                if servers.servers.isEmpty {
+                if servers.browsable.isEmpty {
                     Button("Add Server…", action: onAddServer)
                         .buttonStyle(.link)
                         .selectionDisabled()
@@ -84,9 +85,27 @@ struct SidebarView: View {
             if !sidebar.networkShares.isEmpty {
                 Section("NAS") {
                     ForEach(sidebar.networkShares) { share in
-                        Label(share.name, systemImage: "externaldrive.connected.to.line.below")
-                            .transferTarget(.local(share.url), name: share.name, onTransfer: onTransfer)
-                            .tag(BrowseLocation.local(share.url))
+                        let login = servers.nasLogin(forMount: share.url.path)
+                        HStack {
+                            Label(share.name, systemImage: "externaldrive.connected.to.line.below")
+                            Spacer(minLength: 4)
+                            if login != nil {
+                                Image(systemName: "checkmark.shield")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                    .help("Copies here are verified with sha256sum on the NAS")
+                            }
+                        }
+                        .transferTarget(.local(share.url), name: share.name, onTransfer: onTransfer)
+                        .tag(BrowseLocation.local(share.url))
+                        .contextMenu {
+                            Button(login == nil ? "Verify Copies on NAS…" : "NAS Verification…") { onNASVerification(share) }
+                            if let login {
+                                Button("Turn Off NAS Verification") { servers.remove(login) }
+                            }
+                            Divider()
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([share.url]) }
+                        }
                     }
                 }
             }

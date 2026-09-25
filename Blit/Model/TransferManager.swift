@@ -262,8 +262,27 @@ final class TransferManager {
             job.link = "LOCAL"
         }
         job.connections = 2
+
+        // Verify on the NAS itself when this share has a NAS login (PRD R1.6, R4.2).
+        var nas: NASVerifier?
+        var nasConnection: SSHConnection?
+        if let mount = MountInfo.of(job.destination.path), let login = servers.nasLogin(forMount: mount.mountPoint),
+           let root = login.nasRoot, let password = Keychain.password(for: login) {
+            do {
+                let connection = try await SSHConnection.connect(to: login.endpoint, credential: .password(password),
+                                                                 verifier: verifier)
+                nasConnection = connection
+                nas = NASVerifier(connection: connection, mountPoint: mount.mountPoint, nasRoot: root)
+                job.nasVerified = true
+                job.note("NAS \(login.host.uppercased()) · VERIFYING ON \(root.uppercased())")
+            } catch {
+                job.note("✕ NAS LOGIN FAILED · FALLING BACK TO READ-BACK · \(error)".uppercased(), failure: true)
+            }
+        }
+        defer { if let nasConnection { Task { await nasConnection.close() } } }
+
         job.status = .running
-        let summary = try await BlitLocal.copy(files, into: job.destination.path, nas: nil, counter: job.counter) { event in
+        let summary = try await BlitLocal.copy(files, into: job.destination.path, nas: nas, counter: job.counter) { event in
             Task { @MainActor in job.handle(event) }
         }
         job.filesFinished = summary.finished.count

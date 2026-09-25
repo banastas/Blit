@@ -16,6 +16,13 @@ struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
     var startPath = ""
     /// Connections used for transfers (PRD R3.2); browsing uses one.
     var connections = 3
+    /// Set for a NAS login used only to verify copies on the NAS (PRD R1.6):
+    /// the share's mount point on this Mac and its path on the NAS.
+    /// (Optional so servers saved before this still decode.)
+    var nasMountPoint: String?
+    var nasRoot: String?
+
+    var isNASLogin: Bool { nasMountPoint != nil }
 
     var endpoint: SSHEndpoint { SSHEndpoint(host: host, port: port, username: username) }
     var displayName: String { name.isEmpty ? host : name }
@@ -38,6 +45,14 @@ final class ServerStore {
     func server(_ id: UUID?) -> ServerConfig? {
         guard let id else { return nil }
         return servers.first { $0.id == id }
+    }
+
+    /// Servers to browse (NAS logins are listed with their share instead).
+    var browsable: [ServerConfig] { servers.filter { !$0.isNASLogin } }
+
+    /// The login that verifies copies on the share mounted at `mountPoint`.
+    func nasLogin(forMount mountPoint: String) -> ServerConfig? {
+        servers.first { $0.nasMountPoint == mountPoint && $0.nasRoot != nil }
     }
 
     /// Adds or updates a server. A nil or empty password keeps the saved one.
