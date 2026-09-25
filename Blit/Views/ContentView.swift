@@ -76,7 +76,11 @@ struct ContentView: View {
             if shown { openSecondPaneIfNeeded() } else { secondActive = false }
         }
         .onAppear(perform: start)
-        .background(WindowReader { BrowserModel.activeWindow = $0 })
+        .background(alignment: .topLeading) {
+            WindowReader { BrowserModel.activeWindow = $0 }
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+        }
         .onChange(of: secondActive) { BrowserModel.active = active }
         .onChange(of: showSecondPane) { BrowserModel.active = active }
         .focusedSceneValue(\.browser, active)
@@ -317,11 +321,17 @@ struct ContentView: View {
 }
 
 /// Hands over the window hosting a view (for key handling that needs it).
+/// Tiny and invisible to the mouse, so it never takes clicks or right-clicks
+/// meant for the views around it.
 struct WindowReader: NSViewRepresentable {
     let onWindow: (NSWindow?) -> Void
 
+    final class PassthroughView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+        let view = PassthroughView()
         DispatchQueue.main.async { onWindow(view.window) }
         return view
     }
