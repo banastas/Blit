@@ -16,6 +16,8 @@ struct FileItem: Identifiable, Hashable, Sendable {
     /// -1 for folders, so they sort below files by size.
     var size: Int64
     var kind: String
+    /// Nesting under the current folder when folders are expanded in place.
+    var depth = 0
     var id: BrowseLocation { location }
 }
 
@@ -62,6 +64,10 @@ final class BrowserModel {
     /// Show names starting with "." (View › Show Hidden Files, ⇧⌘.).
     private(set) var showHidden = false
     var selection = Set<BrowseLocation>()
+    /// Folders expanded in place (disclosure triangles), and their contents.
+    private(set) var expanded = Set<BrowseLocation>()
+    private(set) var children: [BrowseLocation: [FileItem]] = [:]
+    private(set) var loadingChildren = Set<BrowseLocation>()
     var namePrompt: NamePrompt?
     /// Items waiting for the user to confirm a permanent delete.
     var deleteRequest: [FileItem]?
@@ -99,6 +105,70 @@ final class BrowserModel {
     }
 
     var sortedItems: [FileItem] { items.sorted(using: sortOrder) }
+
+    /// The rows to show: this folder's items, with the contents of expanded
+    /// folders nested under them, each level sorted.
+    var rows: [FileItem] {
+        var result: [FileItem] = []
+        func add(_ list: [FileItem], depth: Int) {
+            for var item in list.sorted(using: sortOrder) {
+                item.depth = depth
+                result.append(item)
+                if item.isDirectory, expanded.contains(item.location), let nested = children[item.location] {
+                    add(nested, depth: depth + 1)
+                }
+            }
+        }
+        add(items, depth: 0)
+        return result
+    }
+
+    /// Whether this browser shows `folder`, as its location or an expanded folder.
+    func shows(_ folder: BrowseLocation) -> Bool {
+        guard let current else { return false }
+        return FileOperations.same(folder, current) || expanded.contains { FileOperations.same(folder, $0) }
+    }
+
+    func toggleExpanded(_ item: FileItem) {
+        guard item.isDirectory else { return }
+        setExpanded(item.location, !expanded.contains(item.location))
+    }
+
+    func setExpanded(_ folder: BrowseLocation, _ open: Bool) {
+        guard open != expanded.contains(folder) else { return }
+        guard open else {
+            expanded.remove(folder)
+            selection.formIntersection(rows.map(\.location))
+            return
+        }
+        expanded.insert(folder)
+        loadingChildren.insert(folder)
+        Task {
+            defer { loadingChildren.remove(folder) }
+            do {
+                children[folder] = try await list(folder)
+            } catch {
+                expanded.remove(folder)
+                operationError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+        }
+    }
+
+    /// Refreshes the contents of expanded folders (after a reload).
+    private func reloadExpanded() async {
+        let folders = expanded
+        let results = await withTaskGroup(of: (BrowseLocation, [FileItem]?).self) { group in
+            for folder in folders {
+                group.addTask { (folder, try? await self.list(folder)) }
+            }
+            var results: [(BrowseLocation, [FileItem]?)] = []
+            for await result in group { results.append(result) }
+            return results
+        }
+        for (folder, listed) in results {
+            if let listed { children[folder] = listed } else { expanded.remove(folder); children[folder] = nil }
+        }
+    }
     var canGoBack: Bool { !backStack.isEmpty }
     var canGoForward: Bool { !forwardStack.isEmpty }
     var canGoUp: Bool { current?.parent != nil }
@@ -152,23 +222,26 @@ final class BrowserModel {
     }
 
     private func show(_ location: BrowseLocation) {
+        if location != current {
+            // A new folder: start collapsed, showing the last listing (if any)
+            // at once while a fresh one loads.
+            expanded = []
+            children = [:]
+            items = connections.listings[location] ?? []
+        }
         current = location
         isLoading = true
         error = nil
         Task {
             do {
-                let listed: [FileItem]
-                switch location {
-                case .local(let url):
-                    let hidden = showHidden
-                    listed = try await Task.detached { try Self.listLocal(url, showHidden: hidden) }.value
-                case .remote(let id, let bytes):
-                    guard let server = servers.server(id) else { throw ConnectionError.noPassword }
-                    listed = try await listRemote(server, RemotePath(bytes: bytes))
-                }
+                let listed = try await list(location)
                 guard location == current else { return }
                 items = listed
-                selection.formIntersection(listed.map(\.location))
+                if connections.listings.count > 500 { connections.listings.removeAll() }
+                connections.listings[location] = listed
+                if !expanded.isEmpty { await reloadExpanded() }
+                guard location == current else { return }
+                selection.formIntersection(rows.map(\.location))
                 remember(location)
             } catch {
                 guard location == current else { return }
@@ -176,6 +249,17 @@ final class BrowserModel {
                 handle(error, for: location)
             }
             isLoading = false
+        }
+    }
+
+    private func list(_ location: BrowseLocation) async throws -> [FileItem] {
+        switch location {
+        case .local(let url):
+            let hidden = showHidden
+            return try await Task.detached { try Self.listLocal(url, showHidden: hidden) }.value
+        case .remote(let id, let bytes):
+            guard let server = servers.server(id) else { throw ConnectionError.noPassword }
+            return try await listRemote(server, RemotePath(bytes: bytes))
         }
     }
 

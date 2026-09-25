@@ -93,6 +93,7 @@ final class FileOperations {
     func place(_ sources: [BrowseLocation], into destination: BrowseLocation, destinationName: String,
                mode: Mode, includeHidden: Bool = false) async -> String? {
         if mode == .move { consumeCut() }
+        let sources = sources.uniqued()
         guard !sources.isEmpty else { return nil }
         if sources.contains(where: { Self.location($0, contains: destination) }) {
             return "Can't put a folder inside itself."
@@ -153,7 +154,7 @@ final class FileOperations {
                 problems.append(message)
             }
         }
-        return problems.isEmpty ? nil : problems.joined(separator: "\n")
+        return Self.summary(problems)
     }
 
     private func moveOnServer(_ sources: [BrowseLocation], into destination: BrowseLocation) async -> String? {
@@ -176,7 +177,7 @@ final class FileOperations {
             problems.append(Self.describe(error))
         }
         onChanged?([destination] + sources.compactMap(\.parent))
-        return problems.isEmpty ? nil : problems.joined(separator: "\n")
+        return Self.summary(problems)
     }
 
     // MARK: New folder, rename, duplicate
@@ -240,7 +241,7 @@ final class FileOperations {
         guard !urls.isEmpty else { return "Duplicate works on local items only." }
         let problems = await Task.detached { Self.duplicateLocal(urls) }.value
         onChanged?(urls.map { .local($0.deletingLastPathComponent()) })
-        return problems.isEmpty ? nil : problems.joined(separator: "\n")
+        return Self.summary(problems)
     }
 
     // MARK: Delete
@@ -267,7 +268,7 @@ final class FileOperations {
             }
         }.value
         onChanged?(items.compactMap(\.parent))
-        return problems.isEmpty ? nil : problems.joined(separator: "\n")
+        return Self.summary(problems)
     }
 
     /// Deletes immediately; folders go with everything in them. Callers confirm first.
@@ -302,7 +303,7 @@ final class FileOperations {
             }
         }
         onChanged?(items.compactMap(\.parent))
-        return problems.isEmpty ? nil : problems.joined(separator: "\n")
+        return Self.summary(problems)
     }
 
     // MARK: Helpers
@@ -342,6 +343,14 @@ final class FileOperations {
             let where_ = folder.isEmpty ? "the home folder" : "“\(folder)”"
             throw FileOperationError.message("“\(path.lastComponent)” already exists in \(where_).")
         }
+    }
+
+    /// Problems for an alert: repeats dropped, and at most five listed.
+    private static func summary(_ problems: [String]) -> String? {
+        let unique = problems.uniqued()
+        guard !unique.isEmpty else { return nil }
+        let shown = unique.prefix(5).joined(separator: "\n")
+        return unique.count > 5 ? shown + "\n…and \(unique.count - 5) more." : shown
     }
 
     private static func describe(_ error: Error) -> String {

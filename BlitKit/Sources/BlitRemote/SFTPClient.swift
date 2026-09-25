@@ -146,10 +146,10 @@ public final class SFTPClient: Sendable {
                 }
             }
         } catch {
-            try? await closeHandle(handle)
+            closeHandleInBackground(handle)
             throw error
         }
-        try await closeHandle(handle)
+        closeHandleInBackground(handle)
         return entries
     }
 

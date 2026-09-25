@@ -65,12 +65,16 @@ struct FileListView: View {
     private var table: some View {
         Table(of: FileItem.self, selection: $browser.selection, sortOrder: $browser.sortOrder) {
             TableColumn("Name", value: \.name) { item in
-                Label {
-                    Text(item.name).lineLimit(1)
-                } icon: {
-                    Image(nsImage: IconCache.shared.icon(for: item))
-                        .resizable()
-                        .frame(width: 16, height: 16)
+                HStack(spacing: 4) {
+                    if item.depth > 0 { Spacer().frame(width: CGFloat(item.depth) * 16) }
+                    disclosure(for: item)
+                    Label {
+                        Text(item.name).lineLimit(1)
+                    } icon: {
+                        Image(nsImage: IconCache.shared.icon(for: item))
+                            .resizable()
+                            .frame(width: 16, height: 16)
+                    }
                 }
             }
             .width(min: 180, ideal: 360)
@@ -95,7 +99,7 @@ struct FileListView: View {
             }
             .width(min: 80, ideal: 140)
         } rows: {
-            ForEach(browser.sortedItems) { item in
+            ForEach(browser.rows) { item in
                 TableRow(item)
                     .draggable(payload(for: item))
                     .dropDestination(for: TransferPayload.self) { payloads in
@@ -120,13 +124,15 @@ struct FileListView: View {
             menu(for: browser.items(for: locations))
         } primaryAction: { locations in
             // Double-click / Return: open a folder in place, or a local file in its app.
-            guard let location = locations.first, let item = browser.items.first(where: { $0.location == location }) else { return }
+            guard let location = locations.first, let item = browser.rows.first(where: { $0.location == location }) else { return }
             if item.isDirectory {
                 browser.open(location)
             } else if let url = location.localURL {
                 NSWorkspace.shared.open(url)
             }
         }
+        .onKeyPress(.rightArrow) { expandSelection(true) }
+        .onKeyPress(.leftArrow) { expandSelection(false) }
         .overlay {
             if browser.isLoading, browser.items.isEmpty {
                 ProgressView()
@@ -168,13 +174,64 @@ struct FileListView: View {
         }
     }
 
-    /// Drops onto a folder row go into that folder; anywhere else, into this one.
+    /// The triangle that shows a folder's contents in place, like Finder's list view.
+    @ViewBuilder private func disclosure(for item: FileItem) -> some View {
+        if item.isDirectory {
+            let open = browser.expanded.contains(item.location)
+            Button {
+                browser.toggleExpanded(item)
+            } label: {
+                Group {
+                    if open, browser.loadingChildren.contains(item.location) {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .rotationEffect(.degrees(open ? 90 : 0))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 12, height: 16)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(open ? "Hide contents" : "Show contents")
+        } else {
+            Spacer().frame(width: 12)
+        }
+    }
+
+    /// → expands the selected folders, ← collapses them (or the folder a selected item is in).
+    private func expandSelection(_ open: Bool) -> KeyPress.Result {
+        let selected = browser.selectedItems
+        guard !selected.isEmpty else { return .ignored }
+        for item in selected {
+            if item.isDirectory, open || browser.expanded.contains(item.location) {
+                browser.setExpanded(item.location, open)
+            } else if !open, item.depth > 0, let parent = item.location.parent {
+                browser.setExpanded(parent, false)
+                browser.selection = [parent]
+            }
+        }
+        return .handled
+    }
+
+    /// Drops onto a folder row go into that folder; onto a file, into the folder
+    /// it's in; anywhere else, into this one.
     private func drop(_ sources: [BrowseLocation], onto item: FileItem?) -> Bool {
-        let folder = item?.isDirectory == true ? item : nil
-        guard let target = folder?.location ?? browser.current else { return false }
-        let sources = sources.filter { $0 != target }
+        var target = browser.current
+        var name = browser.title
+        if let item, item.isDirectory {
+            target = item.location
+            name = item.name
+        } else if let item, item.depth > 0, let parent = item.location.parent {
+            target = parent
+            name = parent.lastComponent
+        }
+        guard let target else { return false }
+        let sources = sources.uniqued().filter { $0 != target }
         guard !sources.isEmpty else { return false }
-        browser.drop(sources, into: target, name: folder?.name ?? browser.title)
+        browser.drop(sources, into: target, name: name)
         return true
     }
 

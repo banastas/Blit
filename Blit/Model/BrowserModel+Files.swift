@@ -5,13 +5,13 @@ import AppKit
 import Foundation
 
 extension BrowserModel {
-    var selectedItems: [FileItem] { sortedItems.filter { selection.contains($0.id) } }
+    var selectedItems: [FileItem] { rows.filter { selection.contains($0.id) } }
 
     func items(for locations: Set<BrowseLocation>) -> [FileItem] {
-        sortedItems.filter { locations.contains($0.id) }
+        rows.filter { locations.contains($0.id) }
     }
 
-    func selectAll() { selection = Set(items.map(\.id)) }
+    func selectAll() { selection = Set(rows.map(\.id)) }
 
     /// "Move to Trash" for local volumes with a Trash, else "Delete…" (immediate).
     func deleteTitle(for items: [FileItem]) -> String {

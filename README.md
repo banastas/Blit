@@ -181,6 +181,8 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R2.8** A single pane by default, with a keyboard shortcut to toggle a second pane.
 - **R2.9** **Favorites:** pinned folders on any location (local drive, NAS share, remote server) at the top of the sidebar. Add by dragging a folder in or with ⌘D; reorder by dragging; remove from a context menu. Each shows its volume or server, and is dimmed when that isn't mounted or connected.
 - **R2.10** **Dropping files on any sidebar item** (favorite, drive, share, server) starts a transfer to it: download, copy, or clone as appropriate, with the same verification as any other transfer. The target highlights while dragging. Dropping onto a folder in the file list works the same way.
+- **R2.13** **Expand folders in place:** a disclosure triangle beside each folder (or → and ←) shows its contents nested in the list without leaving the current folder, as in Finder's list view. Expanded folders refresh with the list.
+- **R2.14** **Persistent server sessions:** each server's browsing session opens at launch when its password is saved, stays open (a tiny request every 2 minutes keeps servers with idle timeouts from dropping it), and reopens in the background after sleep. The last listing of each folder shows at once while a fresh one loads.
 - **R2.11** **Drag rules follow Finder:** a drag within one volume or one server moves (a rename, instant); a drag across devices copies; holding ⌥ always copies.
 - **R2.12** **File management** on drives, NAS shares and servers:
   - New Folder (⇧⌘N), Rename…, Duplicate (local).

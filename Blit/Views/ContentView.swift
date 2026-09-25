@@ -267,12 +267,12 @@ struct ContentView: View {
         if browser == nil { browser = BrowserModel(servers: servers, connections: connections, operations: operations) }
         if showSecondPane { openSecondPaneIfNeeded() }
         transfers.restoreQueue()
+        connections.warmUp(servers.browsable)
         // Refresh whichever panes show a folder that changed: a transfer's
         // destination (and a move's sources), or a file operation's folders.
         let refresh: ([BrowseLocation]) -> Void = { [weak browser, weak secondBrowser] folders in
             for model in [browser, secondBrowser].compactMap({ $0 }) {
-                guard let current = model.current, folders.contains(where: { FileOperations.same($0, current) }) else { continue }
-                model.reload()
+                if folders.contains(where: model.shows) { model.reload() }
             }
         }
         operations.onChanged = refresh

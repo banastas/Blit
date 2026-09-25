@@ -156,7 +156,7 @@ private struct TransferTarget: ViewModifier {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .dropDestination(for: TransferPayload.self) { payloads, _ in
-                let sources = payloads.flatMap(\.locations)
+                let sources = payloads.flatMap(\.locations).uniqued()
                 guard !sources.isEmpty else { return false }
                 onTransfer(sources, location, name)
                 return true

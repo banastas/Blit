@@ -57,3 +57,12 @@ enum BrowseLocation: Hashable, Codable, Sendable {
         return .remote(server, RemotePath(bytes: bytes).appending(name))
     }
 }
+
+extension Array where Element: Hashable {
+    /// The elements in order, without repeats. A multi-row drag delivers the
+    /// whole selection once per dragged row, so drops dedupe their locations.
+    func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
+    }
+}

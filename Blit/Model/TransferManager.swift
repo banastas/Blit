@@ -215,6 +215,7 @@ final class TransferManager {
         guard let folder = destination.localURL else {
             return "Uploading to a server isn't supported yet. Drop onto a local folder, drive or NAS share."
         }
+        let sources = sources.uniqued()
         let remote = sources.filter { $0.serverID != nil }
         let local = sources.compactMap(\.localURL)
         if Set(remote.compactMap(\.serverID)).count > 1 { return "Drag from one server at a time." }
