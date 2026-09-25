@@ -16,6 +16,7 @@ struct Arguments {
     var trust: Set<String> = []
     var verify = true
     var overwrite = false
+    var progressLines = false
 }
 
 func usage() -> Never {
@@ -23,16 +24,20 @@ func usage() -> Never {
     usage:
       blit ls  user@host[:port] <remote-folder>
       blit get user@host[:port] <remote-path> <local-folder> [options]
+      blit hostkeys                      list host keys Blit trusts
+      blit hostkeys forget host[:port]   forget them
 
     get options:
       --conns N          connections to open (default 3)
       --stagger MS       delay between opening connections (default 250)
-      --trust SHA256:…   also trust this host key fingerprint (repeatable)
+      --trust SHA256:…   trust this host key fingerprint for this run (repeatable)
       --no-verify        skip server-side SHA-256 verification
       --overwrite        replace files that already exist locally
+      --progress-lines   print progress as one line per second
 
     The password comes from $BLIT_PASSWORD or a prompt. Host keys are checked
-    against ~/.ssh/known_hosts plus any --trust fingerprints.
+    against Blit's store and ~/.ssh/known_hosts; an unknown key (or a new key
+    type) prompts before it's trusted and remembered. A changed key is refused.
     """)
     exit(2)
 }
@@ -59,6 +64,7 @@ func parseArguments() -> Arguments {
         case "--trust": if !args.isEmpty { a.trust.insert(args.removeFirst()) }
         case "--no-verify": a.verify = false
         case "--overwrite": a.overwrite = true
+        case "--progress-lines": a.progressLines = true
         default:
             if arg.hasPrefix("--") { usage() }
             a.positional.append(arg)
@@ -85,23 +91,87 @@ func formatDate(_ seconds: UInt32?) -> String {
     return f.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
 }
 
-/// Opens `count` connections, `staggerMS` apart, each with an SFTP session.
+/// Connects once, asking before trusting an unknown host key (PRD R1.3).
+func connectAskingTrust(_ a: Arguments, credential: SSHCredential, verifier: BlitHostKeyVerifier) async throws -> SSHConnection {
+    do {
+        return try await SSHConnection.connect(to: a.endpoint, credential: credential, verifier: verifier)
+    } catch let error as SSHError {
+        guard case .hostKeyRejected(let host, let port, let presented, let known) = error else { throw error }
+        if error.isChangedHostKey {
+            print("""
+            WARNING: the host key for \(host):\(port) has changed.
+              server presented: \(presented)
+              trusted:          \(known.filter { $0.type == presented.type }.map(\.description).joined(separator: ", "))
+            This can mean someone is intercepting the connection. Blit won't connect.
+            If the server's key really changed, run `blit hostkeys forget \(host):\(port)` and connect again.
+            """)
+            exit(1)
+        }
+        print("\(host):\(port) presented a host key Blit hasn't seen before:")
+        print("  \(presented)")
+        if !known.isEmpty {
+            print("Keys of other types are already trusted for this server:")
+            known.forEach { print("  \($0)") }
+        }
+        print("Check the fingerprint with your provider if you can. Trust and remember it? [y/N] ", terminator: "")
+        fflush(stdout)
+        guard isatty(STDIN_FILENO) != 0, readLine()?.lowercased() == "y" else {
+            print("Not trusted.")
+            exit(1)
+        }
+        try verifier.store.pin(presented, host: host, port: port)
+        print("Remembered in \(verifier.store.path)")
+        return try await SSHConnection.connect(to: a.endpoint, credential: credential, verifier: verifier)
+    }
+}
+
+/// Opens `count` connections, each with an SFTP session. The first one settles
+/// host-key trust; the rest follow `staggerMS` apart.
 func openClients(_ a: Arguments, count: Int, credential: SSHCredential) async throws -> [SFTPClient] {
-    let verifier = KnownHostsVerifier(pinnedFingerprints: a.trust)
+    let verifier = BlitHostKeyVerifier(knownHosts: KnownHostsVerifier(pinnedFingerprints: a.trust))
+    let first = try await SFTPClient.open(on: try await connectAskingTrust(a, credential: credential, verifier: verifier))
+    guard count > 1 else { return [first] }
     return try await withThrowingTaskGroup(of: (Int, SFTPClient).self) { group in
-        for i in 0..<count {
+        for i in 1..<count {
             group.addTask {
-                try await Task.sleep(for: .milliseconds(i * a.staggerMS))
+                try await Task.sleep(for: .milliseconds((i - 1) * a.staggerMS))
                 let connection = try await SSHConnection.connect(to: a.endpoint, credential: credential, verifier: verifier)
                 return (i, try await SFTPClient.open(on: connection))
             }
         }
-        var clients: [(Int, SFTPClient)] = []
+        var clients: [(Int, SFTPClient)] = [(0, first)]
         for try await c in group { clients.append(c) }
         return clients.sorted { $0.0 < $1.0 }.map(\.1)
     }
 }
 
+/// `blit hostkeys [forget host[:port]]` needs no connection or password.
+func hostKeysCommand(_ args: [String]) -> Never {
+    let store = HostKeyStore()
+    if args.first == "forget", args.count == 2 {
+        var host = args[1]
+        var port = 22
+        if let colon = host.lastIndex(of: ":"), let p = Int(host[host.index(after: colon)...]) {
+            port = p
+            host = String(host[..<colon])
+        }
+        let removed = (try? store.forget(host: host, port: port)) ?? 0
+        print(removed == 0 ? "No keys stored for \(host):\(port)." : "Forgot \(removed) key\(removed == 1 ? "" : "s") for \(host):\(port).")
+        exit(0)
+    }
+    guard args.isEmpty else { usage() }
+    let all = store.all()
+    if all.isEmpty { print("No host keys stored yet (\(store.path)).") }
+    for (server, entries) in all.sorted(by: { $0.key < $1.key }) {
+        print(server)
+        entries.forEach { print("  \($0.type) \($0.fingerprint)  (added \(formatDate(UInt32($0.added.timeIntervalSince1970))))") }
+    }
+    exit(0)
+}
+
+if CommandLine.arguments.dropFirst().first == "hostkeys" {
+    hostKeysCommand(Array(CommandLine.arguments.dropFirst(2)))
+}
 let a = parseArguments()
 let credential = SSHCredential.password(readPassword("Password for \(a.endpoint.username)@\(a.endpoint.host): "))
 
@@ -156,7 +226,12 @@ do {
                 let status = shown >= Int(totalBytes) && verifying > 0
                     ? "verifying \(verifying) file\(verifying == 1 ? "" : "s")…"
                     : String(format: "%.1f MB/s", rate / 1e6)
-                print("\r  \(formatBytes(Double(shown))) of \(formatBytes(Double(totalBytes))) · \(status)          ", terminator: "")
+                if a.progressLines {
+                    print(String(format: "  %5.0f s  %@ of %@ · %@", now.timeIntervalSince(start), formatBytes(Double(shown)),
+                                 formatBytes(Double(totalBytes)), status))
+                } else {
+                    print("\r  \(formatBytes(Double(shown))) of \(formatBytes(Double(totalBytes))) · \(status)          ", terminator: "")
+                }
                 fflush(stdout)
             }
         }

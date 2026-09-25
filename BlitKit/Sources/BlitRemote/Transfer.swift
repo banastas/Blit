@@ -37,6 +37,21 @@ public enum TransferPlan {
         }
     }
 
+    /// Indexes of paths that would land on the same local file as an earlier
+    /// path in the list (PRD R3.10), mapped to the path they collide with.
+    /// APFS treats Unicode normalization forms as the same name, and is
+    /// case-insensitive unless formatted case-sensitive.
+    public static func collisions(_ relativePaths: [String], caseSensitive: Bool) -> [Int: String] {
+        var seen: [String: String] = [:]
+        var result: [Int: String] = [:]
+        for (i, path) in relativePaths.enumerated() {
+            var key = path.precomposedStringWithCanonicalMapping
+            if !caseSensitive { key = key.lowercased() }
+            if let earlier = seen[key] { result[i] = earlier } else { seen[key] = path }
+        }
+        return result
+    }
+
     /// A local path component for a remote name (PRD R3.10). Valid UTF-8 is
     /// kept; otherwise non-printable-ASCII bytes are percent-escaped.
     public static func localName(_ name: RemotePath) -> String {
@@ -351,7 +366,18 @@ public func download(
     var work: [(FileJob, Range<UInt64>)] = []
     var alreadyComplete: [FileJob] = []
 
-    for file in files {
+    try? fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    let caseSensitive = (try? URL(fileURLWithPath: directory).resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
+        .volumeSupportsCaseSensitiveNames ?? false
+    let collisions = TransferPlan.collisions(files.map(\.relativePath), caseSensitive: caseSensitive)
+
+    for (index, file) in files.enumerated() {
+        if let other = collisions[index] {
+            let reason = "same local name as \(other) on this volume; skipped"
+            events(.fileFailed(file, reason))
+            summary.withLock { $0.failed.append((file, reason)) }
+            continue
+        }
         let finalPath = directory + "/" + file.relativePath
         if fm.fileExists(atPath: finalPath), !options.overwrite {
             events(.fileFailed(file, "already exists (use --overwrite)"))
@@ -491,8 +517,18 @@ private func finalize(job: FileJob, part: PartFile, verify: Bool) async throws -
     var verification = Verification.skipped
     if verify, let remoteHash = await job.remoteHash {
         async let local = Task.detached { try localSHA256(path: partPath) }.value
+        let remote: RemoteHasher.Result
         do {
-            let remote = try await remoteHash.value
+            remote = try await remoteHash.value
+        } catch {
+            // Couldn't get a hash (no shell access, no sha256sum…): fall back to
+            // a size check and say so (PRD R4.1). A hash that doesn't match is
+            // handled below and always fails the file.
+            _ = try? await local
+            remote = RemoteHasher.Result(sha256: "", size: nil, modificationTime: nil, cached: false)
+            verification = .sizeOnly(reason: "\(error)")
+        }
+        if !remote.sha256.isEmpty {
             if let size = remote.size, let mtime = remote.modificationTime,
                size != file.size || (file.modificationTime != nil && mtime != file.modificationTime) {
                 try? FileManager.default.removeItem(atPath: statePath)
@@ -505,10 +541,6 @@ private func finalize(job: FileJob, part: PartFile, verify: Bool) async throws -
                 throw SFTPError.unexpected("SHA-256 mismatch: local \(mine), server \(remote.sha256); kept \(partPath)")
             }
             verification = .sha256(mine, cached: remote.cached)
-        } catch let error as SSHError {
-            // No shell access: fall back to a size check (PRD R4.1).
-            _ = try? await local
-            verification = .sizeOnly(reason: error.description)
         }
     }
     if case .sha256 = verification {} else {

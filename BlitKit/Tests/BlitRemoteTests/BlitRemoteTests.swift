@@ -206,3 +206,59 @@ let ecdsaFingerprint = "SHA256:76qoOQkgBMCQb+Pv8st5gk/vAkC3VBxLHcxjifRRDkw"
         }
     }
 }
+
+@Suite struct HostKeyStoreTests {
+    func tempStore() -> HostKeyStore {
+        HostKeyStore(path: FileManager.default.temporaryDirectory.appendingPathComponent("blit-keys-\(UUID().uuidString)/host-keys.json").path)
+    }
+
+    @Test func pinTrustsAndForgetRemoves() throws {
+        let store = tempStore()
+        defer { try? FileManager.default.removeItem(atPath: (store.path as NSString).deletingLastPathComponent) }
+        let key = try NIOSSHPublicKey(openSSHPublicKey: ed25519Line)
+        let empty = KnownHostsVerifier(path: "/nonexistent")
+        let verifier = BlitHostKeyVerifier(store: store, knownHosts: empty)
+
+        guard case .rejected(let presented, let known) = verifier.verify(host: "Example.com", port: 2222, key: key) else {
+            Issue.record("expected rejection before pinning")
+            return
+        }
+        #expect(known.isEmpty)
+        try store.pin(presented, host: "Example.com", port: 2222)
+        try store.pin(presented, host: "example.com", port: 2222)   // duplicate: ignored
+        #expect(store.entries(host: "example.com", port: 2222).count == 1)
+        #expect(verifier.verify(host: "example.com", port: 2222, key: key) == .trusted)
+        #expect(verifier.verify(host: "example.com", port: 3232, key: key) != .trusted)
+
+        #expect(try store.forget(host: "example.com", port: 2222) == 1)
+        #expect(verifier.verify(host: "example.com", port: 2222, key: key) != .trusted)
+    }
+
+    @Test func distinguishesNewKeyTypeFromChangedKey() throws {
+        let store = tempStore()
+        defer { try? FileManager.default.removeItem(atPath: (store.path as NSString).deletingLastPathComponent) }
+        let ecdsa = try NIOSSHPublicKey(openSSHPublicKey: ecdsaLine)
+        let ed25519 = try NIOSSHPublicKey(openSSHPublicKey: ed25519Line)
+        try store.pin(HostKeyIdentity(ecdsa), host: "h", port: 22)
+        let verifier = BlitHostKeyVerifier(store: store, knownHosts: KnownHostsVerifier(path: "/nonexistent"))
+
+        // A new type (the SFTPGo case) may be offered for trust.
+        guard case .rejected(let p1, let k1) = verifier.verify(host: "h", port: 22, key: ed25519) else { return }
+        #expect(!SSHError.hostKeyRejected(host: "h", port: 22, presented: p1, known: k1).isChangedHostKey)
+
+        // A different key of a type already trusted must be refused.
+        let other = HostKeyIdentity(type: "ecdsa-sha2-nistp256", fingerprint: "SHA256:different")
+        #expect(SSHError.hostKeyRejected(host: "h", port: 22, presented: other, known: k1).isChangedHostKey)
+    }
+}
+
+@Suite struct CollisionTests {
+    @Test func detectsNormalizationAndCaseCollisions() {
+        let nfc = "Pack/Pok\u{E9}mon.cbz"           // é precomposed
+        let nfd = "Pack/Poke\u{301}mon.cbz"         // e + combining acute
+        let paths = [nfc, "Pack/readme.nfo", nfd, "Pack/README.NFO", "Pack/other.cbz"]
+        #expect(TransferPlan.collisions(paths, caseSensitive: false) == [2: nfc, 3: "Pack/readme.nfo"])
+        #expect(TransferPlan.collisions(paths, caseSensitive: true) == [2: nfc])
+        #expect(TransferPlan.collisions(["a", "b"], caseSensitive: false).isEmpty)
+    }
+}
