@@ -440,7 +440,31 @@ final class TransferManager {
 }
 
 extension TransferJob {
+    private func sourceDescription(_ path: String) -> String {
+        if case .download(let server) = kind { return "\(server.username)@\(server.host):\(path)" }
+        return path
+    }
+
+    private func record(source: String, relativePath: String, size: UInt64, sha256: String?, verification: String,
+                        failed: String? = nil) {
+        TransferLog.append(TransferRecord(time: Date(), source: sourceDescription(source),
+                                          destination: destination.appendingPathComponent(relativePath).path,
+                                          size: size, sha256: sha256, verification: verification,
+                                          result: failed == nil ? "ok" : "failed", detail: failed))
+    }
+
     func handle(_ event: TransferEvent) {
+        if case .fileFinished(let f, let v) = event {
+            let (hash, method): (String?, String) = switch v {
+            case .sha256(let h, _): (h, "server-sha256")
+            case .sizeOnly: (nil, "size-only")
+            case .skipped: (nil, "none")
+            case .alreadyPresent: (nil, "already-present")
+            }
+            record(source: f.path.description, relativePath: f.relativePath, size: f.size, sha256: hash, verification: method)
+        } else if case .fileFailed(let f, let reason) = event {
+            record(source: f.path.description, relativePath: f.relativePath, size: f.size, sha256: nil, verification: "none", failed: reason)
+        }
         switch event {
         case .fileResumed(let f, let bytes):
             resumedBytes += Int64(bytes)
@@ -471,6 +495,18 @@ extension TransferJob {
     }
 
     func handle(_ event: CopyEvent) {
+        if case .fileFinished(let f, let v) = event {
+            let (hash, method): (String?, String) = switch v {
+            case .nas(let h): (h, "nas-sha256")
+            case .readBack(let h, _): (h, "read-back")
+            case .cloned: (nil, "cloned")
+            case .skipped: (nil, "none")
+            case .alreadyPresent: (nil, "already-present")
+            }
+            record(source: f.path, relativePath: f.relativePath, size: f.size, sha256: hash, verification: method)
+        } else if case .fileFailed(let f, let reason) = event {
+            record(source: f.path, relativePath: f.relativePath, size: f.size, sha256: nil, verification: "none", failed: reason)
+        }
         switch event {
         case .fileStarted(let f): note("COPY \(f.relativePath.uppercased())")
         case .fileCopied(let f):

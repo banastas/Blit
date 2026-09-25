@@ -71,7 +71,12 @@ struct BlitApp: App {
                 .frame(minWidth: 760, minHeight: 440)
         }
         .windowToolbarStyle(.unified)
-        .commands { BrowserCommands() }
+        .commands {
+            BrowserCommands()
+            CommandGroup(after: .importExport) {
+                Button("Export Transfer Log…") { TransferLog.export() }
+            }
+        }
 
         MenuBarExtra(isInserted: $showMenuBarExtra) {
             MenuBarPanel()
@@ -95,6 +100,7 @@ extension FocusedValues {
 /// View menu items that act on the front window's browser.
 struct BrowserCommands: Commands {
     @FocusedValue(\.browser) private var browser
+    @AppStorage("showSecondPane") private var showSecondPane = false
 
     var body: some Commands {
         CommandGroup(after: .sidebar) {
@@ -103,6 +109,8 @@ struct BrowserCommands: Commands {
             }
             .keyboardShortcut(".", modifiers: [.command, .shift])
             .disabled(browser == nil)
+            Button(showSecondPane ? "Hide Second Pane" : "Show Second Pane") { showSecondPane.toggle() }
+                .keyboardShortcut("2", modifiers: [.command, .option])
         }
     }
 }

@@ -7,6 +7,11 @@ struct ContentView: View {
     @Environment(ConnectionManager.self) private var connections
     @Environment(TransferManager.self) private var transfers
     @State private var browser: BrowserModel?
+    /// The optional second pane (R2.8) and which pane sidebar picks, ⌘K and
+    /// the toolbar act on (the one last clicked).
+    @State private var secondBrowser: BrowserModel?
+    @State private var secondActive = false
+    @AppStorage("showSecondPane") private var showSecondPane = false
     @State private var transferError: String?
     @State private var nasShare: VolumeLocation?
     @State private var showPalette = false
@@ -31,7 +36,16 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 300)
         } detail: {
             if let browser {
-                FileListView(browser: browser, onTransfer: startTransfer)
+                Group {
+                    if showSecondPane, let secondBrowser {
+                        HSplitView {
+                            pane(browser, isActive: !secondActive) { secondActive = false }
+                            pane(secondBrowser, isActive: secondActive) { secondActive = true }
+                        }
+                    } else {
+                        FileListView(browser: browser, onTransfer: startTransfer)
+                    }
+                }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if let job = transfers.featured {
                             Group {
@@ -46,19 +60,22 @@ struct ContentView: View {
                     }
             }
         }
-        .navigationTitle(browser?.title ?? "Blit")
-        .navigationSubtitle(browser?.subtitle ?? "")
+        .navigationTitle(active?.title ?? "Blit")
+        .navigationSubtitle(active?.subtitle ?? "")
         .toolbar { toolbar }
         .onChange(of: selection) { _, location in
-            if let location { browser?.open(location) }
+            if let location { active?.open(location) }
+        }
+        .onChange(of: showSecondPane) { _, shown in
+            if shown { openSecondPaneIfNeeded() } else { secondActive = false }
         }
         .onAppear(perform: start)
-        .focusedSceneValue(\.browser, browser)
+        .focusedSceneValue(\.browser, active)
         .sheet(item: $editing) { item in
             ServerEditor(server: item.server, isNew: item.isNew) { server, password in
                 servers.save(server, password: password)
                 connections.disconnect(server)
-                if item.isNew { selection = server.startLocation } else if selection?.serverID == server.id { browser?.reload() }
+                if item.isNew { selection = server.startLocation } else if active?.current?.serverID == server.id { active?.reload() }
             }
         }
         .sheet(isPresented: externalFilesBinding) {
@@ -73,7 +90,7 @@ struct ContentView: View {
         .sheet(isPresented: $showPalette) {
             CommandPalette(entries: paletteEntries) { location in
                 selection = location
-                browser?.open(location)
+                active?.open(location)
             }
         }
         .sheet(item: $nasShare) { share in
@@ -85,14 +102,14 @@ struct ContentView: View {
         .sheet(item: trustBinding) { request in
             TrustSheet(request: request) {
                 try? HostKeyStore().pin(request.presented, host: request.server.host, port: request.server.port)
-                browser?.reload()
+                active?.reload()
             }
         }
         .sheet(item: passwordBinding) { server in
             PasswordSheet(server: server) { password in
                 Keychain.setPassword(password, for: server)
                 connections.disconnect(server)
-                browser?.reload()
+                active?.reload()
             }
         }
         .confirmationDialog("Remove “\(removing?.displayName ?? "")”?", isPresented: .constant(removing != nil), presenting: removing) { server in
@@ -116,29 +133,29 @@ struct ContentView: View {
 
     private func startTransfer(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
         transferError = transfers.enqueue(sources, to: destination, destinationName: name.isEmpty ? "Folder" : name,
-                                          includeHidden: browser?.showHidden ?? false)
+                                          includeHidden: active?.showHidden ?? false)
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .navigation) {
-            Button("Back", systemImage: "chevron.left") { browser?.goBack() }
-                .disabled(!(browser?.canGoBack ?? false))
+            Button("Back", systemImage: "chevron.left") { active?.goBack() }
+                .disabled(!(active?.canGoBack ?? false))
                 .keyboardShortcut("[", modifiers: .command)
-            Button("Forward", systemImage: "chevron.right") { browser?.goForward() }
-                .disabled(!(browser?.canGoForward ?? false))
+            Button("Forward", systemImage: "chevron.right") { active?.goForward() }
+                .disabled(!(active?.canGoForward ?? false))
                 .keyboardShortcut("]", modifiers: .command)
         }
         ToolbarItemGroup {
             Button("Go to…", systemImage: "magnifyingglass") { showPalette = true }
                 .keyboardShortcut("k", modifiers: .command)
                 .help("Go to a favorite, server, drive or recent folder (⌘K)")
-            Button("Enclosing Folder", systemImage: "arrow.up") { browser?.goUp() }
-                .disabled(!(browser?.canGoUp ?? false))
+            Button("Enclosing Folder", systemImage: "arrow.up") { active?.goUp() }
+                .disabled(!(active?.canGoUp ?? false))
                 .keyboardShortcut(.upArrow, modifiers: .command)
             Button("Add to Favorites", systemImage: "star") {
-                if let location = browser?.current { sidebar.addFavorite(location) }
+                if let location = active?.current { sidebar.addFavorite(location) }
             }
-            .disabled(browser?.current.map(sidebar.isFavorite) ?? true)
+            .disabled(active?.current.map(sidebar.isFavorite) ?? true)
             .keyboardShortcut("d", modifiers: .command)
             .help("Add this folder to Favorites (⌘D)")
         }
@@ -175,7 +192,7 @@ struct ContentView: View {
         for share in sidebar.networkShares {
             add(.local(share.url), share.name, share.url.path, "externaldrive.connected.to.line.below", .nas)
         }
-        for recent in browser?.recents ?? [] {
+        for recent in active?.recents ?? [] {
             let d = describe(recent)
             add(recent, d.name, d.detail, "clock", .recent)
         }
@@ -187,19 +204,56 @@ struct ContentView: View {
     }
 
     private var trustBinding: Binding<TrustRequest?> {
-        Binding(get: { browser?.trustRequest }, set: { browser?.trustRequest = $0 })
+        Binding(get: { active?.trustRequest }, set: { active?.trustRequest = $0 })
     }
 
     private var passwordBinding: Binding<ServerConfig?> {
-        Binding(get: { browser?.passwordRequest }, set: { browser?.passwordRequest = $0 })
+        Binding(get: { active?.passwordRequest }, set: { active?.passwordRequest = $0 })
+    }
+
+    /// The browser that sidebar picks, ⌘K and the toolbar act on.
+    private var active: BrowserModel? { showSecondPane && secondActive ? secondBrowser : browser }
+
+    /// One pane of the two-pane layout, with a small location header.
+    private func pane(_ model: BrowserModel, isActive: Bool, activate: @escaping () -> Void) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: model.current?.serverID != nil ? "server.rack" : "folder")
+                    .foregroundStyle(.secondary)
+                Text(model.title).fontWeight(isActive ? .semibold : .regular)
+                Text(model.subtitle).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+            .font(.callout)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: activate)
+            Divider()
+            FileListView(browser: model, onTransfer: startTransfer)
+                .simultaneousGesture(TapGesture().onEnded(activate))
+        }
+        .frame(minWidth: 280)
+    }
+
+    private func openSecondPaneIfNeeded() {
+        if secondBrowser == nil { secondBrowser = BrowserModel(servers: servers, connections: connections) }
+        guard let secondBrowser, secondBrowser.current == nil else { return }
+        let start = sidebar.favorites.dropFirst().first(where: sidebar.isAvailable)?.location
+            ?? sidebar.networkShares.first.map { .local($0.url) }
+            ?? .local(FileManager.default.homeDirectoryForCurrentUser)
+        secondBrowser.open(start)
     }
 
     private func start() {
         if browser == nil { browser = BrowserModel(servers: servers, connections: connections) }
+        if showSecondPane { openSecondPaneIfNeeded() }
         transfers.restoreQueue()
-        transfers.onFinished = { [weak browser] destination in
-            if let browser, browser.current?.localURL?.standardizedFileURL == destination.standardizedFileURL {
-                browser.reload()
+        transfers.onFinished = { [weak browser, weak secondBrowser] destination in
+            for model in [browser, secondBrowser].compactMap({ $0 })
+            where model.current?.localURL?.standardizedFileURL == destination.standardizedFileURL {
+                model.reload()
             }
         }
         if selection == nil {
