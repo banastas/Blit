@@ -26,7 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UITestHarness.runPartialTestIfRequested()
         UITestHarness.runSortTestIfRequested()
         UITestHarness.renderPathBarIfRequested()
-        UITestHarness.renderSidebarTargetIfRequested()
         UITestHarness.renderInfoIfRequested()
         UITestHarness.runLogWindowTestIfRequested()
         #endif

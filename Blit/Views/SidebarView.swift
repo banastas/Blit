@@ -116,6 +116,9 @@ struct SidebarView: View {
             Button("Disconnect") { connections.disconnect(server) }
                 .disabled(connections.state(server) != .connected)
             Divider()
+            Button("Add to Favorites") { sidebar.addFavorite(location) }
+                .disabled(sidebar.isFavorite(location))
+            Divider()
             Button("Remove…", role: .destructive) { onRemoveServer(server) }
         } else if let favorite = sidebar.favorites.first(where: { $0.location == location }) {
             Button("Refresh") { onRefresh(location, false) }
@@ -138,6 +141,9 @@ struct SidebarView: View {
                 Divider()
             }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            // Drives and shares can be favorites too (their top level).
+            Button("Add to Favorites") { sidebar.addFavorite(location) }
+                .disabled(sidebar.isFavorite(location))
         }
     }
 
@@ -174,10 +180,6 @@ private struct TransferTarget: ViewModifier {
     let name: String
     let onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
     @State private var isTargeted = false
-    #if DEBUG
-    /// Draws every row as targeted, for a layout render (-BlitRenderSidebarTarget).
-    @MainActor static var showAllTargeted = false
-    #endif
 
     func body(content: Content) -> some View {
         content
@@ -203,19 +205,8 @@ private struct TransferTarget: ViewModifier {
             }
     }
 
-    private var showsTarget: Bool {
-        #if DEBUG
-        if Self.showAllTargeted { return true }
-        #endif
-        return isTargeted
-    }
+    private var showsTarget: Bool { isTargeted }
 }
-
-#if DEBUG
-@MainActor enum TransferTargetDebug {
-    static func showAll() { TransferTarget.showAllTargeted = true }
-}
-#endif
 
 extension View {
     func transferTarget(_ location: BrowseLocation, name: String,
@@ -232,7 +223,7 @@ private struct FavoriteRow: View {
     var body: some View {
         let available = sidebar.isAvailable(favorite)
         HStack {
-            Label(name, systemImage: available ? "folder" : "folder.badge.questionmark")
+            Label(name, systemImage: available ? symbol : "folder.badge.questionmark")
             Spacer(minLength: 4)
             if let badge {
                 Text(badge).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
@@ -243,16 +234,32 @@ private struct FavoriteRow: View {
     }
 
     private var name: String {
+        if let volume = volume { return volume.name }
         let last = favorite.location.lastComponent
         if last.isEmpty { return servers.server(favorite.location.serverID)?.displayName ?? "Server" }
         return last
     }
 
+    /// The drive or share itself, when the favorite is a volume's top level.
+    private var volume: VolumeLocation? {
+        guard let url = favorite.location.localURL?.standardizedFileURL else { return nil }
+        return (sidebar.drives + sidebar.networkShares).first { $0.url.standardizedFileURL.path == url.path }
+    }
+
+    private var symbol: String {
+        guard let volume else { return "folder" }
+        if sidebar.networkShares.contains(volume) { return "externaldrive.connected.to.line.below" }
+        return volume.isInternal ? "internaldrive" : "externaldrive"
+    }
+
     /// The volume or server it lives on.
+    /// The volume or server it lives on; for a volume itself, the device
+    /// serving a share (a drive needs none), and nothing for a server's home.
     private var badge: String? {
+        if let volume { return volume.host }
         switch favorite.location {
         case .local(let url): return sidebar.volumeName(for: url)
-        case .remote(let id, _): return servers.server(id)?.displayName
+        case .remote(let id, let bytes): return bytes.isEmpty ? nil : servers.server(id)?.displayName
         }
     }
 

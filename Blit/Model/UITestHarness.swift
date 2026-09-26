@@ -703,20 +703,6 @@ enum UITestHarness {
         }
     }
 
-    /// `-BlitRenderSidebarTarget out.png`: snapshots the window with every sidebar
-    /// row drawn as a drop target (the real List, via the view's own drawing).
-    static func renderSidebarTargetIfRequested() {
-        guard let path = UserDefaults.standard.string(forKey: "BlitRenderSidebarTarget") else { return }
-        Task { @MainActor in
-            TransferTargetDebug.showAll()
-            try? await Task.sleep(for: .seconds(4))
-            guard let window = BrowserModel.activeWindow, let view = window.contentView,
-                  let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-        }
-    }
-
     /// `-BlitHUDHeightTest <log>` (use with -BlitIsolatedQueue YES): the expanded
     /// HUD's fitted height across states. It should be the same in all of them.
     static func runHUDHeightTestIfRequested(transfers: TransferManager) {
