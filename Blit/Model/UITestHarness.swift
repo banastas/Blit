@@ -400,6 +400,45 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitHUDKeysTest <log>` (with -BlitFakeTransfer YES): Escape collapses the
+    /// full HUD and ⇧⌘T toggles it, sent as real key events.
+    static func runHUDKeysTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitHUDKeysTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            guard let window = BrowserModel.activeWindow else { return lines.append("no window") }
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            try? await Task.sleep(for: .milliseconds(500))
+            @MainActor func press(_ characters: String, _ keyCode: UInt16, _ flags: NSEvent.ModifierFlags = []) async {
+                if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                                                timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil,
+                                                characters: characters, charactersIgnoringModifiers: characters.lowercased(),
+                                                isARepeat: false, keyCode: keyCode) {
+                    NSApp.postEvent(event, atStart: false)
+                }
+                try? await Task.sleep(for: .milliseconds(600))
+            }
+            lines.append("start: expanded \(transfers.isExpanded) · active \(NSApp.isActive) · key window is main \(NSApp.keyWindow === window)")
+            for item in NSApp.mainMenu?.items.flatMap({ $0.submenu?.items ?? [] }) ?? [] where item.title.contains("Transfer Details") || item.title.contains("Toolbar") {
+                lines.append("menu: \(item.title) key \(item.keyEquivalent) mods \(item.keyEquivalentModifierMask.rawValue) enabled \(item.isEnabled)")
+            }
+            await press("\u{1B}", 53)
+            lines.append("after Escape: expanded \(transfers.isExpanded)")
+            // Key events only reach the active app: run this with Blit frontmost.
+            @MainActor func toggleDetails() async { await press("T", 17, [.command, .shift]) }
+            await toggleDetails()
+            lines.append("after ⇧⌘T: expanded \(transfers.isExpanded)")
+            await toggleDetails()
+            lines.append("after ⇧⌘T again: expanded \(transfers.isExpanded)")
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

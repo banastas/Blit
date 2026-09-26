@@ -34,7 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let key = event.keyCode
             let space: UInt16 = 49, down: UInt16 = 125, up: UInt16 = 126, returnKey: UInt16 = 36, enter: UInt16 = 76
-            guard [space, down, up, returnKey, enter].contains(key),
+            let escape: UInt16 = 53
+            guard [space, down, up, returnKey, enter, escape].contains(key),
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   key != space || !event.isARepeat else { return event }
             let handled = MainActor.assumeIsolated { () -> Bool in
@@ -45,6 +46,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Mid-rename (including the moment before the field takes the keyboard),
                 // Space and Return belong to the name being edited.
                 guard browser.renaming == nil else { return false }
+                if key == escape {
+                    // Escape closes what's open over the list: Quick Look, then the full HUD.
+                    guard !panelIsKey else { return false }   // the panel closes itself
+                    if browser.previewURL != nil || browser.previewLoading != nil {
+                        browser.togglePreview()
+                        return true
+                    }
+                    guard let transfers = self.transfers, transfers.isExpanded else { return false }
+                    transfers.collapse()
+                    return true
+                }
                 if key == returnKey || key == enter {
                     // Return renames the selection in place, as in Finder (⌘↓ or double-click opens).
                     guard !panelIsKey, browser.selection.count == 1,
@@ -125,7 +137,7 @@ struct BlitApp: App {
         }
         .windowToolbarStyle(.unified)
         .commands {
-            BrowserCommands()
+            BrowserCommands(transfers: transfers)
             FileCommands()
             GoCommands()
             AboutCommands()
@@ -167,11 +179,20 @@ struct BlitApp: App {
 
 extension FocusedValues {
     @Entry var browser: BrowserModel?
+    @Entry var transferDetails: TransferDetailsState?
+}
+
+/// The HUD's state for the View menu (commands don't track the manager itself).
+struct TransferDetailsState: Equatable {
+    var isExpanded: Bool
+    var available: Bool
 }
 
 /// View menu items that act on the front window's browser.
 struct BrowserCommands: Commands {
+    let transfers: TransferManager
     @FocusedValue(\.browser) private var browser
+    @FocusedValue(\.transferDetails) private var details
     @AppStorage("showSecondPane") private var showSecondPane = false
     @AppStorage("showPathBar") private var showPathBar = true
     @AppStorage("showIconPreviews") private var showIconPreviews = true
@@ -202,6 +223,13 @@ struct BrowserCommands: Commands {
             .disabled(browser == nil)
             Button(showSecondPane ? "Hide Second Pane" : "Show Second Pane") { showSecondPane.toggle() }
                 .keyboardShortcut("2", modifiers: [.command, .option])
+            Divider()
+            // The full HUD from the keyboard; Escape also collapses it.
+            Button(details?.isExpanded == true ? "Hide Transfer Details" : "Show Transfer Details") {
+                if transfers.isExpanded { transfers.collapse() } else { transfers.isExpanded = true }
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])   // ⌥⌘T is Show/Hide Toolbar
+            .disabled(details?.available != true)
         }
     }
 }

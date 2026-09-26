@@ -98,6 +98,9 @@ struct ContentView: View {
         .modifier(PaneCoordination(browser: browser, secondBrowser: secondBrowser, active: active,
                                    secondActive: secondActive, showSecondPane: showSecondPane,
                                    undoManager: undoManager, operations: operations))
+        // Plain values, so View › Show/Hide Transfer Details updates with the HUD.
+        .focusedSceneValue(\.transferDetails, TransferDetailsState(isExpanded: transfers.isExpanded,
+                                                                  available: transfers.featured != nil))
         .sheet(item: $editing) { item in
             ServerEditor(server: item.server, isNew: item.isNew) { server, password in
                 servers.save(server, password: password)
@@ -348,6 +351,7 @@ struct ContentView: View {
         transfers.startFakeTransferIfRequested()
         UITestHarness.runQueueTestIfRequested(transfers: transfers)
         UITestHarness.renderStripIfRequested(transfers: transfers)
+        UITestHarness.runHUDKeysTestIfRequested(transfers: transfers)
         UITestHarness.runSpaceTestIfRequested(transfers: transfers)
         UITestHarness.runExistsTestIfRequested(transfers: transfers)
         UITestHarness.runStructureTestIfRequested(transfers: transfers)

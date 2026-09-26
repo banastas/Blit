@@ -144,6 +144,8 @@ remote SFTP server ──(parallel SFTP, verified)──▶ external SSD ──(
 
 The transfer strip expands into a 1-bit, pixel-terminal HUD (references: 1-bit pixel art, pixel icon sets, the *Alien* Nostromo interface).
 
+From the keyboard: View › Show/Hide Transfer Details (⇧⌘T; ⌥⌘T is the system's Show/Hide Toolbar). Escape closes what's open over the list, Quick Look first, then the full HUD.
+
 **Condensed (default), two lines:**
 1. `▲ 02/05` transfer count (click to expand) · item `→` destination · 24-cell segmented progress · percent · mini 30-second throughput histogram · large rate · one square per connection (or file stream), bright while it moved data in the last second and dim when idle or stalled, with a short link summary (`3× · 148MS` for SFTP, `SMB · EN7` for copies).
 2. The latest log line: verification results, resumes, ETA.
