@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UITestHarness.renderStatusIconsIfRequested()
         UITestHarness.runUndoTestIfRequested()
         UITestHarness.renderInfoIfRequested()
+        UITestHarness.runLogWindowTestIfRequested()
         #endif
         // Quick Look keys, as in Finder (PRD R2.17): Space opens and closes the
         // panel; while it's open, ↑/↓ preview the previous or next file. Left
@@ -129,6 +130,8 @@ struct BlitApp: App {
             CommandGroup(after: .importExport) {
                 Button("Export Transfer Log…") { TransferLog.export() }
             }
+            TransferLogCommands()
+
         }
 
         MenuBarExtra(isInserted: $showMenuBarExtra) {
@@ -144,12 +147,19 @@ struct BlitApp: App {
             SettingsView()
         }
 
+        Window("Transfer Log", id: "transfer-log") {
+            TransferLogView()
+        }
+        .defaultSize(width: 1000, height: 560)
+        .commandsRemoved()   // listed by TransferLogCommands, with its shortcut
+
         Window("About Blit", id: "about") {
             AboutView()
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
         .restorationBehavior(.disabled)
+        .commandsRemoved()
     }
 }
 
@@ -272,6 +282,18 @@ struct GoCommands: Commands {
             Button("Go to Folder…") { browser?.showGoToFolder = true }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
                 .disabled(browser == nil)
+        }
+    }
+}
+
+/// Window › Transfer Log (⌥⌘L).
+struct TransferLogCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(before: .windowArrangement) {
+            Button("Transfer Log") { openWindow(id: "transfer-log") }
+                .keyboardShortcut("l", modifiers: [.command, .option])
         }
     }
 }

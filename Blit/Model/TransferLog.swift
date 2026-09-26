@@ -31,8 +31,12 @@ enum TransferLog {
         return e
     }()
 
+    /// Posted after a record is appended (the Transfer Log window refreshes).
+    static let didAppend = Notification.Name("BlitTransferLogDidAppend")
+
     static func append(_ record: TransferRecord) {
         VerifiedIndex.shared.record(record)
+        defer { NotificationCenter.default.post(name: didAppend, object: nil) }
         guard var line = try? encoder.encode(record) else { return }
         line.append(0x0A)
         let fm = FileManager.default

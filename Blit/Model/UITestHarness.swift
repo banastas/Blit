@@ -358,6 +358,34 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitLogWindowTest <log>`: opens Window › Transfer Log through the menu
+    /// and reports its rows against the log file.
+    static func runLogWindowTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitLogWindowTest") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            var lines: [String] = []
+            let windowMenu = NSApp.mainMenu?.items.first { $0.submenu?.title == "Window" }?.submenu
+            let titles = windowMenu?.items.map(\.title).filter { !$0.isEmpty } ?? []
+            lines.append("window menu: \(titles.joined(separator: " | "))")
+            if let menu = windowMenu, let index = menu.items.firstIndex(where: { $0.title == "Transfer Log" }) {
+                lines.append("shortcut: \(menu.items[index].keyEquivalentModifierMask.contains(.option) ? "⌥" : "")⌘\(menu.items[index].keyEquivalent.uppercased())")
+                menu.performActionForItem(at: index)
+            }
+            try? await Task.sleep(for: .seconds(2))
+            let logWindow = NSApp.windows.first { $0.title == "Transfer Log" }
+            func tables(in view: NSView?) -> [NSTableView] {
+                guard let view else { return [] }
+                return (view as? NSTableView).map { [$0] } ?? view.subviews.flatMap { tables(in: $0) }
+            }
+            let rows = tables(in: logWindow?.contentView).first?.numberOfRows ?? -1
+            let records = TransferLog.records().count
+            lines.append("log window open: \(logWindow != nil) · rows \(rows) · records in file \(records)")
+            lines.append("done")
+            try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
     static func runIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitRightClickTest") else { return }
         var lines: [String] = ["started"] {
