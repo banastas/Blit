@@ -4,7 +4,8 @@ Blit's single-page website, meant for **blit.banast.as**. It's static: one `inde
 
 - **Design:** the transfer HUD's rules. The palette is black and grey (`HUDColor`), with muted red `#b35c5c` only for failures. Type is Silkscreen for labels and VT323 for terminal text. Pixel glyphs, the app icon and marching ants are drawn from the same 1-bit grids the app uses. The live strip and expanded HUD are a simulation with neutral file names, and they respect Reduce Motion.
 - **Numbers:** every benchmark comes from the PRD (`README.md`, "Benchmark findings"), measured against a server 148 ms away. Percentages compare Blit's best result with the baseline named next to it.
-- **Distribution isn't decided,** so the page has no download link or price. When that's settled, update the Spec sheet's Distribution row, the hero chips and the footer status.
+- **Selling:** $19 one-time through Lemon Squeezy (store `blit.lemonsqueezy.com`), 7-day trial, 30-day refunds. The Price section's button is inactive ("Checkout opens soon") until the product's checkout link exists: then make it a link (class `btn`, without `is-soon`) and set the app's `LicenseConfig.buyURL` to the same link.
+- **Legal:** `legal.html` has the license terms, privacy policy (it describes what the app actually sends: license checks to api.lemonsqueezy.com, nothing else) and refund policy. Seller: banast.as; contact: blit@banast.as. Update its date when it changes.
 - **Fonts:** Silkscreen and VT323 are under the SIL Open Font License; the license texts are in `fonts/`.
 
 Preview locally:

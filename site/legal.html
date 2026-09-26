@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blit — terms, privacy and refunds</title>
+<meta name="description" content="Blit's license terms, privacy policy and refund policy.">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+@font-face { font-family: "Silkscreen"; src: url("fonts/Silkscreen-Regular.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "VT323"; src: url("fonts/VT323-Regular.ttf") format("truetype"); font-display: swap; }
+:root { --bg: #0a0a0a; --border: #2b2b2b; --bright: #f0f0f0; --dim: #7d7d7d; --text: #c4c4c4; --gutter: 16px; }
+* { box-sizing: border-box; }
+html { background: var(--bg); color-scheme: dark; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: "VT323", ui-monospace, Menlo, monospace; font-size: 22px; line-height: 1.3; -webkit-font-smoothing: none; }
+body::after { content: ""; position: fixed; inset: 0; pointer-events: none; background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.018) 0 1px, transparent 1px 3px); }
+a { color: var(--bright); text-decoration: none; border-bottom: 1px dotted var(--dim); }
+a:hover { border-bottom-color: var(--bright); }
+.wrap { max-width: 820px; margin: 0 auto; padding: 0 var(--gutter); }
+.label { font-family: "Silkscreen", ui-monospace, monospace; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+header { border-bottom: 1px solid var(--border); }
+header .wrap { display: flex; align-items: center; justify-content: space-between; height: 44px; }
+header a { border: 0; font-family: "Silkscreen", monospace; font-size: 13px; letter-spacing: 0.1em; }
+nav { display: flex; gap: 16px; }
+nav a { color: var(--dim); font-size: 11px; }
+h1 { font-family: "Silkscreen", monospace; font-weight: normal; font-size: clamp(26px, 5vw, 38px); letter-spacing: 0.04em; margin: 48px 0 6px; color: var(--bright); text-transform: uppercase; }
+h2 { font-family: "Silkscreen", monospace; font-weight: normal; font-size: 18px; letter-spacing: 0.05em; margin: 0 0 14px; color: var(--bright); text-transform: uppercase; }
+section { border: 1px solid var(--border); padding: 18px 20px 12px; margin: 22px 0; scroll-margin-top: 16px; }
+p, li { margin: 0 0 10px; }
+ul { padding-left: 22px; margin: 0 0 10px; }
+strong { color: var(--bright); font-weight: normal; }
+footer { border-top: 1px solid var(--border); margin-top: 40px; padding: 24px 0 48px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a href="./">BLIT</a>
+    <nav><a href="#terms">Terms</a><a href="#privacy">Privacy</a><a href="#refunds">Refunds</a><a href="mailto:blit@banast.as">Contact</a></nav>
+  </div>
+</header>
+<main class="wrap">
+  <h1>Terms, privacy, refunds</h1>
+  <p class="label">Last updated 26 September 2026 · Blit is sold by banast.as</p>
+
+  <section id="terms">
+    <h2>License terms</h2>
+    <p>Blit is software for macOS, sold by banast.as ("we"). Purchases are processed by Lemon Squeezy, our reseller and merchant of record, which also handles payment, sales tax and receipts.</p>
+    <ul>
+      <li><strong>Trial.</strong> You can use Blit free for 7 days from its first launch. After that, starting new transfers needs a license; transfers already queued still finish, and browsing, file management and the transfer log keep working.</li>
+      <li><strong>License.</strong> A purchase gives you a personal, non-transferable license to use Blit on your own Macs, up to the number of activations shown at checkout. You can move a license by deactivating it on one Mac (Settings › License) and activating it on another. Business use is fine.</li>
+      <li><strong>Updates.</strong> The license includes updates to Blit 1.x. A future major version may be a paid upgrade.</li>
+      <li><strong>Please don't</strong> share or resell license keys, or remove the license check.</li>
+      <li><strong>Your data is your responsibility.</strong> Blit verifies transfers with SHA-256 so problems are caught, but no software can rule out every failure of disks, networks or servers. Keep backups of anything you can't afford to lose.</li>
+      <li><strong>No warranty.</strong> Blit is provided "as is", without warranties of any kind, to the extent the law allows. We aren't liable for indirect or consequential damages or lost data, and our total liability is limited to the amount you paid for Blit.</li>
+    </ul>
+    <p>We may update these terms; the date above shows the latest version. Using Blit after a change means accepting the updated terms.</p>
+  </section>
+
+  <section id="privacy">
+    <h2>Privacy</h2>
+    <p><strong>Blit has no accounts, analytics, ads or tracking.</strong> What you transfer, where from and where to stays on your Mac.</p>
+    <ul>
+      <li><strong>Your servers and drives.</strong> Blit connects only to the SFTP servers and NAS devices you add, and to drives on your Mac. Passwords are stored in your Mac's Keychain; SSH keys are read from the file you choose each time Blit connects, and never copied.</li>
+      <li><strong>Transfer history.</strong> The transfer log (file names, sizes, SHA-256 hashes, sources and destinations) is kept only on your Mac, in its Application Support folder.</li>
+      <li><strong>Licensing.</strong> To activate a license, Blit sends your license key and your Mac's name to Lemon Squeezy's license service (api.lemonsqueezy.com), and checks the key there about once a week. Lemon Squeezy returns whether the key is valid and the name and email it was bought with, which Blit shows in Settings.</li>
+      <li><strong>Purchases.</strong> Lemon Squeezy collects your payment and billing details as merchant of record, under its own privacy policy. We receive your name, email address and order details, which we use to send receipts and license keys and to answer support requests. We don't sell or share them.</li>
+      <li><strong>This website</strong> sets no cookies and uses no analytics or trackers. It's hosted on Cloudflare, which processes requests to deliver the pages.</li>
+    </ul>
+    <p>To ask about or delete the order details we hold, email <a href="mailto:blit@banast.as">blit@banast.as</a>.</p>
+  </section>
+
+  <section id="refunds">
+    <h2>Refunds</h2>
+    <p><strong>30 days, no questions asked.</strong> If Blit isn't right for you, email <a href="mailto:blit@banast.as">blit@banast.as</a> (or reply to your receipt) within 30 days of purchase and we'll refund you in full through Lemon Squeezy. A refunded license is deactivated.</p>
+  </section>
+
+  <section id="contact">
+    <h2>Contact</h2>
+    <p>Support, license questions and refunds: <a href="mailto:blit@banast.as">blit@banast.as</a>.</p>
+  </section>
+</main>
+<footer>
+  <div class="wrap label">BLIT · © 2026 banast.as · <a href="./">Back to Blit</a></div>
+</footer>
+</body>
+</html>
