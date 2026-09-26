@@ -665,6 +665,44 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRenderPathBar out.png`: the path bar with nothing selected and with
+    /// two files and a folder selected (the selection count at its end).
+    static func renderPathBarIfRequested() {
+        guard let path = UserDefaults.standard.string(forKey: "BlitRenderPathBar") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active else { return }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("Blit Path Bar Test")
+            try? fm.createDirectory(at: root.appendingPathComponent("Folder"), withIntermediateDirectories: true)
+            for (name, size) in [("a.mkv", 1_200_000_000), ("b.mkv", 800_000_000), ("c.nfo", 4_000)] {
+                fm.createFile(atPath: root.appendingPathComponent(name).path, contents: nil)
+                if let h = FileHandle(forWritingAtPath: root.appendingPathComponent(name).path) { try? h.truncate(atOffset: UInt64(size)); try? h.close() }
+            }
+            browser.open(.local(root))
+            for _ in 0..<20 where browser.items.count < 4 { try? await Task.sleep(for: .milliseconds(200)) }
+            @MainActor func shot() -> NSImage? {
+                let renderer = ImageRenderer(content: PathBar(browser: browser).frame(width: 700).background(Color(white: 0.93)))
+                renderer.scale = 2
+                return renderer.nsImage
+            }
+            let none = shot()
+            browser.selection = Set(browser.items.filter { $0.name != "c.nfo" }.map(\.location))
+            try? await Task.sleep(for: .milliseconds(300))
+            let some = shot()
+            let content = VStack(spacing: 4) {
+                if let none { Image(nsImage: none) }
+                if let some { Image(nsImage: some) }
+            }
+            let renderer = ImageRenderer(content: content)
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: path))
+            }
+            try? fm.removeItem(at: root)
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

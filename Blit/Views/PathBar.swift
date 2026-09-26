@@ -32,6 +32,8 @@ struct PathBar: View {
             Spacer(minLength: 0)
             LoadingIndicator(browser: browser)
                 .layoutPriority(3)
+            SelectionCount(browser: browser)
+                .layoutPriority(3)
         }
         .font(.system(size: 11))
         .padding(.horizontal, 8)
@@ -170,5 +172,32 @@ struct LoadingIndicator: View {
             guard !Task.isCancelled, browser.isLoading else { return }
             withAnimation(.easeIn(duration: 0.15)) { visible = true }
         }
+    }
+}
+
+/// "3 of 42 selected · 1.2 GB" at the end of the path bar (as Finder's status
+/// bar), or "42 items" with nothing selected.
+private struct SelectionCount: View {
+    let browser: BrowserModel
+
+    var body: some View {
+        let total = browser.rows.count
+        let selected = browser.selectedItems
+        let files = selected.filter { !$0.isDirectory }
+        let bytes = files.reduce(Int64(0)) { $0 + max($1.size, 0) }
+        let folders = selected.count - files.count
+        Group {
+            if selected.isEmpty {
+                Text("\(total) item\(total == 1 ? "" : "s")")
+            } else {
+                Text("\(selected.count) of \(total) selected" + (files.isEmpty ? "" : " · " + bytes.formatted(.byteCount(style: .file))))
+            }
+        }
+        .monospacedDigit()
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.leading, 8)
+        .help(folders > 0 && !files.isEmpty ? "The size counts the selected files, not what's inside the selected folders." : "")
     }
 }
