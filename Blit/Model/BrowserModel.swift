@@ -53,6 +53,10 @@ final class BrowserModel {
     var operationError: String?
     /// The file shown in Quick Look, if the panel is open.
     var previewURL: URL?
+    /// A server file being downloaded to preview (Space again cancels showing it).
+    var previewLoading: BrowseLocation?
+    /// Server files already downloaded for Quick Look this session, oldest first.
+    @ObservationIgnored var previewDownloads: [(location: BrowseLocation, url: URL)] = []
 
     func toggleHidden() {
         showHidden.toggle()
@@ -223,6 +227,7 @@ final class BrowserModel {
                 if !expanded.isEmpty { await reloadExpanded() }
                 guard location == current else { return }
                 selection.formIntersection(rows.map(\.location))
+                if let renaming, !rows.contains(where: { $0.location == renaming }) { self.renaming = nil }
                 remember(location)
             } catch {
                 guard location == current else { return }

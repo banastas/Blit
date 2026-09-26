@@ -158,10 +158,15 @@ final class SidebarModel {
     // MARK: Favorites
 
     /// Local favorites need their folder present; server favorites are checked when opened.
+    /// Whether a favorite's volume is mounted. Answered from the mounted-volume
+    /// lists, not the file system: this runs on every sidebar render, and a
+    /// file check on a dead SMB share would freeze the app.
     func isAvailable(_ favorite: Favorite) -> Bool {
         guard let url = favorite.location.localURL else { return true }
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        let parts = url.standardizedFileURL.pathComponents
+        guard parts.count > 2, parts[1] == "Volumes" else { return true }   // on the startup disk
+        let volume = "/Volumes/" + parts[2]
+        return (drives + networkShares).contains { $0.url.standardizedFileURL.path == volume }
     }
 
     /// Adds folders (ignoring files and duplicates) at `index`, or at the end.

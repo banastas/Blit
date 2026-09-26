@@ -77,17 +77,22 @@ struct TransferStrip: View {
                 if job.isOperation, job.failures.isEmpty {
                     EmptyView()
                 } else if job.failures.isEmpty {
-                    PixelHistogram(samples: Array(job.history.suffix(30)), scale: max(job.peakRate, 1))
+                    PixelHistogram(samples: Array(job.history.suffix(30)), scale: job.histogramScale)
                         .frame(width: 60, height: 20)
                 } else {
-                    hudText("✕ \(job.failures.count) WARNING\(job.failures.count == 1 ? "" : "S")", glyphSize: 9)
-                        .font(HUDFont.label())
-                        .foregroundStyle(HUDColor.onFailure)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(HUDColor.failure)
-                        .fixedSize()
-                        .help(job.failures.joined(separator: "\n"))
+                    Button {
+                        transfers.isExpanded = true
+                    } label: {
+                        hudText("✕ \(job.failures.count) WARNING\(job.failures.count == 1 ? "" : "S")", glyphSize: 9)
+                            .font(HUDFont.label())
+                            .foregroundStyle(HUDColor.onFailure)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(HUDColor.failure)
+                            .fixedSize()
+                    }
+                    .buttonStyle(.plain)
+                    .help(job.failures.joined(separator: "\n") + "\n\nClick to show the full HUD")
                 }
                 rate
                 separator

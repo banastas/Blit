@@ -119,7 +119,7 @@ struct MenuBarTransfer: View {
     }
 
     private var countLabel: String {
-        let arrow = job.isActive ? "▲" : (job.status == .finished ? "✓" : "✕")
+        let arrow = job.isActive ? "▲" : (job.status == .finished ? (job.allAlreadyPresent ? "=" : "✓") : "✕")
         return job.fileCount > 0 ? "\(arrow) \(job.filesFinished)/\(job.fileCount)" : arrow
     }
 
@@ -128,7 +128,7 @@ struct MenuBarTransfer: View {
         if job.isVerifyingOnly { return "SHA256" }
         if job.status == .preparing { return "…" }
         if case .waiting = job.status { return "RETRY" }
-        if !job.isActive { return job.status == .finished ? "DONE" : "FAILED" }
+        if !job.isActive { return job.status == .finished ? (job.allAlreadyPresent ? "PRESENT" : "DONE") : "FAILED" }
         return String(format: "%.1f", job.rate)
     }
 

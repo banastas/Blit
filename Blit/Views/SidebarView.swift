@@ -53,6 +53,7 @@ struct SidebarView: View {
                         Spacer(minLength: 4)
                         StatusDot(state: connections.state(server))
                     }
+                    .transferTarget(server.startLocation, name: server.displayName, onTransfer: onTransfer)
                     .tag(server.startLocation)
                 }
                 if servers.browsable.isEmpty {

@@ -157,7 +157,7 @@ struct TransferHUD: View {
                     Text("MB/S").font(HUDFont.terminal(18)).foregroundStyle(HUDColor.dim)
                 }
             }
-            PixelHistogram(samples: Array(job.history.suffix(60)), scale: max(job.peakRate, 1), columns: 60)
+            PixelHistogram(samples: Array(job.history.suffix(60)), scale: job.histogramScale, columns: 60)
                 .frame(height: 64)
             HUDRow(String(format: "PEAK %.1f", job.peakRate), eta)
         }

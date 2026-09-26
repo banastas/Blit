@@ -22,9 +22,21 @@ struct TransferPayload: Codable, Transferable {
     var locations: [BrowseLocation]
     /// Which locations are folders (so Favorites can accept only folders).
     var folders: [BrowseLocation]? = nil
+    /// The row this payload was dragged from (a multi-row drag makes one per row).
+    var primary: BrowseLocation? = nil
+
+    /// The dragged row's local file, for Finder and other apps.
+    var primaryFileURL: URL? { (primary ?? locations.first)?.localURL }
 
     static var transferRepresentation: some TransferRepresentation {
+        // Within Blit: every location, local or on a server.
         CodableRepresentation(contentType: .blitLocations)
+        // To Finder and other apps (PRD R2.3): local items as file URLs.
+        ProxyRepresentation(exporting: { (payload: TransferPayload) in payload.primaryFileURL ?? URL(fileURLWithPath: "/") })
+            .exportingCondition { $0.primaryFileURL != nil }
+        // From Finder: a dropped file URL becomes a local location, so every
+        // drop target (rows, sidebar, path bar) accepts it.
+        ProxyRepresentation(importing: { (url: URL) in TransferPayload(locations: [.local(url)]) })
     }
 }
 
@@ -150,6 +162,12 @@ final class TransferJob: Identifiable {
     }
 
     var transferred: Int64 { Int64(counter.total) + resumedBytes + presentBytes }
+
+    /// Histogram scale: the download peak, or (once only checksums remain and
+    /// the bars show the server's hash rate) the largest bar shown.
+    var histogramScale: Double {
+        max(isVerifyingOnly ? (history.suffix(60).max() ?? 1) : peakRate, 1)
+    }
 
     /// All bytes are in and files are waiting on their checksums.
     var isVerifyingOnly: Bool { isActive && !verifying.isEmpty && transferred >= totalBytes }

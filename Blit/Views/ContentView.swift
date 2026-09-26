@@ -69,12 +69,13 @@ struct ContentView: View {
                             }
                             .padding(8)
                             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { _, height in
-                                hudHeight = height
+                                withAnimation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36)) { hudHeight = height }
                             }
                             .transition(.crt)
                         }
                     }
-                    .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: transfers.isExpanded)
+                    .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: showsExpandedHUD)
+                    .onChange(of: transfers.featured == nil) { _, none in if none { hudHeight = 0 } }
                     .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: transfers.featured == nil)
             }
         }
@@ -94,6 +95,8 @@ struct ContentView: View {
                 .allowsHitTesting(false)
         }
         .onChange(of: secondActive) { BrowserModel.active = active }
+        .onChange(of: browser?.previewURL) { _, url in if url != nil { secondBrowser?.previewURL = nil } }
+        .onChange(of: secondBrowser?.previewURL) { _, url in if url != nil { browser?.previewURL = nil } }
         .onChange(of: showSecondPane) { BrowserModel.active = active }
         .focusedSceneValue(\.browser, active)
         .sheet(item: $editing) { item in
@@ -290,7 +293,7 @@ struct ContentView: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: activate)
             Divider()
-            FileListView(browser: model)
+            FileListView(browser: model, onFocus: activate)
                 .simultaneousGesture(TapGesture().onEnded(activate))
         }
         .frame(minWidth: 280)
@@ -307,6 +310,15 @@ struct ContentView: View {
             ?? sidebar.networkShares.first.map { .local($0.url) }
             ?? .local(FileManager.default.homeDirectoryForCurrentUser)
         secondBrowser.open(start)
+    }
+
+    /// The full HUD is showing (a file operation taking the slot shows the strip).
+    private var showsExpandedHUD: Bool { transfers.isExpanded && !(transfers.featured?.isOperation ?? true) }
+
+    /// Makes `model`'s pane the active one (clicked, right-clicked or focused).
+    private func activate(_ model: BrowserModel) {
+        guard showSecondPane else { return }
+        if model === secondBrowser { secondActive = true } else if model === browser { secondActive = false }
     }
 
     /// Refresh whichever panes show a folder that changed: a transfer's
@@ -329,6 +341,7 @@ struct ContentView: View {
         if browser == nil { browser = BrowserModel(servers: servers, connections: connections, operations: operations) }
         if showSecondPane { openSecondPaneIfNeeded() }
         BrowserModel.active = active
+        BrowserModel.onInteraction = { model in activate(model) }
         transfers.restoreQueue()
         #if DEBUG
         transfers.startFakeTransferIfRequested()

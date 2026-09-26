@@ -54,16 +54,24 @@ extension BrowserModel {
     /// different real extension typed on purpose is kept.
     nonisolated static func keepingExtension(of oldName: String, in newName: String, isDirectory: Bool) -> String {
         guard !isDirectory else { return newName }
-        func realExtension(_ name: String) -> String? {
+        func knownExtension(_ name: String) -> String? {
             let ext = (name as NSString).pathExtension
-            guard !ext.isEmpty, !ext.contains(" ") else { return nil }
-            if let type = UTType(filenameExtension: ext), !type.isDynamic { return ext }
+            guard !ext.isEmpty, !ext.contains(" "), let type = UTType(filenameExtension: ext), !type.isDynamic else { return nil }
+            return ext
+        }
+        func plainExtension(_ name: String) -> String? {
             // Short letters-and-digits endings macOS doesn't know (.nfo, .srt, .sfv),
             // but not dates or release tags ("16", "MP4-VACCiNE[XC]").
-            let plain = ext.count <= 5 && ext.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+            let ext = (name as NSString).pathExtension
+            let plain = !ext.isEmpty && ext.count <= 5 && ext.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
             return plain && ext.contains(where: \.isLetter) ? ext : nil
         }
-        guard let old = realExtension(oldName), realExtension(newName) == nil else { return newName }
+        guard let old = knownExtension(oldName) ?? plainExtension(oldName) else { return newName }
+        // The new name keeps its own ending only if it's a type macOS knows, or
+        // the same unknown extension as before: "Show.S3", "Show.E01" and
+        // "Movie.720p" are release tags, not a new type.
+        if knownExtension(newName) != nil { return newName }
+        if let ext = plainExtension(newName), ext.lowercased() == old.lowercased() { return newName }
         return newName + "." + old
     }
 
@@ -74,7 +82,9 @@ extension BrowserModel {
         var name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         name = Self.keepingExtension(of: item.name, in: name, isDirectory: item.isDirectory)
-        guard name != item.name else { return }
+        // Byte comparison: "café" typed (NFC) over "café" stored (NFD) is a real
+        // rename for a Linux NAS, though Swift's == calls them equal.
+        guard Array(name.utf8) != Array(item.name.utf8) else { return }
         Task {
             do {
                 selection = [try await operations.rename(item.location, to: name)]
@@ -103,7 +113,8 @@ extension BrowserModel {
     /// Pastes into the current folder. A Cut (or ⌥⌘V) moves; otherwise copies.
     func paste(move: Bool) {
         guard let folder = current, let contents = operations.pasteboardContents() else { return }
-        run(sources: contents.sources, into: folder, name: title, mode: move || contents.isCut ? .move : .copy)
+        run(sources: contents.sources, into: folder, name: title, mode: move || contents.isCut ? .move : .copy,
+            fromPasteboard: true)
     }
 
     // MARK: Drag and drop
@@ -115,11 +126,12 @@ extension BrowserModel {
         run(sources: sources, into: folder, name: name, mode: mode)
     }
 
-    private func run(sources: [BrowseLocation], into folder: BrowseLocation, name: String, mode: FileOperations.Mode) {
+    private func run(sources: [BrowseLocation], into folder: BrowseLocation, name: String, mode: FileOperations.Mode,
+                     fromPasteboard: Bool = false) {
         let hidden = showHidden
         Task {
             if let message = await operations.place(sources, into: folder, destinationName: name.isEmpty ? "Folder" : name,
-                                                    mode: mode, includeHidden: hidden) {
+                                                    mode: mode, includeHidden: hidden, fromPasteboard: fromPasteboard) {
                 operationError = message
             }
         }

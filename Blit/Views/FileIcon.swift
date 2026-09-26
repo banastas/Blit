@@ -48,7 +48,10 @@ final class ThumbnailCache {
                                                    scale: NSScreen.main?.backingScaleFactor ?? 2,
                                                    representationTypes: [.lowQualityThumbnail, .thumbnail])
         guard let representation = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) else {
-            if !Task.isCancelled { none.insert(key) }
+            if !Task.isCancelled {
+                if none.count > 5000 { none.removeAll() }
+                none.insert(key)
+            }
             return nil
         }
         let image = representation.nsImage

@@ -8,7 +8,10 @@ import UniformTypeIdentifiers
 
 struct FileListView: View {
     @Bindable var browser: BrowserModel
+    /// Called when this list gets the keyboard, so file commands act on it.
+    var onFocus: (() -> Void)? = nil
     @State private var isTargeted = false
+    @FocusState private var tableFocused: Bool
     @AppStorage("showPathBar") private var showPathBar = true
 
     var body: some View {
@@ -167,6 +170,8 @@ struct FileListView: View {
                     .allowsHitTesting(false)
             }
         }
+        .focused($tableFocused)
+        .onChange(of: tableFocused) { _, focused in if focused { onFocus?() } }
         .onKeyPress(.rightArrow) { expandSelection(true) }
         .onKeyPress(.leftArrow) { expandSelection(false) }
         .overlay {
@@ -325,7 +330,8 @@ struct FileListView: View {
     /// Dragging a selected row drags the whole selection, in list order.
     private func payload(for item: FileItem) -> TransferPayload {
         let items = browser.selection.contains(item.id) ? browser.selectedItems : [item]
-        return TransferPayload(locations: items.map(\.location), folders: items.filter(\.isDirectory).map(\.location))
+        return TransferPayload(locations: items.map(\.location), folders: items.filter(\.isDirectory).map(\.location),
+                               primary: item.location)
     }
 }
 
@@ -379,9 +385,20 @@ enum EmptySpaceMenu {
         }
     }
 
+    /// The browser whose file list covers `point` in `window`.
+    static func browser(at point: NSPoint, in window: NSWindow) -> BrowserModel? {
+        anchors.first(where: { anchor in
+            guard let view = anchor.view, view.window === window else { return false }
+            return view.convert(view.bounds, to: nil).contains(point)
+        })?.browser
+    }
+
     private static func handle(_ event: NSEvent) -> Bool {
-        guard let window = event.window, let content = window.contentView,
-              let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)) else { return false }
+        guard let window = event.window, let content = window.contentView else { return false }
+        // A right-click in a pane makes it the active one, as a left click does:
+        // menu commands and ⌘⌫ must act on the pane the user is looking at.
+        if let browser = browser(at: event.locationInWindow, in: window) { BrowserModel.onInteraction?(browser) }
+        guard let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)) else { return false }
         var table: NSTableView?
         var view: NSView? = hit
         while let current = view {

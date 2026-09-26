@@ -91,9 +91,24 @@ final class FileOperations {
 
     /// Puts `sources` into the folder `destination`. Returns a message when it can't.
     func place(_ sources: [BrowseLocation], into destination: BrowseLocation, destinationName: String,
-               mode: Mode, includeHidden: Bool = false) async -> String? {
-        if mode == .move { consumeCut() }
-        let sources = sources.uniqued()
+               mode: Mode, includeHidden: Bool = false, fromPasteboard: Bool = false) async -> String? {
+        let result = await placeChecked(sources, into: destination, destinationName: destinationName, mode: mode,
+                                        includeHidden: includeHidden)
+        // A pasted Cut is used up only when it worked, and the pasteboard then
+        // no longer points at the items' old places (Paste again would fail).
+        if fromPasteboard, mode == .move, result == nil {
+            consumeCut()
+            NSPasteboard.general.clearContents()
+        }
+        return result
+    }
+
+    private func placeChecked(_ sources: [BrowseLocation], into destination: BrowseLocation, destinationName: String,
+                              mode: Mode, includeHidden: Bool) async -> String? {
+        // An item inside another selected folder goes with that folder.
+        let sources = sources.uniqued().filter { item in
+            !sources.contains { $0 != item && Self.location($0, contains: item) }
+        }
         guard !sources.isEmpty else { return nil }
         if sources.contains(where: { Self.location($0, contains: destination) }) {
             return "Can't put a folder inside itself."
@@ -212,7 +227,7 @@ final class FileOperations {
         switch item {
         case .local(let url):
             let target = url.deletingLastPathComponent().appendingPathComponent(name)
-            guard target.lastPathComponent != url.lastPathComponent else { return item }
+            guard Array(target.lastPathComponent.utf8) != Array(url.lastPathComponent.utf8) else { return item }
             try await Task.detached {
                 let fm = FileManager.default
                 // A change of case alone is fine on a case-insensitive volume.
@@ -327,7 +342,9 @@ final class FileOperations {
     static func location(_ outer: BrowseLocation, contains inner: BrowseLocation) -> Bool {
         switch (outer, inner) {
         case (.local(let a), .local(let b)):
-            let a = a.standardizedFileURL.path, b = b.standardizedFileURL.path
+            // Resolve symlinks: a link into the folder is still inside it.
+            let a = a.resolvingSymlinksInPath().standardizedFileURL.path
+            let b = b.resolvingSymlinksInPath().standardizedFileURL.path
             return a == b || b.hasPrefix(a == "/" ? "/" : a + "/")
         case (.remote(let s1, let a), .remote(let s2, let b)):
             guard s1 == s2, !a.isEmpty else { return false }
@@ -459,7 +476,9 @@ final class FileOperations {
     nonisolated static func duplicateURL(for url: URL, isDirectory: Bool, exists: (String) -> Bool) -> URL {
         let folder = url.deletingLastPathComponent()
         let ext = isDirectory || url.pathExtension.contains(" ") ? "" : url.pathExtension
-        let base = ext.isEmpty ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent
+        var base = ext.isEmpty ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent
+        // Duplicating "Movie copy" gives "Movie copy 2", not "Movie copy copy".
+        if let range = base.range(of: #" copy( \d+)?$"#, options: .regularExpression) { base.removeSubrange(range) }
         var n = 1
         while true {
             let name = (n == 1 ? "\(base) copy" : "\(base) copy \(n)") + (ext.isEmpty ? "" : ".\(ext)")
@@ -471,9 +490,11 @@ final class FileOperations {
 
     nonisolated private static func duplicateLocal(_ url: URL) throws {
         let fm = FileManager.default
-        var isDirectory: ObjCBool = false
-        _ = fm.fileExists(atPath: url.path, isDirectory: &isDirectory)
-        let target = duplicateURL(for: url, isDirectory: isDirectory.boolValue) { fm.fileExists(atPath: $0) }
+        // Packages (.fcpbundle, .app, .photoslibrary) are named like files:
+        // "Wedding copy.fcpbundle", keeping their type.
+        let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+        let isFolder = (values?.isDirectory ?? false) && !(values?.isPackage ?? false)
+        let target = duplicateURL(for: url, isDirectory: isFolder) { fm.fileExists(atPath: $0) }
         // copyItem clones on APFS, so this is instant on the same SSD.
         try fm.copyItem(at: url, to: target)
     }

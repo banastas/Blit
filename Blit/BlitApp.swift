@@ -13,6 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var transfers: TransferManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // One browser window: keyboard routing (Space, Return, file commands)
+        // follows the window's active pane, so no second window or tabs.
+        NSWindow.allowsAutomaticWindowTabbing = false
+        BrowserModel.cleanUpPreviewDownloads()
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
         #if DEBUG
@@ -33,9 +37,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let panelIsKey = window is QLPreviewPanel
                 guard panelIsKey || (window === BrowserModel.activeWindow && window.attachedSheet == nil
                                      && !(window.firstResponder is NSText)) else { return false }
+                // Mid-rename (including the moment before the field takes the keyboard),
+                // Space and Return belong to the name being edited.
+                guard browser.renaming == nil else { return false }
                 if key == returnKey || key == enter {
                     // Return renames the selection in place, as in Finder (⌘↓ or double-click opens).
-                    guard !panelIsKey, browser.renaming == nil, browser.selection.count == 1,
+                    guard !panelIsKey, browser.selection.count == 1,
                           let item = browser.selectedItems.first else { return false }
                     browser.beginRename(item)
                     return true
@@ -71,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         UserDefaults.standard.synchronize()
+        MainActor.assumeIsolated { BrowserModel.cleanUpPreviewDownloads() }
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { _exit(0) }
     }
 }
@@ -180,7 +188,7 @@ struct FileCommands: Commands {
     @FocusedValue(\.browser) private var browser
 
     var body: some Commands {
-        CommandGroup(after: .newItem) {
+        CommandGroup(replacing: .newItem) {
             Button("New Folder") { onFiles { $0.newFolder() } }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(browser?.current == nil)
