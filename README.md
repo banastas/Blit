@@ -193,7 +193,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R2.1** Two-pane browser, with any connection on either side.
 - **R2.2** Keyboard-first: arrow keys, type-to-select, and copy with ⌘C or Return.
 - **R2.3** Drag and drop between panes and to and from Finder.
-- **R2.4** **Sort by date modified, newest first, by default.** Clicking a column header changes the sort. The choice is remembered per location, and the default is always newest at the top.
+- **R2.4** **Sort by date modified, newest first, by default.** Clicking a column header, or View › Sort By (Finder's ⌃⌥⌘1/2/5/6 for Name/Kind/Date Modified/Size), changes the sort. The choice is remembered per folder, local or on a server, across launches. Choosing newest first again forgets it, and up to 1,000 folders are remembered. Every other folder opens newest at the top.
 - **R2.5** **Alternating row backgrounds** in every file list, using the standard macOS alternating row colors so they match light and dark mode.
 - **R2.6** Columns: Name, Date modified, Size, Status (queued, percent done, verified, failed). Columns can be shown, hidden, and resized.
 - **R2.7** ⌘K command palette to jump to any server, drive, or recent folder.

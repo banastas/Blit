@@ -331,6 +331,40 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitSortTest <log>`: sort order is remembered per folder.
+    static func runSortTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitSortTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active else { return lines.append("no browser") }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-sort-test")
+            let a = root.appendingPathComponent("a"), b = root.appendingPathComponent("b")
+            for dir in [a, b] { try? fm.createDirectory(at: dir, withIntermediateDirectories: true) }
+            @MainActor func state(_ label: String) {
+                let order = browser.sortOrder.first?.order == .forward ? "asc" : "desc"
+                lines.append("\(label): \(browser.sortColumn?.rawValue ?? "?") \(order)")
+            }
+            func settle() async { try? await Task.sleep(for: .milliseconds(400)) }
+            browser.open(.local(a)); await settle(); state("a first")
+            browser.sort(by: .name); state("a by name")
+            browser.open(.local(b)); await settle(); state("b")
+            browser.sortOrder = [SortColumn.size.comparator(.forward)]; state("b by size asc")
+            browser.goBack(); await settle(); state("back to a")
+            browser.goForward(); await settle(); state("forward to b")
+            browser.sort(by: .modified)
+            let saved = (UserDefaults.standard.dictionary(forKey: "sortOrders") ?? [:]).keys.filter { $0.contains("blit-sort-test") }
+            lines.append("remembered after resetting b: \(saved.map { ($0 as NSString).lastPathComponent }.sorted())")
+            browser.open(.local(a)); await settle()
+            browser.sort(by: .modified)
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

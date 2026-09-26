@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UITestHarness.renderStatusIconsIfRequested()
         UITestHarness.runUndoTestIfRequested()
         UITestHarness.runPartialTestIfRequested()
+        UITestHarness.runSortTestIfRequested()
         UITestHarness.renderInfoIfRequested()
         UITestHarness.runLogWindowTestIfRequested()
         #endif
@@ -180,6 +181,16 @@ struct BrowserCommands: Commands {
             Button("Refresh") { browser?.reload() }
                 .keyboardShortcut("r")
                 .disabled(browser?.current == nil)
+            Divider()
+            Menu("Sort By") {
+                // Finder's shortcuts for the same columns.
+                ForEach([(SortColumn.name, "1"), (.kind, "2"), (.modified, "5"), (.size, "6")], id: \.0) { column, key in
+                    Toggle(column.title, isOn: Binding(get: { browser?.sortColumn == column },
+                                                       set: { _ in browser?.sort(by: column) }))
+                        .keyboardShortcut(KeyEquivalent(Character(key)), modifiers: [.command, .option, .control])
+                }
+            }
+            .disabled(browser?.current == nil)
             Divider()
             Button(showPathBar ? "Hide Path Bar" : "Show Path Bar") { showPathBar.toggle() }
                 .keyboardShortcut("p", modifiers: [.command, .option])

@@ -38,7 +38,18 @@ final class BrowserModel {
     private(set) var items: [FileItem] = []
     private(set) var error: String?
     private(set) var isLoading = false
-    var sortOrder = [KeyPathComparator(\FileItem.modified, order: .reverse)]
+    /// Newest first unless this folder was sorted otherwise before (SortMemory).
+    var sortOrder = SortMemory.standard {
+        didSet {
+            guard !restoringSort, let current, sortOrder != oldValue else { return }
+            SortMemory.set(sortOrder, for: current)
+        }
+    }
+    @ObservationIgnored private var restoringSort = false
+    var sortColumn: SortColumn? { SortColumn(sortOrder.first) }
+
+    /// View › Sort By: a column in its usual direction (as in Finder).
+    func sort(by column: SortColumn) { sortOrder = [column.comparator()] }
     var trustRequest: TrustRequest?
     var passwordRequest: ServerConfig?
     /// Show names starting with "." (View › Show Hidden Files, ⇧⌘.).
@@ -219,6 +230,9 @@ final class BrowserModel {
             expanded = []
             children = [:]
             items = connections.listings[location] ?? []
+            restoringSort = true
+            sortOrder = SortMemory.order(for: location)
+            restoringSort = false
         }
         current = location
         isLoading = true
