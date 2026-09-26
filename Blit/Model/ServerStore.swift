@@ -21,8 +21,11 @@ struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
     /// (Optional so servers saved before this still decode.)
     var nasMountPoint: String?
     var nasRoot: String?
+    /// Private key file to sign in with instead of a password (PRD R1.1).
+    var keyPath: String?
 
     var isNASLogin: Bool { nasMountPoint != nil }
+    var usesKey: Bool { !(keyPath ?? "").isEmpty }
 
     var endpoint: SSHEndpoint { SSHEndpoint(host: host, port: port, username: username) }
     var displayName: String { name.isEmpty ? host : name }
@@ -86,6 +89,18 @@ final class ServerStore {
 /// Internet passwords in the login keychain, keyed by host, port, user and
 /// the server entry's id (so two entries for the same account don't share,
 /// or delete, one password). Items saved before that (no id) are still read.
+extension ServerConfig {
+    /// How to sign in: the key file when one is set, else the Keychain password.
+    func credential() throws -> SSHCredential {
+        if let keyPath, usesKey { return .privateKey(try SSHKeyFile.load(keyPath)) }
+        guard let password = Keychain.password(for: self) else { throw ConnectionError.noPassword }
+        return .password(password)
+    }
+
+    /// Whether Blit can sign in without asking (a key or a saved password).
+    var hasCredential: Bool { usesKey || Keychain.password(for: self) != nil }
+}
+
 enum Keychain {
     private static func query(_ server: ServerConfig, perEntry: Bool = true) -> [String: Any] {
         var q: [String: Any] = [

@@ -1138,8 +1138,7 @@ final class TransferManager {
     // MARK: Engines
 
     private func download(_ job: TransferJob, from server: ServerConfig) async throws {
-        guard let password = Keychain.password(for: server) else { throw ConnectionError.noPassword }
-        let credential = SSHCredential.password(password)
+        let credential = try server.credential()
         let endpoint = server.endpoint
         let verifier = self.verifier
         let count = max(1, server.connections)
@@ -1415,9 +1414,9 @@ final class TransferManager {
         var nas: NASVerifier?
         var nasConnection: SSHConnection?
         if let mount = MountInfo.of(job.destination.path), let login = servers.nasLogin(forMount: mount.mountPoint),
-           let root = login.nasRoot, let password = Keychain.password(for: login) {
+           let root = login.nasRoot, login.hasCredential {
             do {
-                let connection = try await SSHConnection.connect(to: login.endpoint, credential: .password(password),
+                let connection = try await SSHConnection.connect(to: login.endpoint, credential: try login.credential(),
                                                                  verifier: verifier)
                 nasConnection = connection
                 job.liveConnections = [connection]

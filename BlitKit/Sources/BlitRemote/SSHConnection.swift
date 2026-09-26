@@ -21,6 +21,8 @@ public struct SSHEndpoint: Hashable, Sendable, CustomStringConvertible {
 
 public enum SSHCredential: Sendable {
     case password(String)
+    /// An SSH key (PRD R1.1); see SSHKeyFile.
+    case privateKey(NIOSSHPrivateKey)
 }
 
 public struct SSHTuning: Sendable {
@@ -94,15 +96,19 @@ public final class SSHConnection: Sendable {
             .channelInitializer { channel in
                 channel.eventLoop.makeCompletedFuture {
                     let watcher = ConnectionWatcher(ready: ready)
-                    let username: String
-                    let password: String
+                    let offer: NIOSSHUserAuthenticationOffer.Offer
+                    let method: NIOSSHAvailableUserAuthenticationMethods
                     switch credential {
                     case .password(let p):
-                        username = endpoint.username
-                        password = p
+                        offer = .password(.init(password: p))
+                        method = .password
+                    case .privateKey(let key):
+                        offer = .privateKey(.init(privateKey: key))
+                        method = .publicKey
                     }
                     var config = SSHClientConfiguration(
-                        userAuthDelegate: PasswordAuthDelegate(username: username, password: password, watcher: watcher),
+                        userAuthDelegate: PasswordAuthDelegate(username: endpoint.username, offer: offer, method: method,
+                                                               watcher: watcher),
                         serverAuthDelegate: VerifierDelegate(endpoint: endpoint, verifier: verifier, watcher: watcher)
                     )
                     config.maximumPacketSize = tuning.maximumPacketSize
@@ -191,8 +197,19 @@ final class ConnectionWatcher: ChannelInboundHandler {
     private let ready: EventLoopPromise<Void>
     private var completed = false
     private var reason: Error?
+    private var channel: Channel?
 
     init(ready: EventLoopPromise<Void>) { self.ready = ready }
+
+    func handlerAdded(context: ChannelHandlerContext) { channel = context.channel }
+
+    /// Sign-in was refused and there's nothing left to offer: NIOSSH would
+    /// leave the connection idle until the handshake timeout, so fail now.
+    func authenticationFailed() {
+        note(SSHError.authenticationFailed)
+        guard let channel else { return }
+        channel.eventLoop.execute { self.fail(SSHError.authenticationFailed, channel: channel) }
+    }
 
     /// Records why the connection is about to fail (host key, auth), before NIOSSH closes it.
     func note(_ error: Error) {
@@ -256,12 +273,16 @@ final class VerifierDelegate: NIOSSHClientServerAuthenticationDelegate {
     }
 }
 
+/// Offers one credential (a password or a key) once.
 final class PasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate {
     private var offer: NIOSSHUserAuthenticationOffer?
+    private let method: NIOSSHAvailableUserAuthenticationMethods
     private let watcher: ConnectionWatcher
 
-    init(username: String, password: String, watcher: ConnectionWatcher) {
-        offer = NIOSSHUserAuthenticationOffer(username: username, serviceName: "", offer: .password(.init(password: password)))
+    init(username: String, offer: NIOSSHUserAuthenticationOffer.Offer, method: NIOSSHAvailableUserAuthenticationMethods,
+         watcher: ConnectionWatcher) {
+        self.offer = NIOSSHUserAuthenticationOffer(username: username, serviceName: "", offer: offer)
+        self.method = method
         self.watcher = watcher
     }
 
@@ -269,13 +290,13 @@ final class PasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate {
         availableMethods: NIOSSHAvailableUserAuthenticationMethods,
         nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
     ) {
-        if let offer, availableMethods.contains(.password) {
+        if let offer, availableMethods.contains(method) {
             self.offer = nil
             nextChallengePromise.succeed(offer)
         } else {
-            // Out of methods: the password was rejected (or never allowed).
-            watcher.note(SSHError.authenticationFailed)
+            // Out of methods: the credential was rejected (or never allowed).
             nextChallengePromise.succeed(nil)
+            watcher.authenticationFailed()
         }
     }
 }

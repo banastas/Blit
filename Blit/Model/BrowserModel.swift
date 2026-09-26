@@ -262,6 +262,8 @@ final class BrowserModel {
         case SSHError.hostKeyRejected(_, _, let presented, let known):
             if let server { trustRequest = TrustRequest(server: server, presented: presented, known: known) }
             self.error = "Waiting for you to verify the server's identity."
+        case SSHError.authenticationFailed where server?.usesKey == true:
+            self.error = "\(server?.displayName ?? "The server") didn't accept the key file. Check that its public key is in ~/.ssh/authorized_keys on the server, or edit the server to choose another key."
         case SSHError.authenticationFailed, ConnectionError.noPassword:
             passwordRequest = server
             self.error = "Blit needs the password for \(server?.displayName ?? "this server")."

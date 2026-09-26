@@ -180,7 +180,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 
 ### Connections
 
-- **R1.1** SFTP connections with password or SSH key auth. Secrets are stored in the Keychain.
+- **R1.1** SFTP connections with password or SSH key auth. Passwords are stored in the Keychain. A server can sign in with a private key file instead (Sign in with › SSH Key, picked from `~/.ssh`): unencrypted OpenSSH or PEM keys of type ed25519 or ECDSA (P-256/384/521), which is what SwiftNIO SSH can sign with. Blit reads the key file at each connect and never copies it. RSA keys and passphrase-protected keys are refused with a clear message when you choose them. The CLI takes `$BLIT_KEY`. A refused password or key fails the sign-in immediately (not after the handshake timeout). A rejected key shows what to check rather than a password prompt.
 - **R1.2** Per-server settings: host, port, username, starting path, maximum connections, and an optional separate **shell endpoint** for server-side checksums. Some servers run SFTP and shell on different ports with different path roots; see [findings](#benchmark-findings).
 - **R1.3** Check host keys on first connect and pin them in Blit's own store, which can be seeded from `~/.ssh/known_hosts`. SwiftNIO SSH takes the **server's** preferred key type, which may differ from the one on file. For example, SFTPGo presents Ed25519 while `known_hosts` has only its ECDSA key. When that happens, show both fingerprints and ask; never accept silently. Refuse to connect if a pinned key changes.
 - **R1.4** Local and external volumes appear automatically. Blit notices when a drive is ejected mid-transfer and recovers when it reconnects.

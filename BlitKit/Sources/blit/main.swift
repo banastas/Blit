@@ -43,7 +43,8 @@ func usage() -> Never {
       --conns N          files copied at once (default 2)
       --no-verify / --overwrite / --trust SHA256:… / --progress-lines   as for get
 
-    The password comes from $BLIT_PASSWORD or a prompt (NAS: $BLIT_NAS_PASSWORD). Host keys are checked
+    The password comes from $BLIT_PASSWORD or a prompt (NAS: $BLIT_NAS_PASSWORD);
+    set $BLIT_KEY to an ed25519/ECDSA private key file to sign in with it instead. Host keys are checked
     against Blit's store and ~/.ssh/known_hosts; an unknown key (or a new key
     type) prompts before it's trusted and remembered. A changed key is refused.
     """)
@@ -184,7 +185,15 @@ if CommandLine.arguments.dropFirst().first == "copy" {
     await copyCommand(Array(CommandLine.arguments.dropFirst(2)))
 }
 let a = parseArguments()
-let credential = SSHCredential.password(readPassword("Password for \(a.endpoint.username)@\(a.endpoint.host): "))
+let credential: SSHCredential
+if let keyPath = ProcessInfo.processInfo.environment["BLIT_KEY"] {
+    do { credential = .privateKey(try SSHKeyFile.load(keyPath)) } catch {
+        FileHandle.standardError.write(Data("blit: \(error)\n".utf8))
+        exit(1)
+    }
+} else {
+    credential = .password(readPassword("Password for \(a.endpoint.username)@\(a.endpoint.host): "))
+}
 
 do {
     switch a.command {

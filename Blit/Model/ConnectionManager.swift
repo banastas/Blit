@@ -46,7 +46,7 @@ final class ConnectionManager {
     /// Connects in the background to servers with a saved password, so the
     /// first click on one is instant. Never prompts.
     func warmUp(_ servers: [ServerConfig]) {
-        for server in servers where Keychain.password(for: server) != nil {
+        for server in servers where server.hasCredential {
             Task { _ = try? await browseClient(for: server) }
         }
     }
@@ -101,13 +101,13 @@ final class ConnectionManager {
     func browseClient(for server: ServerConfig) async throws -> SFTPClient {
         if let client = browseClients[server.id], client.connection.isActive { return client }
         if let pending = inFlight[server.id] { return try await pending.value }
-        guard let password = Keychain.password(for: server) else { throw ConnectionError.noPassword }
+        let credential = try server.credential()
         servers[server.id] = server
         states[server.id] = .connecting
         let endpoint = server.endpoint
         let verifier = self.verifier
         let task = Task {
-            let connection = try await SSHConnection.connect(to: endpoint, credential: .password(password), verifier: verifier)
+            let connection = try await SSHConnection.connect(to: endpoint, credential: credential, verifier: verifier)
             return try await SFTPClient.open(on: connection)
         }
         inFlight[server.id] = task

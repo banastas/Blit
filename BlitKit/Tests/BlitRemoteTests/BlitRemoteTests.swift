@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import NIOCore
+import NIOPosix
 import NIOSSH
 import Testing
 
@@ -342,5 +343,115 @@ let ecdsaFingerprint = "SHA256:76qoOQkgBMCQb+Pv8st5gk/vAkC3VBxLHcxjifRRDkw"
         #expect(hashedEntry(field, matches: "[example.org]:2222"))
         #expect(!hashedEntry(field, matches: "example.org"))
         #expect(!hashedEntry("|1|notbase64|x", matches: "example.org"))
+    }
+}
+
+/// Key files as ssh-keygen writes them (PRD R1.1).
+struct SSHKeyFileTests {
+    private func keygen(_ args: [String]) throws -> String {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let path = dir.appendingPathComponent("key").path
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        p.arguments = args + ["-q", "-C", "test", "-f", path]
+        try p.run()
+        p.waitUntilExit()
+        #expect(p.terminationStatus == 0)
+        return path
+    }
+
+    @Test(arguments: [["-t", "ed25519"], ["-t", "ecdsa", "-b", "256"], ["-t", "ecdsa", "-b", "384"],
+                      ["-t", "ecdsa", "-b", "521"], ["-t", "ecdsa", "-b", "256", "-m", "PEM"],
+                      ["-t", "ecdsa", "-b", "384", "-m", "PEM"], ["-t", "ecdsa", "-b", "521", "-m", "PEM"]])
+    func supportedKeysMatchTheirPublicKeys(_ args: [String]) throws {
+        let path = try keygen(args + ["-N", ""])
+        defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+        let key = try SSHKeyFile.load(path)
+        let pub = try String(contentsOfFile: path + ".pub", encoding: .utf8)
+            .split(separator: " ").prefix(2).joined(separator: " ")
+        #expect(key.publicKey == (try NIOSSHPublicKey(openSSHPublicKey: pub)))
+    }
+
+    @Test func refusesPassphraseAndRSA() throws {
+        let encrypted = try keygen(["-t", "ed25519", "-N", "secret"])
+        #expect { try SSHKeyFile.load(encrypted) } throws: { error in
+            if case SSHKeyError.encrypted = error { true } else { false }
+        }
+        let rsa = try keygen(["-t", "rsa", "-b", "2048", "-N", ""])
+        #expect { try SSHKeyFile.load(rsa) } throws: { error in
+            if case SSHKeyError.unsupportedType("RSA") = error { true } else { false }
+        }
+        #expect(throws: SSHKeyError.self) { try SSHKeyFile.load("/nonexistent/key") }
+        for path in [encrypted, rsa] { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+    }
+}
+
+/// Signs in to an in-process SSH server with a key file (PRD R1.1).
+struct KeyLoginTests {
+    private struct TrustAll: HostKeyVerifier {
+        func verify(host: String, port: Int, key: NIOSSHPublicKey) -> HostKeyVerdict { .trusted }
+    }
+
+    /// Accepts only public-key sign-in with `allowed`.
+    private final class KeyOnlyServer: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
+        let allowed: NIOSSHPublicKey
+        init(allowed: NIOSSHPublicKey) { self.allowed = allowed }
+        var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods { .publicKey }
+        func requestReceived(request: NIOSSHUserAuthenticationRequest,
+                             responsePromise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>) {
+            if case .publicKey(let key) = request.request, key.publicKey == allowed {
+                responsePromise.succeed(.success)
+            } else {
+                responsePromise.succeed(.failure)
+            }
+        }
+    }
+
+    private func server(allowing key: NIOSSHPublicKey) async throws -> Channel {
+        let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+        let delegate = KeyOnlyServer(allowed: key)
+        return try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .childChannelInitializer { channel in
+                channel.eventLoop.makeCompletedFuture {
+                    try channel.pipeline.syncOperations.addHandler(NIOSSHHandler(
+                        role: .server(.init(hostKeys: [hostKey], userAuthDelegate: delegate)),
+                        allocator: channel.allocator, inboundChildChannelInitializer: nil))
+                }
+            }
+            .bind(host: "127.0.0.1", port: 0).get()
+    }
+
+    private func keyFile(_ type: String) throws -> String {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let path = dir.appendingPathComponent("key").path
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen")
+        p.arguments = ["-q", "-t", type, "-N", "", "-C", "test", "-f", path]
+        try p.run()
+        p.waitUntilExit()
+        return path
+    }
+
+    @Test(arguments: ["ed25519", "ecdsa"])
+    func signsInWithTheKey(_ type: String) async throws {
+        let path = try keyFile(type)
+        defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+        let key = try SSHKeyFile.load(path)
+        let listener = try await server(allowing: key.publicKey)
+        let endpoint = SSHEndpoint(host: "127.0.0.1", port: listener.localAddress!.port!, username: "test")
+        let connection = try await SSHConnection.connect(to: endpoint, credential: .privateKey(key), verifier: TrustAll())
+        #expect(connection.isActive)
+        await connection.close()
+
+        // A different key is refused.
+        let other = NIOSSHPrivateKey(ed25519Key: .init())
+        await #expect {
+            _ = try await SSHConnection.connect(to: endpoint, credential: .privateKey(other), verifier: TrustAll())
+        } throws: { error in
+            if case SSHError.authenticationFailed = error { true } else { false }
+        }
+        try await listener.close()
     }
 }
