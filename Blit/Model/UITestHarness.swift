@@ -804,6 +804,20 @@ enum UITestHarness {
             // One real request with a key that doesn't exist.
             let problem = await license.activate("BLIT-TEST-0000-0000-NOT-A-REAL-KEY", instanceName: "Blit test")
             lines.append("live API, made-up key: \(problem ?? "activated?!") · state \(license.summary)")
+            // A real test-mode key (-BlitLicenseTestKey): activate, check, then free the activation.
+            if let real = UserDefaults.standard.string(forKey: "BlitLicenseTestKey") {
+                memory.items["license"] = nil
+                let problem = await license.activate(real, instanceName: "Blit test")
+                lines.append("real test key: \(problem ?? "activated") · \(license.summary) · can start \(license.canStartTransfers)")
+                if var stored = license.license {
+                    stored.lastValidated = .distantPast   // force the weekly check now
+                    memory.items["license"] = try? JSONEncoder().encode(stored)
+                    await license.revalidateIfDue()
+                    lines.append("weekly check: \(license.summary)")
+                }
+                let freed = await license.deactivate()
+                lines.append("deactivate: \(freed ?? "ok") · \(license.summary)")
+            }
             try? (lines + ["done"]).joined(separator: "\n").write(toFile: logPath, atomically: true, encoding: .utf8)
         }
     }

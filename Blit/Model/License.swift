@@ -13,8 +13,17 @@ import Security
 enum LicenseConfig {
     /// Lemon Squeezy store and product. Keys from any other store or product
     /// are refused once these are set (nil: not checked yet).
-    static let storeID: Int? = nil
-    static let productID: Int? = nil
+    static let storeID: Int? = 484_060
+    /// The test-mode product for now; the live product gets its own ID.
+    static let productID: Int? = 1_390_732
+    /// Test-mode keys (bought with test cards) only unlock debug builds.
+    static var acceptsTestKeys: Bool {
+        #if DEBUG
+        true
+        #else
+        false
+        #endif
+    }
     /// Where Buy Blit… goes: the product's Lemon Squeezy checkout. (Test mode
     /// for now; the live product gets its own link when the store goes live.)
     static let buyURL = URL(string: "https://blit.lemonsqueezy.com/checkout/buy/1eb9b37f-ef04-4947-a7ab-ee13a6af1fc6")!
@@ -151,7 +160,7 @@ final class LicenseManager {
         var license_key: Key?
         var instance: Instance?
         var meta: Meta?
-        struct Key: Decodable { var status: String?; var key: String? }
+        struct Key: Decodable { var status: String?; var key: String?; var test_mode: Bool? }
         struct Instance: Decodable { var id: String }
         struct Meta: Decodable {
             var store_id: Int?
@@ -161,7 +170,12 @@ final class LicenseManager {
         }
     }
 
-    /// Why a response isn't a Blit license, or nil if it is.
+    /// Why a response isn't a usable Blit license, or nil if it is.
+    static func mismatch(_ response: APIResponse) -> String? {
+        if response.license_key?.test_mode == true, !LicenseConfig.acceptsTestKeys { return "This is a test key; it can't unlock Blit." }
+        return mismatch(response.meta)
+    }
+
     static func mismatch(_ meta: APIResponse.Meta?) -> String? {
         if let store = LicenseConfig.storeID, meta?.store_id != store { return "This key isn't for Blit." }
         if let product = LicenseConfig.productID, meta?.product_id != product { return "This key isn't for Blit." }
@@ -194,7 +208,7 @@ final class LicenseManager {
             guard response.activated == true, let instance = response.instance else {
                 return Self.explain(response.error)
             }
-            if let problem = Self.mismatch(response.meta) {
+            if let problem = Self.mismatch(response) {
                 _ = try? await call("deactivate", ["license_key": key, "instance_id": instance.id])
                 return problem
             }
@@ -232,7 +246,7 @@ final class LicenseManager {
         guard let response = try? await call("validate", ["license_key": license.key, "instance_id": license.instanceID]) else {
             return   // offline or the API is down: keep going (within the grace period, see refresh)
         }
-        if response.valid == true, Self.mismatch(response.meta) == nil {
+        if response.valid == true, Self.mismatch(response) == nil {
             license.lastValidated = now()
             storage.write(try? JSONEncoder().encode(license), "license")
             state = .licensed(email: license.email)
