@@ -68,8 +68,13 @@ echo "==> $ZIP"
 if [[ "${INSTALL:-0}" == 1 ]]; then
   echo "==> Installing to /Applications"
   osascript -e 'tell application id "com.banastas.Blit" to quit' 2>/dev/null || true
-  sleep 2
+  # Mid-transfer, Blit saves the queue and closes connections before it exits:
+  # wait for it (up to 60 s) so the new copy doesn't launch into the old one.
+  for _ in $(seq 60); do
+    pgrep -f "/Applications/Blit.app/Contents/MacOS/Blit" >/dev/null || break
+    sleep 1
+  done
   rm -rf /Applications/Blit.app
   ditto "$APP" /Applications/Blit.app
-  open /Applications/Blit.app
+  open /Applications/Blit.app || { sleep 3; open /Applications/Blit.app; }
 fi

@@ -296,6 +296,9 @@ final class TransferJob: Identifiable {
     var hashCacheHits = 0
     /// The "server disk bound" hint has been shown for this job.
     @ObservationIgnored var notedDiskBound = false
+    /// Blit is quitting: files cut off as its connections close aren't failures
+    /// (they resume on the next launch), so they're kept out of the log.
+    @ObservationIgnored var isShuttingDown = false
     /// Retry Now: ends the backoff wait (and waits for the network or a drive) early.
     @ObservationIgnored var retryNowRequested = false
     /// What to do with files already at the destination (PRD R5.3), chosen in
@@ -366,6 +369,7 @@ final class TransferManager {
     func prepareForQuit() async {
         saveQueue()
         isQuitting = true
+        for job in jobs { job.isShuttingDown = true }
         let connections = jobs.flatMap(\.liveConnections)
         for job in jobs { job.liveConnections.removeAll() }
         await withTaskGroup(of: Void.self) { group in
@@ -1610,8 +1614,8 @@ extension TransferJob {
     }
 
     func handle(_ event: TransferEvent) {
-        // Files cut off by a pause or cancel aren't failures.
-        if stopRequest != nil, case .fileFailed = event { return }
+        // Files cut off by a pause, a cancel or quitting Blit aren't failures.
+        if stopRequest != nil || isShuttingDown, case .fileFailed = event { return }
         if case .fileFinished(let f, _) = event, completedPaths.contains(f.relativePath) { return }
         if case .fileHashProgress(let f, let bytes) = event {
             // Late progress for a file that's already done is dropped.
@@ -1691,7 +1695,7 @@ extension TransferJob {
     }
 
     func handle(_ event: CopyEvent) {
-        if stopRequest != nil, case .fileFailed = event { return }
+        if stopRequest != nil || isShuttingDown, case .fileFailed = event { return }
         if case .fileFinished(let f, _) = event, completedPaths.contains(f.relativePath) { return }
         if case .fileFinished(let f, let v) = event {
             let (hash, method): (String?, String) = switch v {
