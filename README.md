@@ -504,6 +504,7 @@ blit/
 ├── Blit.xcodeproj/       the Mac app (macOS 27, SwiftUI); Blit/ is a folder-synced group
 ├── Blit/                 app sources: BlitApp, Model/, Views/, Intents/, Resources/Fonts/, AppIcon.icon
 ├── Support/Info.plist    merged into the generated Info.plist (drag type, Services)
+├── site/                 the single-page website (blit.banast.as): static HTML, HUD fonts, no build step
 └── BlitKit/              the transfer engine (Swift package; the app links it locally)
     ├── Package.swift
     ├── Sources/BlitSFTP/   SFTP v3 protocol: messages, attributes, framer, read planner
