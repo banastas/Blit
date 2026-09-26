@@ -27,7 +27,7 @@ enum UITestHarness {
         let extras = { (scheme: ColorScheme) in
             HStack(spacing: 14) {
                 PixelSpinner(cell: 1.5)
-                Image(nsImage: PixelArt.image(PixelArt.shield, cell: 1)).foregroundStyle(.tertiary)
+                Image(nsImage: PixelArt.image(PixelArt.shield, cell: 1)).foregroundStyle(.secondary)   // as in the sidebar
                 Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: nil), cell: 1.5))
                 ForEach(0..<3) { Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: $0), cell: 1.5)) }
                 Text("name.mkv").font(.system(size: 11))

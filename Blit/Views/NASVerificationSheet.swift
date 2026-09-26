@@ -100,7 +100,7 @@ struct NASVerificationSheet: View {
         case .found(let root):
             Label("Found \(shareName) at \(root)", systemImage: "checkmark.circle")
         case .failed(let why):
-            Label(why, systemImage: "exclamationmark.triangle").foregroundStyle(Color.failure)
+            Label(why, systemImage: "exclamationmark.triangle").foregroundStyle(Color.failureText)
         case .trust(let presented, let known):
             VStack(alignment: .leading, spacing: 6) {
                 Text("The NAS presented a host key Blit hasn't seen:")

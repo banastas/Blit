@@ -159,6 +159,7 @@ struct SidebarView: View {
                     Image(nsImage: PixelArt.image(PixelArt.shield, cell: 1))
                         .foregroundStyle(.secondary)
                         .help("Copies here are verified with sha256sum on the NAS")
+                        .accessibilityLabel("Verified on the NAS")
                 }
             }
             .transferTarget(.local(share.url), name: share.name, onTransfer: onTransfer)
@@ -250,17 +251,22 @@ private struct StatusDot: View {
         switch state {
         case .connected:
             PixelSignal(lit: 4).help("Connected")
+                .accessibilityLabel("Connected")
         case .connecting:
             TimelineView(.periodic(from: .now, by: 0.18)) { context in
                 PixelSignal(lit: Int(context.date.timeIntervalSinceReferenceDate / 0.18) % 5)
             }
             .help("Connecting…")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Connecting")
         case .failed(let why):
             Image(nsImage: PixelGlyph.cross.image(size: 10.5))
                 .foregroundStyle(Color.failure)
                 .help(why)
+                .accessibilityLabel("Connection failed: \(why)")
         case .idle:
             PixelSignal(lit: 0).help("Not connected · opens when you click the server")
+                .accessibilityLabel("Not connected")
         }
     }
 }
@@ -277,16 +283,24 @@ struct PixelSignal: View {
                 let height = bar * 2 + 1
                 for y in (7 - height)..<7 {
                     let rect = CGRect(x: CGFloat(bar * 2) * cell, y: CGFloat(y) * cell, width: cell, height: cell)
-                    context.fill(Path(rect), with: bar < lit ? .style(.primary) : .style(.quaternary))
+                    context.fill(Path(rect), with: bar < lit ? .style(.primary) : .style(.tertiary))
                 }
             }
         }
         .frame(width: 7 * cell, height: 7 * cell)
-        .accessibilityLabel(lit == 4 ? "Connected" : "Not connected")
+        .accessibilityLabel("Signal")
+        .accessibilityValue("\(lit) of 4 bars")
     }
 }
 
 extension Color {
-    /// Muted red, used only for failures (PRD Visual language).
+    /// Muted red, used only for failures (PRD Visual language): fills, tags, glyphs.
     static let failure = Color(red: 0xB3 / 255, green: 0x5C / 255, blue: 0x5C / 255)
+    /// The same red for failure text: #b35c5c in light mode (4.6:1 on white),
+    /// its lighter tint #C98080 in dark mode, where #b35c5c falls under 4.5:1.
+    static let failureText = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255, alpha: 1)
+            : NSColor(red: 0xB3 / 255, green: 0x5C / 255, blue: 0x5C / 255, alpha: 1)
+    })
 }

@@ -131,6 +131,14 @@ remote SFTP server ──(parallel SFTP, verified)──▶ external SSD ──(
 - **Numbers use monospaced digits** (SF Pro, like Finder) so sizes and dates line up; SF Mono only for hashes and paths in the log.
 - **The transfer HUD is the one exception** (below): a bounded, always-dark, 1-bit pixel-terminal panel, like an instrument built into the window.
 - **Muted red (#b35c5c) only for failures,** in both the native UI and the HUD. Status is never carried by color alone: every state also has a glyph or word.
+  - #b35c5c is the one failure hue, used for fills, tags and glyphs. Text on the red fill is black (4.6:1).
+  - Failure *text* on dark backgrounds (the HUD, dark mode) uses its lighter tint #C98080 (6.5:1 on the HUD). #b35c5c itself falls under WCAG AA's 4.5:1 there.
+  - In code these are `Color.failure`, `Color.failureText` (adaptive) and `HUDColor.failureText`. There are no other reds.
+- **VoiceOver:**
+  - Pixel glyphs speak ("done", "failed", "transferring", "paused", "to").
+  - The sidebar signal announces Connected, Connecting, Not connected, or Connection failed with the reason.
+  - The condensed strip reads as one summary (title, destination, percent, rate, files, warnings) and keeps its buttons reachable.
+  - HUD buttons read as words ("Pause all", not "‖ PAUSE ALL"), and progress cells and the histogram carry live values.
 
 ### Transfer HUD
 
@@ -166,7 +174,7 @@ A failure adds a compact red `✕ N warning` tag in the top line (in place of th
 - **Type:** pixel uppercase for labels (Silkscreen) and large terminal numerals for readouts (VT323). Both are SIL Open Font License, so they can be bundled with the app. The file browser keeps the system font and SF Mono.
 - **Panels:** boxed readouts with 1-pixel borders: *Item* (name, route, segmented progress, per-connection chunk rows), *Throughput · 60 s* (big rate plus a pixel-column histogram, peak, ETA), *Link data* (connections, cipher, window, receive buffer, read size and depth, RTT, verification method), and *Log*.
 - **Progress** is drawn as discrete cells, never a smooth bar. Crisp edges, no anti-aliased gradients.
-- **Failures** appear as a Nostromo-style WARNING panel: muted red fill (#b35c5c) with near-black text, stating what failed, what was kept and what happens next (for example *SHA-256 mismatch · kept .blitpart · retry queued*).
+- **Failures** appear as a Nostromo-style WARNING panel: muted red fill (#b35c5c) with black text, stating what failed, what was kept and what happens next (for example *SHA-256 mismatch · kept .blitpart · retry queued*).
 - **Icons:** a pixel icon set for statuses and sidebar items, drawn on a strict grid, is an M4 polish task.
 
 ### Finder integration

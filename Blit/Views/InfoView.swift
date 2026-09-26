@@ -170,7 +170,7 @@ struct GoToFolderView: View {
                 .labelsHidden()
             }
             if let problem {
-                Text(problem).font(.callout).foregroundStyle(Color.failure)
+                Text(problem).font(.callout).foregroundStyle(Color.failureText)
             }
             HStack {
                 Spacer()

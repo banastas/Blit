@@ -68,7 +68,7 @@ struct TransferLogView: View {
                 TableColumn("") { entry in
                     Image(nsImage: (entry.failed ? PixelGlyph.cross : entry.hashVerified ? PixelGlyph.check : PixelGlyph.arrow)
                         .image(size: 10))
-                        .foregroundStyle(entry.failed ? Color.failure : entry.hashVerified ? .primary : .secondary)
+                        .foregroundStyle(entry.failed ? Color.failureText : entry.hashVerified ? .primary : .secondary)
                         .help(entry.method)
                 }
                 .width(16)
@@ -80,7 +80,7 @@ struct TransferLogView: View {
                 TableColumn("Name", value: \.name) { entry in Text(entry.name).lineLimit(1) }
                     .width(min: 160, ideal: 320)
                 TableColumn("Verification", value: \.method) { entry in
-                    Text(entry.method).foregroundStyle(entry.failed ? Color.failure : .secondary)
+                    Text(entry.method).foregroundStyle(entry.failed ? Color.failureText : .secondary)
                 }
                 .width(min: 110, ideal: 160)
                 TableColumn("Size", value: \.record.size) { entry in
@@ -141,7 +141,7 @@ struct TransferLogView: View {
             if let detail = entry.record.detail {
                 GridRow {
                     Text("Detail").foregroundStyle(.secondary)
-                    Text(detail).textSelection(.enabled).foregroundStyle(entry.failed ? Color.failure : .primary)
+                    Text(detail).textSelection(.enabled).foregroundStyle(entry.failed ? Color.failureText : .primary)
                 }
             }
         }

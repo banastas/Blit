@@ -37,8 +37,12 @@ enum HUDColor {
     static let bright = Color(white: 0.94)
     static let dim = Color(white: 0.49)
     static let off = Color(white: 0.15)
+    /// Fills and tags (the WARNING tag and panel). Black text on it measures 4.6:1.
     static let failure = Color.failure
-    static let onFailure = Color(red: 0x1C / 255, green: 0x0E / 255, blue: 0x0E / 255)
+    static let onFailure = Color.black
+    /// Failure text on the HUD's black: the lighter tint of the same red
+    /// (#C98080, 6.5:1; #b35c5c itself is 4.3:1, under WCAG AA for small text).
+    static let failureText = Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255)
 }
 
 struct TransferStrip: View {
@@ -58,6 +62,7 @@ struct TransferStrip: View {
                 }
                 .buttonStyle(.plain)
                 .help("Show the full transfer HUD")
+                .accessibilityLabel("Show transfer details")
                 HStack(spacing: 8) {
                     Text(job.title.uppercased())
                         .lineLimit(1)
@@ -93,6 +98,7 @@ struct TransferStrip: View {
                     }
                     .buttonStyle(.plain)
                     .help(job.failures.joined(separator: "\n") + "\n\nClick to show the full HUD")
+                    .accessibilityLabel("\(job.failures.count) warning\(job.failures.count == 1 ? "" : "s"), show details")
                 }
                 rate
                 separator
@@ -104,6 +110,8 @@ struct TransferStrip: View {
                     }
                     Text(job.link).font(HUDFont.label()).foregroundStyle(HUDColor.dim).fixedSize()
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(job.connections) connection\(job.connections == 1 ? "" : "s") over \(job.link)")
                 if !job.isActive {
                     Button {
                         transfers.dismissFinished()
@@ -113,6 +121,7 @@ struct TransferStrip: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(HUDColor.dim)
                     .help("Clear finished transfers")
+                    .accessibilityLabel("Clear finished transfers")
                 }
             }
             Rectangle()
@@ -132,7 +141,9 @@ struct TransferStrip: View {
         .contextMenu { queueMenu }
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(HUDColor.border, lineWidth: 0.5))
         .environment(\.colorScheme, .dark)
-        .accessibilityElement(children: .combine)
+        // Keep the buttons inside reachable; the group reads as one summary.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(job.spokenSummary)
     }
 
     /// Right-click on the strip: the queue controls without opening the HUD.
@@ -184,7 +195,7 @@ struct TransferStrip: View {
         if case .waitingForSpace = job.status {
             Text("NO SPACE")
                 .font(HUDFont.terminal(26))
-                .foregroundStyle(Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
+                .foregroundStyle(HUDColor.failureText)
                 .fixedSize()
         } else if job.status == .paused || job.status == .cancelled {
             Text(job.status == .paused ? "PAUSED" : "CANCELLED")
@@ -224,12 +235,12 @@ struct TransferStrip: View {
     @ViewBuilder private var logLine: some View {
         if case .waitingForSpace(let reason) = job.status {
             Text("WAITING FOR SPACE · \(reason.uppercased()) · FREE SOME UP OR PAUSE")
-                .foregroundStyle(Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
+                .foregroundStyle(HUDColor.failureText)
         } else if case .waiting(let until, let reason) = job.status {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let left = max(0, Int(until.timeIntervalSince(context.date)))
                 Text("RETRY IN \(left / 60):\(String(format: "%02d", left % 60)) · \(reason.uppercased())")
-                    .foregroundStyle(Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
+                    .foregroundStyle(HUDColor.failureText)
             }
         } else if job.status == .preparing {
             Text(job.attempt > 0 ? "RECONNECTING · ATTEMPT \(job.attempt + 1)…" : "PREPARING · LISTING FILES…").foregroundStyle(HUDColor.dim)
@@ -237,7 +248,7 @@ struct TransferStrip: View {
             let queued = transfers.queuedCount
             hudText(summary + (queued > 0 ? " · \(queued) QUEUED" : ""))
                 .foregroundStyle(job.failures.isEmpty && job.sizeOnlyCount == 0
-                                 ? HUDColor.bright : Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
+                                 ? HUDColor.bright : HUDColor.failureText)
         } else if isVerifyingOnly, let (name, since) = job.verifying.min(by: { $0.value < $1.value }) {
             // Verification can take minutes on big files; show it's alive (elapsed time).
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -248,7 +259,7 @@ struct TransferStrip: View {
             }
         } else if let last = job.log.last {
             hudText("\(last.time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))) \(last.text)")
-                .foregroundStyle(last.isFailure ? Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255) : HUDColor.dim)
+                .foregroundStyle(last.isFailure ? HUDColor.failureText : HUDColor.dim)
         }
     }
 
@@ -293,7 +304,9 @@ struct PixelCells: View {
                 Rectangle().fill(i < on ? HUDColor.bright : HUDColor.off).frame(width: 4, height: height)
             }
         }
-        .accessibilityLabel("\(Int(fraction * 100)) percent")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Progress")
+        .accessibilityValue("\(Int(fraction * 100)) percent")
     }
 }
 
@@ -315,9 +328,38 @@ struct PixelHistogram: View {
             }
         }
         .accessibilityLabel("Throughput over the last 30 seconds")
+        .accessibilityValue(samples.last.map { String(format: "%.0f megabytes per second now", $0) } ?? "no data")
     }
 }
 
 extension String {
     func leftPadded(_ width: Int) -> String { count >= width ? self : String(repeating: "0", count: width - count) + self }
+}
+
+extension TransferJob {
+    /// The strip in one sentence for VoiceOver ("Movies to Incoming, 64 percent,
+    /// 74 megabytes per second, 7 of 26 files").
+    var spokenSummary: String {
+        var parts = ["\(title) to \(destinationName)"]
+        switch status {
+        case .queued: parts.append("queued")
+        case .preparing: parts.append("preparing")
+        case .paused: parts.append("paused")
+        case .cancelled: parts.append("cancelled")
+        case .waiting(_, let reason): parts.append("waiting to retry: \(reason)")
+        case .waitingForSpace(let reason): parts.append("waiting for space: \(reason)")
+        case .failed(let why): parts.append("failed: \(why)")
+        case .finished: parts.append(failures.isEmpty ? "finished" : "finished with problems")
+        case .running:
+            if isVerifyingOnly {
+                parts.append("verifying checksums" + (verifyProgress.map { ", \(Int(($0 * 100).rounded())) percent" } ?? ""))
+            } else {
+                parts.append("\(Int((progress * 100).rounded())) percent")
+                parts.append(String(format: "%.0f megabytes per second", rate))
+            }
+        }
+        if fileCount > 0 { parts.append("\(filesFinished) of \(fileCount) file\(fileCount == 1 ? "" : "s")") }
+        if !failures.isEmpty { parts.append("\(failures.count) warning\(failures.count == 1 ? "" : "s")") }
+        return parts.joined(separator: ", ")
+    }
 }

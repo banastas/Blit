@@ -21,6 +21,20 @@ enum PixelGlyph: Character, CaseIterable {
         }
     }
 
+    /// What VoiceOver says for the glyph inside HUD text.
+    var spoken: String {
+        switch self {
+        case .check: "done"
+        case .cross: "failed"
+        case .up: "transferring"
+        case .down: "down"
+        case .arrow: "to"
+        case .pause: "paused"
+        case .play: "resume"
+        case .partial: "partial"
+        }
+    }
+
     /// A template image `size` points tall (whole pixels per cell, so edges stay crisp).
     @MainActor
     func image(size: CGFloat) -> NSImage {
@@ -38,6 +52,7 @@ enum PixelGlyph: Character, CaseIterable {
             return true
         }
         image.isTemplate = true
+        image.accessibilityDescription = spoken
         Self.cache[key] = image
         return image
     }
@@ -53,7 +68,7 @@ func hudText(_ string: String, glyphSize: CGFloat = 11) -> Text {
     for ch in string {
         if let glyph = PixelGlyph(rawValue: ch) {
             if !run.isEmpty { result = Text("\(result)\(Text(verbatim: run))"); run = "" }
-            result = Text("\(result)\(Text(Image(nsImage: glyph.image(size: glyphSize))).baselineOffset(-1))")
+            result = Text("\(result)\(Text(Image(nsImage: glyph.image(size: glyphSize))).baselineOffset(-1).accessibilityLabel(glyph.spoken))")
         } else {
             run.append(ch)
         }

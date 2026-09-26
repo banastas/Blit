@@ -186,7 +186,7 @@ struct TransferHUD: View {
         HUDPanel("Log") {
             ForEach(job.log.suffix(6)) { line in
                 hudText("\(line.time.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))) \(line.text)")
-                    .foregroundStyle(line.isFailure ? Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255) : HUDColor.dim)
+                    .foregroundStyle(line.isFailure ? HUDColor.failureText : HUDColor.dim)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .textSelection(.enabled)
@@ -440,7 +440,7 @@ private struct QueueRow: View {
                 .fixedSize()
             Spacer(minLength: 8)
             Text(state)
-                .foregroundStyle(stateIsFailure ? Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255) : HUDColor.dim)
+                .foregroundStyle(stateIsFailure ? HUDColor.failureText : HUDColor.dim)
                 .fixedSize()
             controls
         }
@@ -533,6 +533,15 @@ struct HUDButton: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help(help ?? title)
+        .accessibilityLabel(help ?? Self.spoken(title))
+    }
+}
+
+extension HUDButton {
+    /// "‖ PAUSE ALL" → "Pause all": the glyph is decoration next to the word.
+    static func spoken(_ title: String) -> String {
+        let words = title.filter { PixelGlyph(rawValue: $0) == nil }.trimmingCharacters(in: .whitespaces).lowercased()
+        return words.prefix(1).uppercased() + words.dropFirst()
     }
 }
 
