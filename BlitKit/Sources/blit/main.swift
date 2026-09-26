@@ -265,6 +265,7 @@ do {
                 case .sizeOnly(let why): check = "size only (\(why))"
                 case .skipped: check = "not verified"
                 case .alreadyPresent: check = "already present"
+                case .alreadyPresentVerified(let h): check = "already present, sha256 \(h.prefix(12))… matches"
                 }
                 print("\r  \(f.relativePath)  \(formatBytes(Double(f.size)))  \(check)            ")
             case .fileFailed(let f, let reason):
@@ -431,6 +432,7 @@ func copyCommand(_ raw: [String]) async -> Never {
                 case .cloned: check = "cloned (same volume)"
                 case .skipped: check = "not verified"
                 case .alreadyPresent: check = "already present"
+                case .alreadyPresentVerified(let h): check = "already present, sha256 \(h.prefix(12))… matches"
                 }
                 print("\r  \(f.relativePath)  \(formatBytes(Double(f.size)))  \(check)            ")
             case .fileFailed(let f, let reason):

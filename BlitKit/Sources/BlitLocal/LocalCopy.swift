@@ -121,6 +121,9 @@ public enum CopyVerification: Sendable, Equatable {
     case skipped
     /// A file of the same size was already at the destination; left as is.
     case alreadyPresent
+    /// The file at the destination has the same SHA-256 as the source
+    /// (ExistsRule.replaceIfDifferent); left as is, and verified.
+    case alreadyPresentVerified(String)
 }
 
 public struct CopyOptions: Sendable {
@@ -132,6 +135,8 @@ public struct CopyOptions: Sendable {
     public var allowClone = true
     /// Treat an existing destination file of the same size as done (PRD R5.3).
     public var skipExistingSameSize = false
+    /// When set, replaces `skipExistingSameSize` with the chosen rule (PRD R5.3).
+    public var existsRule: ExistsRule?
     /// Checked between blocks and files: true stops the copy (pause/cancel, PRD R5.2).
     public var shouldStop: (@Sendable () -> Bool)? = nil
     public init() {}
@@ -183,20 +188,39 @@ public func copy(
         .volumeSupportsCaseSensitiveNames ?? false
     let collisions = TransferPlan.collisions(files.map(\.relativePath), caseSensitive: caseSensitive)
 
-    var work: [LocalFile] = []
+    struct Item: Sendable { let file: LocalFile; let final: String; let replace: Bool }
+    var work: [Item] = []
+    var toCompare: [(LocalFile, String)] = []
     for (i, file) in files.enumerated() {
-        let final = directory + "/" + file.relativePath
+        var final = directory + "/" + file.relativePath
+        var replace = options.overwrite
         let reason: String?
         if let other = collisions[i] {
             reason = "same local name as \(other) on this volume; skipped"
         } else if fm.fileExists(atPath: final), !options.overwrite {
             let size = (try? fm.attributesOfItem(atPath: final)[.size] as? NSNumber)?.uint64Value
-            if options.skipExistingSameSize, size == file.size {
-                events(.fileFinished(file, verification: .alreadyPresent))
-                summary.withLock { $0.finished.append(file) }
+            switch options.existsRule {
+            case .replace?:
+                replace = true
+                reason = nil
+            case .keepBoth?:
+                final = ExistsRule.keepBothPath(final) { fm.fileExists(atPath: $0) }
+                reason = nil
+            case .replaceIfDifferent? where size != file.size:
+                replace = true
+                reason = nil
+            case .replaceIfDifferent? where options.verify:
+                toCompare.append((file, final))
                 continue
+            default:
+                let skipSameSize = options.skipExistingSameSize || options.existsRule != nil
+                if skipSameSize, size == file.size {
+                    events(.fileFinished(file, verification: .alreadyPresent))
+                    summary.withLock { $0.finished.append(file) }
+                    continue
+                }
+                reason = skipSameSize ? "already exists with a different size" : "already exists (use --overwrite)"
             }
-            reason = options.skipExistingSameSize ? "already exists with a different size" : "already exists (use --overwrite)"
         } else {
             reason = nil
         }
@@ -204,16 +228,40 @@ public func copy(
             events(.fileFailed(file, reason))
             summary.withLock { $0.failed.append((file, reason)) }
         } else {
-            work.append(file)
+            work.append(Item(file: file, final: final, replace: replace))
+        }
+    }
+
+    // Same-size files under replaceIfDifferent: hash both copies (on the NAS
+    // where it can, else by reading the existing copy). Identical is left as is
+    // (verified); different is copied again and replaced.
+    for (file, final) in toCompare {
+        do {
+            let source = try await Task.detached { try localSHA256(path: file.path) }.value
+            let existing: String
+            if let nas {
+                existing = try await nas.hasher.sha256(RemotePath(final)).sha256   // mapped to the NAS path
+            } else {
+                existing = try await Task.detached { try readBackSHA256(path: final) }.value
+            }
+            if source == existing {
+                events(.fileFinished(file, verification: .alreadyPresentVerified(source)))
+                summary.withLock { $0.finished.append(file) }
+            } else {
+                work.append(Item(file: file, final: final, replace: true))
+            }
+        } catch {
+            events(.fileFailed(file, "couldn't compare with the existing copy: \(error)"))
+            summary.withLock { $0.failed.append((file, "\(error)")) }
         }
     }
 
     // Queue-wide space check before anything is written (PRD R5.8). Files that
     // will be APFS clones (same volume) take no new space.
     let destinationDeviceForSpace = deviceID(directory)
-    let needed = work.reduce(UInt64(0)) { total, file in
-        let clones = options.allowClone && destinationDeviceForSpace != nil && deviceID(file.path) == destinationDeviceForSpace
-        return clones ? total : total + file.size
+    let needed = work.reduce(UInt64(0)) { total, item in
+        let clones = options.allowClone && destinationDeviceForSpace != nil && deviceID(item.file.path) == destinationDeviceForSpace
+        return clones ? total : total + item.file.size
     }
     if let available = availableBytes(at: directory), needed > available {
         throw CopyPreflightError.notEnoughSpace(needed: needed, available: available, volume: MountInfo.of(directory)?.mountPoint ?? directory)
@@ -231,8 +279,9 @@ public func copy(
                 streamCounter?.add(n)
             }
             group.addTask {
-                while options.shouldStop?() != true, let file = queue.withLock({ $0.popFirst() }) {
-                    let final = directory + "/" + file.relativePath
+                while options.shouldStop?() != true, let item = queue.withLock({ $0.popFirst() }) {
+                    let file = item.file
+                    let final = item.final
                     let part = final + ".blitpart"
                     do {
                         try FileManager.default.createDirectory(atPath: (final as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -265,7 +314,7 @@ public func copy(
                         if let mtime = file.modificationTime {
                             try? FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: part)
                         }
-                        try renameIntoPlace(part, final, overwrite: options.overwrite)
+                        try renameIntoPlace(part, final, overwrite: item.replace)
                         events(.fileFinished(file, verification: verification))
                         summary.withLock {
                             $0.finished.append(file)

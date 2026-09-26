@@ -6,6 +6,7 @@
 
 #if DEBUG
 import AppKit
+import BlitRemote
 import SwiftUI
 
 @MainActor
@@ -188,6 +189,49 @@ enum UITestHarness {
             lines.append("status after freeing: \(job.status) · copy identical: \(same)")
             lines.append("done")
             try? fm.removeItem(at: src)
+        }
+    }
+
+    /// `-BlitExistsTest <log>`: runs each ExistsRule against a destination
+    /// holding an identical file, a same-size different file and a
+    /// different-size file, and checks what ends up on disk.
+    static func runExistsTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitExistsTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-exists-test")
+            try? fm.removeItem(at: root)
+            let src = root.appendingPathComponent("src/Pack")
+            try? fm.createDirectory(at: src, withIntermediateDirectories: true)
+            let original = Data(repeating: 1, count: 1 << 20), other = Data(repeating: 2, count: 1 << 20)
+            for name in ["same", "diff", "grow"] { try? original.write(to: src.appendingPathComponent("\(name).bin")) }
+            let saved = UserDefaults.standard.string(forKey: "existsRule")
+            for rule in ExistsRule.allCases {
+                let dest = root.appendingPathComponent("dest-\(rule.rawValue)")
+                let existing = dest.appendingPathComponent("Pack")
+                try? fm.createDirectory(at: existing, withIntermediateDirectories: true)
+                try? original.write(to: existing.appendingPathComponent("same.bin"))
+                try? other.write(to: existing.appendingPathComponent("diff.bin"))
+                try? Data(repeating: 3, count: 1000).write(to: existing.appendingPathComponent("grow.bin"))
+                UserDefaults.standard.set(rule.rawValue, forKey: "existsRule")
+                _ = transfers.enqueue([.local(src)], to: .local(dest), destinationName: rule.rawValue)
+                guard let job = transfers.transferJobs.last else { continue }
+                for _ in 0..<300 where job.isActive || job.status == .queued { try? await Task.sleep(for: .milliseconds(100)) }
+                let files = ((try? fm.contentsOfDirectory(atPath: existing.path)) ?? []).sorted()
+                let described = files.map { name -> String in
+                    let data = (try? Data(contentsOf: existing.appendingPathComponent(name))) ?? Data()
+                    return "\(name)=\(data == original ? "source" : data == other ? "other" : data.count == 1000 ? "short" : "?")"
+                }
+                let outcomes = job.log.map(\.text).filter { $0.contains(".BIN") }.map { String($0.prefix(60)) }
+                lines.append("\(rule.rawValue): \(job.status) · \(described.joined(separator: " "))")
+                for outcome in outcomes { lines.append("    \(outcome)") }
+            }
+            UserDefaults.standard.set(saved, forKey: "existsRule")
+            lines.append("done")
+            try? fm.removeItem(at: root)
         }
     }
 

@@ -123,6 +123,35 @@ public enum Verification: Sendable, Equatable {
     case skipped
     /// A file of the same size was already at the destination; left as is.
     case alreadyPresent
+    /// The file already at the destination has the same SHA-256 as the source
+    /// (ExistsRule.replaceIfDifferent); left as is, and verified.
+    case alreadyPresentVerified(String)
+}
+
+/// What to do when a file already exists at the destination (PRD R5.3).
+public enum ExistsRule: String, Codable, Sendable, CaseIterable {
+    /// Same size: leave it (trusting the size). Different size: fail the file.
+    case skipIfSameSize
+    /// Compare SHA-256: identical is left (verified); different is replaced.
+    case replaceIfDifferent
+    /// Always transfer again and replace it.
+    case replace
+    /// Keep it and save the new file as "name 2.ext".
+    case keepBoth
+
+    /// "Movie 2.mkv", "Movie 3.mkv"…: the first name that doesn't exist yet.
+    public static func keepBothPath(_ path: String, exists: (String) -> Bool) -> String {
+        let url = URL(fileURLWithPath: path)
+        let folder = url.deletingLastPathComponent()
+        let ext = url.pathExtension.contains(" ") ? "" : url.pathExtension
+        let base = ext.isEmpty ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent
+        var n = 2
+        while true {
+            let candidate = folder.appendingPathComponent("\(base) \(n)" + (ext.isEmpty ? "" : ".\(ext)")).path
+            if !exists(candidate) { return candidate }
+            n += 1
+        }
+    }
 }
 
 public struct TransferOptions: Sendable {
@@ -132,6 +161,8 @@ public struct TransferOptions: Sendable {
     /// e.g. when a queue restored after relaunch runs again. A different size
     /// still fails unless `overwrite`.
     public var skipExistingSameSize = false
+    /// When set, replaces `skipExistingSameSize` with the chosen rule.
+    public var existsRule: ExistsRule?
     public var concurrentHashes = 3
     public init() {}
 }
@@ -375,9 +406,13 @@ actor FileJob {
     private(set) var failure: String?
     private(set) var remoteHash: Task<RemoteHasher.Result, Error>?
 
-    init(file: RemoteFile, finalPath: String, state: PartState, resuming: Bool, ranges: Int) {
+    /// Replace a file at the final path (ExistsRule.replace, or different content).
+    let replace: Bool
+
+    init(file: RemoteFile, finalPath: String, state: PartState, resuming: Bool, ranges: Int, replace: Bool = false) {
         self.file = file
         self.finalPath = finalPath
+        self.replace = replace
         self.state = state
         self.resuming = resuming
         self.rangeCount = ranges
@@ -479,6 +514,7 @@ public func download(
         .volumeSupportsCaseSensitiveNames ?? false
     let collisions = TransferPlan.collisions(files.map(\.relativePath), caseSensitive: caseSensitive)
 
+    var toCompare: [(RemoteFile, String)] = []
     for (index, file) in files.enumerated() {
         guard TransferPlan.isContained(file.relativePath) else {
             let reason = "unsafe name from the server (would leave the download folder); skipped"
@@ -492,18 +528,33 @@ public func download(
             summary.withLock { $0.failed.append((file, reason)) }
             continue
         }
-        let finalPath = directory + "/" + file.relativePath
+        var finalPath = directory + "/" + file.relativePath
+        var replace = false
         if fm.fileExists(atPath: finalPath), !options.overwrite {
             let size = (try? fm.attributesOfItem(atPath: finalPath)[.size] as? NSNumber)?.uint64Value
-            if options.skipExistingSameSize, size == file.size {
-                events(.fileFinished(file, verification: .alreadyPresent))
-                summary.withLock { $0.finished.append(file) }
-            } else {
-                let reason = options.skipExistingSameSize ? "already exists with a different size" : "already exists (use --overwrite)"
-                events(.fileFailed(file, reason))
-                summary.withLock { $0.failed.append((file, reason)) }
+            switch options.existsRule {
+            case .replace?:
+                replace = true
+            case .keepBoth?:
+                finalPath = ExistsRule.keepBothPath(finalPath) { fm.fileExists(atPath: $0) }
+            case .replaceIfDifferent? where size != file.size:
+                replace = true
+            case .replaceIfDifferent? where effectiveHasher != nil:
+                // Same size: compare hashes before deciding (below).
+                toCompare.append((file, finalPath))
+                continue
+            default:
+                let skipSameSize = options.skipExistingSameSize || options.existsRule != nil
+                if skipSameSize, size == file.size {
+                    events(.fileFinished(file, verification: .alreadyPresent))
+                    summary.withLock { $0.finished.append(file) }
+                } else {
+                    let reason = skipSameSize ? "already exists with a different size" : "already exists (use --overwrite)"
+                    events(.fileFailed(file, reason))
+                    summary.withLock { $0.failed.append((file, reason)) }
+                }
+                continue
             }
-            continue
         }
         do {
             try fm.createDirectory(atPath: (finalPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -530,12 +581,49 @@ public func download(
         let gaps = state.done.gaps(in: 0..<file.size)
         if resuming, gaps.isEmpty, file.size > 0 {
             // All bytes are on disk; it only needs verifying.
-            alreadyComplete.append(FileJob(file: file, finalPath: finalPath, state: state, resuming: true, ranges: 0))
+            alreadyComplete.append(FileJob(file: file, finalPath: finalPath, state: state, resuming: true, ranges: 0,
+                                           replace: replace))
             continue
         }
         let ranges = TransferPlan.ranges(size: file.size, connections: clients.count, gaps: resuming ? gaps : nil)
-        let job = FileJob(file: file, finalPath: finalPath, state: state, resuming: resuming, ranges: ranges.count)
+        let job = FileJob(file: file, finalPath: finalPath, state: state, resuming: resuming, ranges: ranges.count,
+                          replace: replace)
         work += ranges.map { (job, $0) }
+    }
+    // Same-size files under replaceIfDifferent: hash both copies. Identical is
+    // left as is (and verified); different is downloaded again and replaced.
+    if let effectiveHasher, !toCompare.isEmpty {
+        let differing = await withTaskGroup(of: RemoteFile?.self) { group in
+            for (file, finalPath) in toCompare {
+                group.addTask {
+                    do {
+                        async let local = Task.detached { try localSHA256(path: finalPath) }.value
+                        let remote = try await hashLimiter.run { try await effectiveHasher.sha256(file.path) }
+                        if try await local == remote.sha256 {
+                            events(.fileFinished(file, verification: .alreadyPresentVerified(remote.sha256)))
+                            summary.withLock { $0.finished.append(file) }
+                            return nil
+                        }
+                        return file
+                    } catch {
+                        events(.fileFailed(file, "couldn't compare with the existing copy: \(error)"))
+                        summary.withLock { $0.failed.append((file, "\(error)")) }
+                        return nil
+                    }
+                }
+            }
+            var result: [RemoteFile] = []
+            for await file in group { if let file { result.append(file) } }
+            return result
+        }
+        for file in differing {
+            let finalPath = directory + "/" + file.relativePath
+            let state = PartState(remotePath: Data(file.path.bytes), size: file.size, modificationTime: file.modificationTime,
+                                  done: ByteRangeSet())
+            let ranges = TransferPlan.ranges(size: file.size, connections: clients.count, gaps: nil)
+            let job = FileJob(file: file, finalPath: finalPath, state: state, resuming: false, ranges: ranges.count, replace: true)
+            work += ranges.map { (job, $0) }
+        }
     }
     let queue = WorkQueue(work)
 
@@ -623,7 +711,7 @@ public func download(
                     verifiers.addTask {
                         do {
                             let verification = try await finalize(job: job, part: part, hasher: effectiveHasher,
-                                                                  overwrite: options.overwrite)
+                                                                  overwrite: options.overwrite || job.replace)
                             events(.fileFinished(job.file, verification: verification))
                             summary.withLock {
                                 $0.finished.append(job.file)

@@ -2,6 +2,7 @@
 // Link data panels, the log, and a Nostromo-style WARNING panel listing
 // failures. Always dark; opened from the condensed strip's count.
 
+import BlitRemote
 import SwiftUI
 
 struct TransferHUD: View {
@@ -174,6 +175,7 @@ struct TransferHUD: View {
             HUDRow("CONN", "\(job.connections)")
             HUDRow("LINK", job.link.isEmpty ? "—" : job.link)
             HUDRow("VERIFY", job.verificationMethod)
+            HUDRow("EXISTS", job.existsRule.hudLabel)
             HUDRow("RESUMED", job.resumedBytes > 0 ? TransferJob.bytes(job.resumedBytes) : "—")
             HUDRow("PRESENT", "\(job.filesAlreadyPresent)")
             HUDRow("ELAPSED", elapsed)
@@ -533,5 +535,36 @@ struct HUDButton: View {
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
         .help(help ?? title)
+    }
+}
+
+extension ExistsRule {
+    /// Short label for the HUD's Link data panel.
+    var hudLabel: String {
+        switch self {
+        case .skipIfSameSize: "SKIP SAME SIZE"
+        case .replaceIfDifferent: "REPLACE IF DIFF"
+        case .replace: "REPLACE"
+        case .keepBoth: "KEEP BOTH"
+        }
+    }
+
+    /// Settings title.
+    var title: String {
+        switch self {
+        case .skipIfSameSize: "Skip if the same size"
+        case .replaceIfDifferent: "Replace if different (compare SHA-256)"
+        case .replace: "Replace"
+        case .keepBoth: "Keep both"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .skipIfSameSize: "Fast: a file of the same size is trusted and left; a different size fails the file."
+        case .replaceIfDifferent: "Hashes both copies. Identical files are left and count as verified (a move can then remove the source); different ones are transferred again."
+        case .replace: "Always transfers again and replaces the existing file, verified as usual."
+        case .keepBoth: "Keeps the existing file and saves the new one as “name 2.ext”."
+        }
     }
 }

@@ -20,13 +20,14 @@ final class VerifiedIndex {
             let how = switch method {
             case "server-sha256": "SHA-256 matched the server's"
             case "nas-sha256": "SHA-256 matched the NAS's"
+            case "present-sha256": "already here; SHA-256 matched the source's"
             default: "SHA-256 matched on read-back"
             }
             return "Verified by Blit · \(how) · \(time.formatted(date: .abbreviated, time: .shortened))"
         }
     }
 
-    private static let strongMethods: Set<String> = ["server-sha256", "nas-sha256", "read-back"]
+    private static let strongMethods: Set<String> = ["server-sha256", "nas-sha256", "read-back", "present-sha256"]
     private(set) var entries: [String: Entry] = [:]
     @ObservationIgnored private var loaded = false
 

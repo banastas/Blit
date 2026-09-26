@@ -58,13 +58,17 @@ final class VerifiedSources: @unchecked Sendable {
     private var remote: [Remote] = []
 
     func record(_ event: TransferEvent) {
-        guard case .fileFinished(let file, .sha256) = event else { return }
+        switch event {
+        case .fileFinished(_, .sha256), .fileFinished(_, .alreadyPresentVerified): break
+        default: return
+        }
+        guard case .fileFinished(let file, _) = event else { return }
         lock.withLock { remote.append(Remote(pathBytes: file.path.bytes, size: file.size, modificationTime: file.modificationTime)) }
     }
 
     func record(_ event: CopyEvent) {
         switch event {
-        case .fileFinished(let file, .nas), .fileFinished(let file, .readBack):
+        case .fileFinished(let file, .nas), .fileFinished(let file, .readBack), .fileFinished(let file, .alreadyPresentVerified):
             lock.withLock { local.append(Local(path: file.path, size: file.size, modificationTime: file.modificationTime)) }
         default: break
         }
@@ -264,6 +268,13 @@ final class TransferJob: Identifiable {
     var deleteSources = false
     /// Saved to the durable queue (false only for debug simulations).
     var persistent = true
+    /// What to do with files already at the destination (PRD R5.3), chosen in
+    /// Settings when the transfer was queued.
+    var existsRule: ExistsRule = TransferJob.defaultExistsRule
+
+    static var defaultExistsRule: ExistsRule {
+        UserDefaults.standard.string(forKey: "existsRule").flatMap(ExistsRule.init(rawValue:)) ?? .skipIfSameSize
+    }
     @ObservationIgnored let verifiedSources = VerifiedSources()
     var removedSources = 0
     /// Source roots (as dropped) that a move has removed entirely, so a retry
@@ -410,6 +421,7 @@ final class TransferManager {
                                 destinationName: job.destinationName)
         fresh.includeHidden = job.includeHidden
         fresh.deleteSources = job.deleteSources
+        fresh.existsRule = job.existsRule
         fresh.removedRoots = job.removedRoots
         let verified = job.verifiedSources.snapshot()
         fresh.verifiedSources.add(local: verified.local, remote: verified.remote)
@@ -590,6 +602,7 @@ final class TransferManager {
         var verifiedRemote: [VerifiedSources.Remote]?
         var removedRoots: [String]?
         var paused: Bool?
+        var existsRule: ExistsRule?
     }
 
     private static var queueURL: URL {
@@ -610,7 +623,7 @@ final class TransferManager {
                             verifiedLocal: verified.local.isEmpty ? nil : verified.local,
                             verifiedRemote: verified.remote.isEmpty ? nil : verified.remote,
                             removedRoots: job.removedRoots.isEmpty ? nil : Array(job.removedRoots),
-                            paused: job.status == .paused ? true : nil)
+                            paused: job.status == .paused ? true : nil, existsRule: job.existsRule)
         }
         let url = Self.queueURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -646,6 +659,7 @@ final class TransferManager {
             job.verifiedSources.add(local: s.verifiedLocal ?? [], remote: s.verifiedRemote ?? [])
             job.removedRoots = Set(s.removedRoots ?? [])
             if s.paused == true { job.status = .paused }
+            if let rule = s.existsRule { job.existsRule = rule }
             job.restored = true
             job.note("RESTORED FROM LAST SESSION · RESUMING")
             jobs.append(job)
@@ -1090,6 +1104,7 @@ final class TransferManager {
         let hasher = RemoteHasher(connection: clients[0].connection)
         var options = TransferOptions()
         options.skipExistingSameSize = true
+        options.existsRule = job.existsRule
         job.connectionCounters = clients.map { _ in ByteCounter() }
         if job.deleteSources { job.note("MOVE · SOURCES ARE REMOVED ONCE VERIFIED BY SHA256") }
         let ledger = job.verifiedSources
@@ -1292,6 +1307,7 @@ final class TransferManager {
         job.status = .running
         var options = CopyOptions()
         options.skipExistingSameSize = true
+        options.existsRule = job.existsRule
         let stopFlag = job.stopFlag
         options.shouldStop = { stopFlag.isSet }
         job.connectionCounters = (0..<options.concurrentFiles).map { _ in ByteCounter() }
@@ -1339,6 +1355,7 @@ extension TransferJob {
             case .sizeOnly: (nil, "size-only")
             case .skipped: (nil, "none")
             case .alreadyPresent: (nil, "already-present")
+            case .alreadyPresentVerified(let h): (h, "present-sha256")
             }
             record(source: f.path.description, relativePath: f.relativePath, size: f.size, sha256: hash, verification: method)
         } else if case .fileFailed(let f, let reason) = event {
@@ -1374,6 +1391,11 @@ extension TransferJob {
                 filesAlreadyPresent += 1
                 presentBytes += Int64(f.size)
                 note("= ALREADY PRESENT · \(f.relativePath.uppercased())")
+            case .alreadyPresentVerified(let hash):
+                filesAlreadyPresent += 1
+                filesVerified += 1
+                presentBytes += Int64(f.size)
+                note("= ALREADY PRESENT · SHA256 \(hash.prefix(8).uppercased())… MATCHES · \(f.relativePath.uppercased())")
             }
         case .fileFailed(let f, let reason):
             verifying[f.relativePath] = nil
@@ -1393,6 +1415,7 @@ extension TransferJob {
             case .cloned: (nil, "cloned")
             case .skipped: (nil, "none")
             case .alreadyPresent: (nil, "already-present")
+            case .alreadyPresentVerified(let h): (h, "present-sha256")
             }
             record(source: f.path, relativePath: f.relativePath, size: f.size, sha256: hash, verification: method)
         } else if case .fileFailed(let f, let reason) = event {
@@ -1421,6 +1444,11 @@ extension TransferJob {
                 filesAlreadyPresent += 1
                 presentBytes += Int64(f.size)
                 note("= ALREADY PRESENT · \(f.relativePath.uppercased())")
+            case .alreadyPresentVerified(let hash):
+                filesAlreadyPresent += 1
+                filesVerified += 1
+                presentBytes += Int64(f.size)
+                note("= ALREADY PRESENT · SHA256 \(hash.prefix(8).uppercased())… MATCHES · \(f.relativePath.uppercased())")
             }
         case .fileFailed(let f, let reason):
             verifying[f.relativePath] = nil

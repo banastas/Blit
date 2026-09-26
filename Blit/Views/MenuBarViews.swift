@@ -1,6 +1,7 @@
 // Menu bar extra (PRD R5.7): live speed in the menu bar while transferring,
 // and a panel with the condensed HUD. Optional, per the HIG (Settings).
 
+import BlitRemote
 import SwiftUI
 
 struct MenuBarLabel: View {
@@ -160,6 +161,7 @@ struct MenuBarTransfer: View {
 struct SettingsView: View {
     @AppStorage("showMenuBarExtra") private var showMenuBarExtra = true
     @AppStorage("expandHUDOnTransfer") private var expandHUDOnTransfer = true
+    @AppStorage("existsRule") private var existsRule: ExistsRule = .skipIfSameSize
 
     var body: some View {
         Form {
@@ -169,6 +171,12 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             Toggle("Open the full transfer HUD when a transfer starts", isOn: $expandHUDOnTransfer)
             Text("Collapse it and it stays collapsed until those transfers finish.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("When a file already exists", selection: $existsRule) {
+                ForEach(ExistsRule.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            Text(existsRule.explanation + " Applies to transfers queued from now on.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
