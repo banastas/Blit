@@ -84,7 +84,7 @@ extension BrowserModel {
             guard !item.isDirectory, let server = servers.server(id) else { return }
             guard item.size <= Self.remotePreviewLimit else {
                 previewURL = nil
-                operationError = "“\(item.name)” is \(item.size.formatted(.byteCount(style: .file))). Quick Look previews server files up to \(Self.remotePreviewLimit.formatted(.byteCount(style: .file))); download it to preview it."
+                report("“\(item.name)” is \(item.size.formatted(.byteCount(style: .file))). Quick Look previews server files up to \(Self.remotePreviewLimit.formatted(.byteCount(style: .file))); download it to preview it.", action: "QUICK LOOK")
                 return
             }
             // Already downloaded this session: show it again without re-downloading.
@@ -107,7 +107,7 @@ extension BrowserModel {
                     if previewLoading == item.location, selection.contains(item.location) { previewURL = url }
                 } catch {
                     job.failures.append("\(item.name): \(error)")
-                    operationError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                    report(FileOperations.describe(error), action: "QUICK LOOK")
                 }
                 if previewLoading == item.location { previewLoading = nil }
                 operations.transfers.finishOperation(job)

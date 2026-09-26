@@ -14,7 +14,6 @@ struct ContentView: View {
     @State private var secondBrowser: BrowserModel?
     @State private var secondActive = false
     @AppStorage("showSecondPane") private var showSecondPane = false
-    @State private var transferError: String?
     @State private var nasShare: VolumeLocation?
     @State private var showPalette = false
     @State private var selection: BrowseLocation?
@@ -154,11 +153,6 @@ struct ContentView: View {
         } message: { _ in
             Text("Its saved password is removed from your Keychain, along with any favorites on it.")
         }
-        .alert("Can't Transfer", isPresented: Binding(get: { transferError != nil }, set: { if !$0 { transferError = nil } })) {
-            Button("OK") { transferError = nil }
-        } message: {
-            Text(transferError ?? "")
-        }
     }
 
     /// Sidebar › Refresh: reloads every pane showing `location` or something
@@ -187,14 +181,18 @@ struct ContentView: View {
         let mode: FileOperations.Mode = NSEvent.modifierFlags.contains(.option) ? .copy : .automatic
         let hidden = active?.showHidden ?? false
         Task {
-            transferError = await operations.place(sources, into: destination, destinationName: name.isEmpty ? "Folder" : name,
-                                                   mode: mode, includeHidden: hidden)
+            if let message = await operations.place(sources, into: destination, destinationName: name.isEmpty ? "Folder" : name,
+                                                    mode: mode, includeHidden: hidden) {
+                transfers.notice(message, action: mode == .copy ? "COPY" : "MOVE", place: name)
+            }
         }
     }
 
     private func startTransfer(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
-        transferError = transfers.enqueue(sources, to: destination, destinationName: name.isEmpty ? "Folder" : name,
-                                          includeHidden: active?.showHidden ?? false)
+        if let message = transfers.enqueue(sources, to: destination, destinationName: name.isEmpty ? "Folder" : name,
+                                           includeHidden: active?.showHidden ?? false) {
+            transfers.notice(message, action: "TRANSFER", place: name)
+        }
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
@@ -345,13 +343,14 @@ struct ContentView: View {
         BrowserModel.active = active
         BrowserModel.onInteraction = { model in activate(model) }
         operations.undoManager = undoManager
-        operations.onUndoProblem = { message in transferError = message }
+        operations.onUndoProblem = { message in transfers.notice(message, action: "UNDO") }
         transfers.restoreQueue()
         #if DEBUG
         transfers.startFakeTransferIfRequested()
         UITestHarness.runQueueTestIfRequested(transfers: transfers)
         UITestHarness.renderStripIfRequested(transfers: transfers)
         UITestHarness.runHUDKeysTestIfRequested(transfers: transfers)
+        UITestHarness.runNoticeTestIfRequested(transfers: transfers)
         UITestHarness.runSpaceTestIfRequested(transfers: transfers)
         UITestHarness.runExistsTestIfRequested(transfers: transfers)
         UITestHarness.runStructureTestIfRequested(transfers: transfers)

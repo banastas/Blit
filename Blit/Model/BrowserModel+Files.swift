@@ -37,7 +37,7 @@ extension BrowserModel {
                 selection = [created]
                 renaming = created
             } catch {
-                operationError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                report(FileOperations.describe(error), action: "NEW FOLDER")
             }
         }
     }
@@ -91,7 +91,7 @@ extension BrowserModel {
             do {
                 selection = [try await operations.rename(item.location, to: name)]
             } catch {
-                operationError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                report(FileOperations.describe(error), action: "RENAME")
             }
         }
     }
@@ -134,7 +134,7 @@ extension BrowserModel {
         Task {
             if let message = await operations.place(sources, into: folder, destinationName: name.isEmpty ? "Folder" : name,
                                                     mode: mode, includeHidden: hidden, fromPasteboard: fromPasteboard) {
-                operationError = message
+                report(message, action: mode == .copy ? "COPY" : "MOVE")
             }
         }
     }
@@ -143,7 +143,7 @@ extension BrowserModel {
 
     func duplicate(_ items: [FileItem]) {
         Task {
-            if let message = await operations.duplicate(items.map(\.location)) { operationError = message }
+            if let message = await operations.duplicate(items.map(\.location)) { report(message, action: "DUPLICATE") }
         }
     }
 
@@ -153,7 +153,7 @@ extension BrowserModel {
         guard !items.isEmpty else { return }
         if operations.canTrash(items.map(\.location)) {
             Task {
-                if let message = await operations.moveToTrash(withResumeData(items)) { operationError = message }
+                if let message = await operations.moveToTrash(withResumeData(items)) { report(message, action: "MOVE TO TRASH") }
             }
         } else {
             deleteRequest = items
@@ -163,7 +163,7 @@ extension BrowserModel {
     func confirmDelete(_ items: [FileItem]) {
         deleteRequest = nil
         Task {
-            if let message = await operations.deletePermanently(withResumeData(items)) { operationError = message }
+            if let message = await operations.deletePermanently(withResumeData(items)) { report(message, action: "DELETE") }
         }
     }
 
@@ -214,13 +214,14 @@ extension BrowserModel {
         let remoteName = partial.remotePath.bytes.split(separator: UInt8(ascii: "/")).last.map { RemotePath(bytes: Array($0)) }
         let expected = remoteName.map(TransferPlan.localName)! + ".blitpart"
         if item.name != expected {
-            operationError = "This part file was renamed. Rename it back to “\(expected)” to resume it, or it would download again from the start."
+            report("This part file was renamed. Rename it back to “\(expected)” to resume it, or it would download again from the start.",
+                   action: "RESUME DOWNLOAD")
             return
         }
         let folder = url.deletingLastPathComponent()
         let source = BrowseLocation.remote(server: server.id, path: partial.remotePath.bytes)
         if let message = operations.transfers.enqueue([source], to: .local(folder), destinationName: folder.lastPathComponent) {
-            operationError = message
+            report(message, action: "RESUME DOWNLOAD")
         }
     }
 }

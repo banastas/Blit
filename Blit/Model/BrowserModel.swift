@@ -67,7 +67,11 @@ final class BrowserModel {
     var showGoToFolder = false
     /// Items waiting for the user to confirm a permanent delete.
     var deleteRequest: [FileItem]?
-    var operationError: String?
+    /// Shows a problem in the transfer strip, where it stays until dismissed
+    /// (no alert: there's nothing to decide).
+    func report(_ message: String, action: String) {
+        operations.transfers.notice(message, action: action, place: current?.lastComponent ?? "")
+    }
     /// The file shown in Quick Look, if the panel is open.
     var previewURL: URL?
     /// A server file being downloaded to preview (Space again cancels showing it).
@@ -151,7 +155,7 @@ final class BrowserModel {
                 children[folder] = try await list(folder)
             } catch {
                 expanded.remove(folder)
-                operationError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                report(FileOperations.describe(error), action: "OPEN FOLDER")
             }
         }
     }

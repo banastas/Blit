@@ -67,17 +67,21 @@ struct TransferStrip: View {
                     Text(job.title.uppercased())
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    hudText("→ \(job.destinationName.uppercased())", glyphSize: 12)
-                        .foregroundStyle(HUDColor.dim)
-                        .lineLimit(1)
-                        .fixedSize()
+                    if !job.destinationName.isEmpty {
+                        hudText("→ \(job.destinationName.uppercased())", glyphSize: 12)
+                            .foregroundStyle(HUDColor.dim)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
                 }
                 .font(HUDFont.terminal(18))
                 .frame(minWidth: 80, maxWidth: .infinity, alignment: .leading)
-                PixelCells(fraction: displayedProgress, count: 24)
-                Text("\(Int((displayedProgress * 100).rounded()))%")
-                    .font(HUDFont.terminal(18))
-                    .frame(width: 38, alignment: .trailing)
+                if job.notice == nil {
+                    PixelCells(fraction: displayedProgress, count: 24)
+                    Text("\(Int((displayedProgress * 100).rounded()))%")
+                        .font(HUDFont.terminal(18))
+                        .frame(width: 38, alignment: .trailing)
+                }
                 separator
                 if job.isOperation, job.failures.isEmpty {
                     EmptyView()
@@ -133,6 +137,7 @@ struct TransferStrip: View {
                 .font(HUDFont.terminal(15))
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .help(job.failures.joined(separator: "\n"))
         }
         .foregroundStyle(HUDColor.bright)
         .padding(.horizontal, 12)
@@ -186,7 +191,9 @@ struct TransferStrip: View {
     }
 
     @ViewBuilder private var rate: some View {
-        if case .waitingForSpace = job.status {
+        if job.notice != nil {
+            EmptyView()   // the WARNING tag and the log line say it
+        } else if case .waitingForSpace = job.status {
             Text("NO SPACE")
                 .font(HUDFont.terminal(26))
                 .foregroundStyle(HUDColor.failureText)
@@ -266,6 +273,7 @@ struct TransferStrip: View {
     }
 
     private var summary: String {
+        if let notice = job.notice { return "✕ \(notice.uppercased())" }
         if case .operation(_, let done) = job.kind {
             let ok = job.filesFinished - job.failures.count
             return "\(job.failures.isEmpty ? "✓" : "✕") \(ok)/\(job.fileCount) \(done) · \(job.destinationName.uppercased())"
@@ -336,6 +344,7 @@ extension TransferJob {
     /// size-checked, ✕ failed, cancelled or finished with failures.
     /// Zero-padded so digits don't jump.
     var countLabel: String {
+        if notice != nil { return "✕" }
         let arrow = status == .paused ? "‖"
             : isActive ? "▲"
             : status != .finished || !failures.isEmpty ? "✕"

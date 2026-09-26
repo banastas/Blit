@@ -222,7 +222,7 @@ final class FileOperations {
                         let problems = await Task.detached { Self.moveBack(pairs) }.value
                         for pair in pairs { VerifiedIndex.shared.moved(from: pair.to, to: pair.from) }
                         operations.onChanged?(changed)
-                        return Self.summary(problems)
+                        return operations.report(problems)
                     }
                 }
             }
@@ -238,7 +238,7 @@ final class FileOperations {
                 problems.append(message)
             }
         }
-        return Self.summary(problems)
+        return report(problems)
     }
 
     private func moveOnServer(_ sources: [BrowseLocation], into destination: BrowseLocation) async -> String? {
@@ -281,10 +281,10 @@ final class FileOperations {
                     problems.append(Self.describe(error))
                 }
                 operations.onChanged?(changed)
-                return Self.summary(problems)
+                return operations.report(problems)
             }
         }
-        return Self.summary(problems)
+        return report(problems)
     }
 
     // MARK: New folder, rename, duplicate
@@ -311,7 +311,7 @@ final class FileOperations {
             case .local(let url):
                 let problems = await Task.detached { Self.trash([url]) }.value
                 operations.onChanged?([folder])
-                return Self.summary(problems)
+                return operations.report(problems)
             case .remote(let id, let bytes):
                 guard let server = operations.servers.server(id) else { return "That server no longer exists." }
                 do {
@@ -378,7 +378,7 @@ final class FileOperations {
         guard !urls.isEmpty else { return "Duplicate works on local items only." }
         let problems = await duplicateTracked(urls)
         onChanged?(urls.map { .local($0.deletingLastPathComponent()) })
-        return Self.summary(problems)
+        return report(problems)
     }
 
     // MARK: Delete
@@ -418,10 +418,10 @@ final class FileOperations {
             registerUndo("Move to Trash") { operations in
                 let problems = await Task.detached { Self.moveBack(pairs) }.value
                 operations.onChanged?(changed)
-                return Self.summary(problems)
+                return operations.report(problems)
             }
         }
-        return Self.summary(problems)
+        return report(problems)
     }
 
     /// Deletes immediately; folders go with everything in them. Callers confirm first.
@@ -464,7 +464,7 @@ final class FileOperations {
             }
         }
         onChanged?(items.compactMap(\.parent))
-        return Self.summary(problems)
+        return report(problems)
     }
 
     // MARK: Helpers
@@ -522,7 +522,16 @@ final class FileOperations {
         throw FileOperationError.message("“\(path.lastComponent)” already exists in \(where_).")
     }
 
-    /// Problems for an alert: repeats dropped, and at most five listed.
+    /// Problems a tracked operation already shows in the strip; they aren't
+    /// returned to the caller a second time.
+    @ObservationIgnored private var shownInStrip = Set<String>()
+
+    /// The problems still to report (those not already in the strip), summarised.
+    private func report(_ problems: [String]) -> String? {
+        Self.summary(problems.filter { shownInStrip.remove($0) == nil })
+    }
+
+    /// Problems for a notice: repeats dropped, and at most five listed.
     private static func summary(_ problems: [String]) -> String? {
         let unique = problems.uniqued()
         guard !unique.isEmpty else { return nil }
@@ -530,8 +539,13 @@ final class FileOperations {
         return unique.count > 5 ? shown + "\n…and \(unique.count - 5) more." : shown
     }
 
-    private static func describe(_ error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? "\(error)"
+    /// Readable text for an error: Cocoa and POSIX errors by their localized
+    /// description ("The file “a.txt” couldn't be opened…"), Blit's own by theirs.
+    static func describe(_ error: Error) -> String {
+        if let text = (error as? LocalizedError)?.errorDescription { return text }
+        let ns = error as NSError
+        if [NSCocoaErrorDomain, NSPOSIXErrorDomain, NSOSStatusErrorDomain].contains(ns.domain) { return ns.localizedDescription }
+        return "\(error)"
     }
 
     nonisolated private static func volumeID(_ url: URL) -> NSObject? {
@@ -568,6 +582,7 @@ final class FileOperations {
                 problems.append(problem)
                 job.failures.append(problem)
                 job.note("✕ \(problem.uppercased())", failure: true)
+                shownInStrip.insert(problem)
             }
             job.filesFinished += 1
         }
@@ -594,7 +609,7 @@ final class FileOperations {
             registerUndo("Duplicate") { operations in
                 let problems = await Task.detached { Self.trash(made) }.value
                 operations.onChanged?(changed)
-                return Self.summary(problems)
+                return operations.report(problems)
             }
         }
         return problems

@@ -38,19 +38,10 @@ struct FileListView: View {
         }
         .sheet(item: $browser.infoItem) { item in InfoView(item: item, browser: browser) }
         .sheet(isPresented: $browser.showGoToFolder) { GoToFolderView(browser: browser) }
-        .alert("Can't Complete", isPresented: errorShown) {
-            Button("OK") {}
-        } message: {
-            Text(browser.operationError ?? "")
-        }
     }
 
     private var deleteShown: Binding<Bool> {
         Binding(get: { browser.deleteRequest != nil }, set: { if !$0 { browser.deleteRequest = nil } })
-    }
-
-    private var errorShown: Binding<Bool> {
-        Binding(get: { browser.operationError != nil }, set: { if !$0 { browser.operationError = nil } })
     }
 
     private var deleteTitle: String {

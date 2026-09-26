@@ -384,9 +384,13 @@ enum UITestHarness {
             return job
         }
         let running = job([]), failed = job(["a.mkv: SHA-256 mismatch"])
+        transfers.notice("Can't put a folder inside itself.", action: "MOVE", place: "Incoming")
+        transfers.notice("“untitled folder” already exists in “Movies”.", action: "NEW FOLDER")
+        let notices = transfers.jobs.suffix(2)
         let content = VStack(spacing: 8) {
             TransferStrip(job: running).frame(width: 900)
             TransferStrip(job: failed).frame(width: 900)
+            ForEach(Array(notices), id: \.id) { TransferStrip(job: $0).frame(width: 900) }
             MenuBarTransfer(job: failed).frame(width: 296)
         }
         .padding(10)
@@ -435,6 +439,37 @@ enum UITestHarness {
             lines.append("after ⇧⌘T: expanded \(transfers.isExpanded)")
             await toggleDetails()
             lines.append("after ⇧⌘T again: expanded \(transfers.isExpanded)")
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitNoticeTest <log>`: problems reach the strip exactly once, with no alert:
+    /// a tracked failure (duplicating a vanished file) and a precondition
+    /// (putting a folder inside itself).
+    static func runNoticeTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitNoticeTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active else { return lines.append("no browser") }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-notice-test")
+            try? fm.createDirectory(at: root.appendingPathComponent("folder"), withIntermediateDirectories: true)
+            @MainActor func failed() -> [String] { transfers.jobs.filter { $0.isOperation && !$0.failures.isEmpty }.map { "\($0.title): \($0.failures.joined(separator: " | "))" } }
+            let ghost = FileItem(location: .local(root.appendingPathComponent("gone.txt")), name: "gone.txt", isDirectory: false,
+                                 modified: .now, size: 1, kind: "Text")
+            browser.duplicate([ghost])
+            try? await Task.sleep(for: .seconds(1.5))
+            lines.append("after duplicate of a missing file: \(failed())")
+            transfers.dismissFinished()
+            let folder = BrowseLocation.local(root.appendingPathComponent("folder"))
+            browser.drop([folder], into: folder, name: "folder", copy: false)
+            try? await Task.sleep(for: .seconds(1.5))
+            lines.append("after folder into itself: \(failed())")
+            transfers.dismissFinished()
+            try? fm.removeItem(at: root)
             lines.append("done")
         }
     }

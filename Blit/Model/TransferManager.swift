@@ -279,6 +279,8 @@ final class TransferJob: Identifiable {
     var deleteSources = false
     /// Saved to the durable queue (false only for debug simulations).
     var persistent = true
+    /// A problem shown in the strip instead of an alert (see notice(_:action:place:)).
+    var notice: String?
     /// What to do with files already at the destination (PRD R5.3), chosen in
     /// Settings when the transfer was queued.
     var existsRule: ExistsRule = TransferJob.defaultExistsRule
@@ -572,7 +574,12 @@ final class TransferManager {
     func finishOperation(_ job: TransferJob) {
         job.status = job.failures.isEmpty ? .finished : .failed("\(job.failures.count) failed")
         job.finishedAt = Date()
-        guard job.failures.isEmpty else { return }
+        guard job.failures.isEmpty else {
+            // A quick failure never reached the strip (it joins after 400 ms): show it now.
+            if !jobs.contains(where: { $0 === job }) { jobs.append(job) }
+            announce(job.failures.first ?? "")
+            return
+        }
         Task {
             try? await Task.sleep(for: .seconds(4))
             jobs.removeAll { $0 === job }
@@ -580,6 +587,32 @@ final class TransferManager {
         }
     }
     var queuedCount: Int { jobs.filter { $0.status == .queued }.count }
+
+    /// A problem that needs no decision: a ✕ line in the strip that stays
+    /// until dismissed, instead of an alert (PRD: no popups unless a decision
+    /// is needed). `action` names what was tried ("RENAME"), `place` where.
+    func notice(_ message: String, action: String, place: String = "") {
+        let lines = message.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return }
+        let job = TransferJob(kind: .operation(verb: "FAILED", done: action), sources: [], destination: URL(fileURLWithPath: "/"),
+                              title: action, destinationName: place)
+        job.persistent = false
+        job.notice = lines.joined(separator: " · ")
+        job.failures = lines
+        job.status = .failed(lines[0])
+        job.startedAt = Date()
+        job.finishedAt = Date()
+        job.note("✕ \(job.notice!.uppercased())", failure: true)
+        jobs.append(job)
+        announce(message)
+    }
+
+    /// Speaks a problem for VoiceOver users, who don't see the strip change.
+    private func announce(_ message: String) {
+        guard !message.isEmpty, let window = NSApp.mainWindow else { return }
+        NSAccessibility.post(element: window, notification: .announcementRequested,
+                             userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    }
 
     func dismissFinished() {
         jobs.removeAll { !$0.isActive && $0.status != .queued && $0.status != .paused }

@@ -227,6 +227,10 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
   - File operations that take more than a moment (deletes, moves, duplicates, trashing) show in the condensed transfer strip, with an item count, progress cells and the current item. A clean one leaves the strip after a few seconds; one with problems stays until dismissed.
   - Deleting on a server treats anything already gone as deleted (another client or the torrent client may have moved it), and removes a folder only after its listing is closed.
   - Uploads, and copies within or between servers, aren't supported yet. Blit says so rather than failing silently.
+  - **Problems appear in the strip, not in alerts.** A failed new folder, rename, paste, drop, duplicate, trash, Quick Look, undo or resume shows as a ✕ line in the condensed strip: what was tried, then the reason. The full text is in its tooltip and the HUD's WARNING panel, and VoiceOver announces it. It stays until dismissed.
+    - A failed operation always reaches the strip, even one that fails before its progress would have shown.
+    - A problem the operation already shows there isn't reported a second time.
+    - Only decisions stay modal: permanent delete, trusting a host key, entering a password.
 
 ### Transfer engine
 
