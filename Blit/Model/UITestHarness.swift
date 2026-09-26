@@ -141,6 +141,56 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitSpaceTest <log> -BlitSpaceTestDest <mount point>`: fills the volume,
+    /// queues a copy that doesn't fit, checks it waits (not fails), frees space,
+    /// and checks it then finishes.
+    static func runSpaceTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitSpaceTest"),
+              let mount = UserDefaults.standard.string(forKey: "BlitSpaceTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            let fm = FileManager.default
+            func write(_ url: URL, megabytes: Int) {
+                fm.createFile(atPath: url.path, contents: nil)
+                guard let handle = try? FileHandle(forWritingTo: url) else { return }
+                let chunk = Data((0..<(1 << 20)).map { _ in UInt8.random(in: 0...255) })
+                for _ in 0..<megabytes { handle.write(chunk) }
+                try? handle.close()
+            }
+            let src = fm.temporaryDirectory.appendingPathComponent("blit-space-src")
+            try? fm.removeItem(at: src)
+            try? fm.createDirectory(at: src, withIntermediateDirectories: true)
+            write(src.appendingPathComponent("big.bin"), megabytes: 400)
+            let filler = URL(fileURLWithPath: mount).appendingPathComponent("filler.bin")
+            let free = TransferManager.freeSpace(at: URL(fileURLWithPath: mount)) ?? 0
+            write(filler, megabytes: max(0, Int(free >> 20) - 700))
+            lines.append("free after filler: \(TransferManager.freeSpace(at: URL(fileURLWithPath: mount)).map { $0 >> 20 } ?? 0) MB")
+            let dest = URL(fileURLWithPath: mount).appendingPathComponent("dest")
+            try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
+            _ = transfers.enqueue([.local(src.appendingPathComponent("big.bin"))], to: .local(dest), destinationName: "dest")
+            guard let job = transfers.transferJobs.last else { return }
+            for _ in 0..<200 {
+                if case .waitingForSpace = job.status { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            lines.append("status while full: \(job.status)")
+            lines.append("last note: \(job.log.last?.text ?? "-")")
+            try? fm.removeItem(at: filler)
+            lines.append("filler removed")
+            for _ in 0..<600 where job.status != .finished {
+                if case .failed = job.status { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            let same = fm.contentsEqual(atPath: src.appendingPathComponent("big.bin").path,
+                                        andPath: dest.appendingPathComponent("big.bin").path)
+            lines.append("status after freeing: \(job.status) · copy identical: \(same)")
+            lines.append("done")
+            try? fm.removeItem(at: src)
+        }
+    }
+
     static func runIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitRightClickTest") else { return }
         var lines: [String] = ["started"] {

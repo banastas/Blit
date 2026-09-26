@@ -132,6 +132,7 @@ struct MenuBarTransfer: View {
         if case .operation(let verb, _) = job.kind { return verb }
         if job.status == .paused { return "PAUSED" }
         if job.status == .cancelled { return "CANCELLED" }
+        if case .waitingForSpace = job.status { return "NO SPACE" }
         if job.isVerifyingOnly { return "SHA256" }
         if job.status == .preparing { return "…" }
         if case .waiting = job.status { return "RETRY" }

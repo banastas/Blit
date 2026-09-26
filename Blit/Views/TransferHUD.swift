@@ -80,6 +80,7 @@ struct TransferHUD: View {
         case .finished: return (job.allAlreadyPresent ? "ALREADY PRESENT · " : "DONE · ") + route
         case .failed: return "FAILED · " + route
         case .waiting: return "WAITING TO RETRY · " + route
+        case .waitingForSpace: return "WAITING FOR SPACE · " + route
         case .paused: return "PAUSED · " + route
         case .cancelled: return "CANCELLED · " + route
         }
@@ -455,7 +456,7 @@ private struct QueueRow: View {
     private var glyph: String {
         switch job.status {
         case .queued: "·"
-        case .preparing, .running, .waiting: "▲"
+        case .preparing, .running, .waiting, .waitingForSpace: "▲"
         case .paused: "‖"
         case .finished: job.allAlreadyPresent ? "=" : "✓"
         case .failed, .cancelled: "✕"
@@ -468,6 +469,7 @@ private struct QueueRow: View {
         case .preparing: return "PREPARING"
         case .running: return job.isVerifyingOnly ? "SHA256" : "\(Int((job.progress * 100).rounded()))%"
         case .waiting: return "RETRYING"
+        case .waitingForSpace: return "NO SPACE"
         case .paused: return job.totalBytes > 0 ? "PAUSED · \(Int((job.progress * 100).rounded()))%" : "PAUSED"
         case .finished: return job.allAlreadyPresent ? "PRESENT" : "DONE"
         case .failed: return "FAILED"
@@ -490,7 +492,7 @@ private struct QueueRow: View {
                 HUDButton("▼", help: "Move down") { transfers.move(job, by: 1) }
                 HUDButton("‖", help: "Pause") { transfers.pause(job) }
                 HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
-            case .preparing, .running, .waiting:
+            case .preparing, .running, .waiting, .waitingForSpace:
                 HUDButton("‖ PAUSE") { transfers.pause(job) }
                 HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
             case .paused:

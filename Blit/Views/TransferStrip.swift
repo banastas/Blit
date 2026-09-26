@@ -139,7 +139,7 @@ struct TransferStrip: View {
     @ViewBuilder private var queueMenu: some View {
         if !job.isOperation {
             switch job.status {
-            case .queued, .preparing, .running, .waiting:
+            case .queued, .preparing, .running, .waiting, .waitingForSpace:
                 Button("Pause") { transfers.pause(job) }
                 Button("Cancel") { transfers.cancel(job) }
             case .paused:
@@ -181,7 +181,12 @@ struct TransferStrip: View {
     }
 
     @ViewBuilder private var rate: some View {
-        if job.status == .paused || job.status == .cancelled {
+        if case .waitingForSpace = job.status {
+            Text("NO SPACE")
+                .font(HUDFont.terminal(26))
+                .foregroundStyle(Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
+                .fixedSize()
+        } else if job.status == .paused || job.status == .cancelled {
             Text(job.status == .paused ? "PAUSED" : "CANCELLED")
                 .font(HUDFont.terminal(26))
                 .fixedSize()
@@ -217,7 +222,10 @@ struct TransferStrip: View {
     }
 
     @ViewBuilder private var logLine: some View {
-        if case .waiting(let until, let reason) = job.status {
+        if case .waitingForSpace(let reason) = job.status {
+            Text("WAITING FOR SPACE · \(reason.uppercased()) · FREE SOME UP OR PAUSE")
+                .foregroundStyle(Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
+        } else if case .waiting(let until, let reason) = job.status {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let left = max(0, Int(until.timeIntervalSince(context.date)))
                 Text("RETRY IN \(left / 60):\(String(format: "%02d", left % 60)) · \(reason.uppercased())")

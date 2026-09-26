@@ -114,6 +114,8 @@ final class TransferJob: Identifiable {
         case queued, preparing, running, finished, failed(String)
         /// Waiting to retry after a recoverable failure (connection lost, drive unmounted).
         case waiting(until: Date, reason: String)
+        /// The destination doesn't have room; continues by itself once it does (PRD R5.8).
+        case waitingForSpace(String)
         /// Held by the user (PRD R5.2); resumes where it left off.
         case paused
         /// Stopped by the user; partial files stay so a Retry resumes them.
@@ -232,7 +234,7 @@ final class TransferJob: Identifiable {
     var isPausedOrCancelled: Bool { status == .paused || status == .cancelled }
     var isActive: Bool {
         switch status {
-        case .preparing, .running, .waiting: true
+        case .preparing, .running, .waiting, .waitingForSpace: true
         default: false
         }
     }
@@ -780,6 +782,21 @@ final class TransferManager {
                 break
             }
             let reasons = fatal.map { [$0] } ?? job.failures
+            // Out of space mid-transfer (another writer, a miscount): wait for room
+            // instead of retrying into a full disk (PRD R5.8).
+            if reasons.contains(where: Self.isOutOfSpace) {
+                let remaining = UInt64(max(job.totalBytes - job.transferred, 0))
+                guard await waitForSpace(job, needed: remaining) else {
+                    if let request = job.stopRequest { finishStop(job, request) }
+                    break
+                }
+                job.attempt += 1
+                job.failures = []
+                job.verifying = [:]
+                job.status = .preparing
+                job.note("RETRY \(job.attempt) · SPACE AVAILABLE")
+                continue
+            }
             // A drive or share that went away turns into "no such file"-style errors;
             // that's worth waiting for, whatever the message says (PRD R1.4).
             let missing = missingVolumes(job)
@@ -818,6 +835,83 @@ final class TransferManager {
         }
         job.finishedAt = Date()
         job.rate = 0
+    }
+
+    // MARK: Free space (PRD R5.8)
+
+    /// Kept free on the destination beyond what the transfer needs.
+    private static let spaceReserve: UInt64 = 1 << 30
+
+    nonisolated static func isOutOfSpace(_ reason: String) -> Bool {
+        let r = reason.lowercased()
+        return r.contains("no space left") || r.contains("not enough space") || r.contains("disk full")
+    }
+
+    nonisolated static func volumeID(_ url: URL) -> NSObject? {
+        (try? url.resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject
+    }
+
+    /// Bytes still to be written into `destination`: a file already there, or
+    /// a part file (which reserves its full size when created), needs none.
+    nonisolated static func bytesNeeded(_ files: [(relativePath: String, size: UInt64)], in destination: URL) -> UInt64 {
+        let fm = FileManager.default
+        return files.reduce(UInt64(0)) { total, file in
+            let final = destination.appendingPathComponent(file.relativePath).path
+            if fm.fileExists(atPath: final) || fm.fileExists(atPath: final + ".blitpart") { return total }
+            return total + file.size
+        }
+    }
+
+    /// Free space on the destination for writes, including space APFS can purge.
+    nonisolated static func freeSpace(at url: URL) -> UInt64? {
+        let important = (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage.map { UInt64(max($0, 0)) }
+        let plain = availableBytes(at: url.path)
+        switch (important, plain) {
+        case let (a?, b?): return max(a, b)
+        case let (a?, nil): return a
+        case let (nil, b?): return b
+        default: return nil
+        }
+    }
+
+    /// Waits until the destination has room for `needed` bytes (plus a small
+    /// reserve), showing why and notifying once. Returns false if the job was
+    /// paused, cancelled or Blit is quitting meanwhile.
+    private func waitForSpace(_ job: TransferJob, needed: UInt64) async -> Bool {
+        guard needed > 0 else { return true }
+        let destination = job.destination
+        let volume = (try? destination.resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName
+            ?? job.destinationName
+        var waited = false
+        while true {
+            if job.stopRequest != nil || isQuitting || Task.isCancelled { return false }
+            let free = await Task.detached { Self.freeSpace(at: destination) }.value ?? .max
+            if free >= needed + Self.spaceReserve {
+                if waited { job.note("SPACE AVAILABLE ON \(volume.uppercased()) · CONTINUING") }
+                return true
+            }
+            let short = needed + Self.spaceReserve - free
+            let reason = "\(volume) needs \(TransferJob.bytes(Int64(short))) more"
+            job.status = .waitingForSpace(reason)
+            job.rate = 0
+            if !waited {
+                waited = true
+                job.note("✕ WAITING FOR SPACE · \(reason.uppercased())", failure: true)
+                await notifySpace(job, reason: reason)
+            }
+            try? await Task.sleep(for: .seconds(15))
+        }
+    }
+
+    private func notifySpace(_ job: TransferJob, reason: String) async {
+        let center = UNUserNotificationCenter.current()
+        guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Waiting for space: \(job.title)"
+        content.body = "\(reason). Blit continues by itself once there's room."
+        content.sound = .default
+        try? await center.add(UNNotificationRequest(identifier: "space-\(job.id.uuidString)", content: content, trigger: nil))
     }
 
     private func finishStop(_ job: TransferJob, _ request: TransferJob.StopRequest) {
@@ -986,6 +1080,11 @@ final class TransferManager {
         job.fileCount = files.count
         job.totalBytes = Int64(files.reduce(0) { $0 + $1.size })
         job.note("LISTED \(files.count) FILE\(files.count == 1 ? "" : "S") · \(TransferJob.bytes(job.totalBytes))")
+        let destination = job.destination
+        let needed = await Task.detached {
+            Self.bytesNeeded(files.map { ($0.relativePath, $0.size) }, in: destination)
+        }.value
+        guard await waitForSpace(job, needed: needed) else { return }
         job.status = .running
 
         let hasher = RemoteHasher(connection: clients[0].connection)
@@ -1139,6 +1238,17 @@ final class TransferManager {
         job.fileCount = files.count
         job.totalBytes = Int64(files.reduce(0) { $0 + $1.size })
         job.note("LISTED \(files.count) FILE\(files.count == 1 ? "" : "S") · \(TransferJob.bytes(job.totalBytes))")
+        let destination = job.destination
+        let copyNeeded = await Task.detached { () -> UInt64 in
+            let destinationVolume = Self.volumeID(destination)
+            let copied = files.filter { file in
+                // Same APFS volume: a clone, which takes no new space.
+                guard let destinationVolume, let volume = Self.volumeID(URL(fileURLWithPath: file.path)) else { return true }
+                return !volume.isEqual(destinationVolume)
+            }
+            return Self.bytesNeeded(copied.map { ($0.relativePath, $0.size) }, in: destination)
+        }.value
+        guard await waitForSpace(job, needed: copyNeeded) else { return }
 
         if let mount = MountInfo.of(job.destination.path), mount.isSMB {
             let host = mount.source.split(separator: "@").last?.split(separator: "/").first

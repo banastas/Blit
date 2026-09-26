@@ -245,7 +245,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R5.5** Send a notification when a queue finishes or fails.
 - **R5.6** Keep the Mac awake while transfers run.
 - **R5.7** A menu bar icon shows overall progress and speed when the main window is closed.
-- **R5.8** **Queue-wide disk space:** before starting each item, check the destination's free space against everything still queued for it. If it would run out, pause the queue; don't fail the file.
+- **R5.8** **Queue-wide disk space:** before starting each item, check the destination's free space against everything still queued for it. If it would run out, pause the queue; don't fail the file. *Implemented per item:* after listing, a transfer works out the new space it needs (files already there, part files, which reserve their full size, and same-volume clones count as nothing) and, if the destination is short (plus a 1 GB reserve; APFS purgeable space counts), waits with `WAITING FOR SPACE · <volume> NEEDS <n> MORE`, notifies once, and rechecks every 15 s, continuing by itself; Pause and Cancel still work. Running out mid-transfer ("No space left on device") waits the same way instead of retrying into a full disk.
 
 ### Finder integration
 
