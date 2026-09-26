@@ -137,7 +137,15 @@ final class TransferJob: Identifiable {
     let title: String
     let destinationName: String
 
-    var status: Status = .queued
+    var status: Status = .queued {
+        didSet { if status != .running { inFlight = [] } }
+    }
+    /// Files being transferred right now (relative paths), for the file list's
+    /// Status column.
+    var inFlight: Set<String> = []
+    /// How each finished file was verified ("server-sha256", "size-only"…),
+    /// by relative path, for the Status column.
+    var outcomes: [String: String] = [:]
     var totalBytes: Int64 = 0
     var resumedBytes: Int64 = 0
     var fileCount = 0
@@ -1533,16 +1541,22 @@ extension TransferJob {
             case .alreadyPresentVerified(let h): (h, "present-sha256")
             }
             record(source: f.path.description, relativePath: f.relativePath, size: f.size, sha256: hash, verification: method)
+            outcomes[f.relativePath] = method
+            inFlight.remove(f.relativePath)
         } else if case .fileFailed(let f, let reason) = event {
             record(source: f.path.description, relativePath: f.relativePath, size: f.size, sha256: nil, verification: "none", failed: reason)
+            inFlight.remove(f.relativePath)
         }
         switch event {
         case .fileResumed(let f, let bytes):
             // Bytes from an earlier attempt of this job are already in the counter.
             if attempt == 0 { resumedBytes += Int64(bytes) }
             note("RESUME \(f.relativePath.uppercased()) · \(Self.bytes(Int64(bytes))) ON DISK")
-        case .fileStarted(let f): note("GET \(f.relativePath.uppercased())")
+        case .fileStarted(let f):
+            inFlight.insert(f.relativePath)
+            note("GET \(f.relativePath.uppercased())")
         case .fileDownloaded(let f):
+            inFlight.remove(f.relativePath)
             verifying[f.relativePath] = Date()
             hashSizes[f.relativePath] = f.size
             note("DOWNLOADED \(f.relativePath.uppercased()) · VERIFYING")
@@ -1593,12 +1607,18 @@ extension TransferJob {
             case .alreadyPresentVerified(let h): (h, "present-sha256")
             }
             record(source: f.path, relativePath: f.relativePath, size: f.size, sha256: hash, verification: method)
+            outcomes[f.relativePath] = method
+            inFlight.remove(f.relativePath)
         } else if case .fileFailed(let f, let reason) = event {
             record(source: f.path, relativePath: f.relativePath, size: f.size, sha256: nil, verification: "none", failed: reason)
+            inFlight.remove(f.relativePath)
         }
         switch event {
-        case .fileStarted(let f): note("COPY \(f.relativePath.uppercased())")
+        case .fileStarted(let f):
+            inFlight.insert(f.relativePath)
+            note("COPY \(f.relativePath.uppercased())")
         case .fileCopied(let f):
+            inFlight.remove(f.relativePath)
             verifying[f.relativePath] = Date()
             note("COPIED \(f.relativePath.uppercased()) · VERIFYING")
         case .fileFinished(let f, let v):

@@ -14,6 +14,8 @@ struct FileListView: View {
     @State private var isTargeted = false
     @FocusState private var tableFocused: Bool
     @AppStorage("showPathBar") private var showPathBar = true
+    /// Column widths, order and visibility (right-click a column header), kept per window.
+    @SceneStorage("fileColumns") private var columns = TableColumnCustomization<FileItem>()
 
     var body: some View {
         Group {
@@ -69,7 +71,8 @@ struct FileListView: View {
     }
 
     private var tableContent: some View {
-        Table(of: FileItem.self, selection: $browser.selection, sortOrder: $browser.sortOrder) {
+        Table(of: FileItem.self, selection: $browser.selection, sortOrder: $browser.sortOrder,
+              columnCustomization: $columns) {
             TableColumn("Name", value: \.name) { item in
                 HStack(spacing: 4) {
                     if item.depth > 0 { Spacer().frame(width: CGFloat(item.depth) * 16) }
@@ -101,6 +104,8 @@ struct FileListView: View {
                 }
             }
             .width(min: 180, ideal: 360)
+            .customizationID("name")
+            .disabledCustomizationBehavior(.visibility)
 
             TableColumn("Date Modified", value: \.modified) { item in
                 Text(item.modified, format: .dateTime.year().month(.abbreviated).day().hour().minute())
@@ -108,6 +113,7 @@ struct FileListView: View {
                     .foregroundStyle(.secondary)
             }
             .width(min: 120, ideal: 160)
+            .customizationID("modified")
 
             TableColumn("Size", value: \.size) { item in
                 Text(item.isDirectory ? "—" : item.size.formatted(.byteCount(style: .file)))
@@ -116,11 +122,20 @@ struct FileListView: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .width(min: 60, ideal: 80)
+            .customizationID("size")
+
+            // Where the row stands in a transfer in the strip (PRD R2.6).
+            TableColumn("Status") { item in
+                StatusCell(status: browser.operations.transfers.status(for: item))
+            }
+            .width(min: 70, ideal: 110)
+            .customizationID("status")
 
             TableColumn("Kind", value: \.kind) { item in
                 Text(item.kind).foregroundStyle(.secondary).lineLimit(1)
             }
             .width(min: 80, ideal: 140)
+            .customizationID("kind")
         } rows: {
             ForEach(browser.rows) { item in
                 TableRow(item)
@@ -522,5 +537,29 @@ private struct RenameField: View {
             ? whole
             : whole - (ext as NSString).length - 1
         editor.setSelectedRange(NSRange(location: 0, length: max(0, length)))
+    }
+}
+
+/// A Status cell: glyph plus word, never color alone (red only for failures).
+private struct StatusCell: View {
+    let status: FileStatus?
+
+    var body: some View {
+        if let status {
+            HStack(spacing: 4) {
+                if let glyph = status.glyph {
+                    if let pixel = PixelGlyph(rawValue: glyph) {
+                        Image(nsImage: pixel.image(size: 9))
+                    } else {
+                        Text(String(glyph))
+                    }
+                }
+                Text(status.text).monospacedDigit().lineLimit(1)
+            }
+            .foregroundStyle(status.isFailure ? Color.failureText : .secondary)
+            .help(status.help)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Status: \(status.text)")
+        }
     }
 }

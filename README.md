@@ -205,7 +205,11 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R2.3** Drag and drop between panes and to and from Finder.
 - **R2.4** **Sort by date modified, newest first, by default.** Clicking a column header, or View › Sort By (Finder's ⌃⌥⌘1/2/5/6 for Name/Kind/Date Modified/Size), changes the sort. The choice is remembered per folder, local or on a server, across launches. Choosing newest first again forgets it, and up to 1,000 folders are remembered. Every other folder opens newest at the top.
 - **R2.5** **Alternating row backgrounds** in every file list, using the standard macOS alternating row colors so they match light and dark mode.
-- **R2.6** Columns: Name, Date modified, Size, Status (queued, percent done, verified, failed). Columns can be shown, hidden, and resized.
+- **R2.6** Columns: Name, Date modified, Size, Status, Kind. Right-click a column header to show or hide columns (Name always shows). Columns can be resized and reordered, and the layout is kept per window.
+  - **Status** shows where a row stands in a transfer that's still in the strip. Rows match both as the transfer's source (the seedbox folder dragged from) and at its destination, including a `.blitpart` on its way.
+  - For files: queued · ▲ transferring · verifying NN% (the server's hash progress) · ✓ verified / cloned · = size only / already there · ✕ failed (reason in the tooltip) · ‖ paused.
+  - For folders: the dragged folder shows the job's percent while it runs, then ✓ done or ✕ N failed. Subfolders show how many files are done.
+  - Glyph and word, never color alone. Once the transfer is dismissed from the strip, the Status clears, and the name's ✓ badge keeps the verification.
 - **R2.7** ⌘K command palette to jump to any server, drive, or recent folder.
 - **R2.8** A single pane by default, with a keyboard shortcut to toggle a second pane.
 - **R2.9** **Favorites:** pinned folders on any location (local drive, NAS share, remote server) at the top of the sidebar. Add by dragging a folder in or with ⌘D; reorder by dragging; remove from a context menu. Each shows its volume or server, and is dimmed when that isn't mounted or connected.

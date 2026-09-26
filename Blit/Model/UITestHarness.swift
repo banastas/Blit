@@ -474,6 +474,44 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitStatusTest <log>`: the Status column's lookup for a local copy,
+    /// on source and destination rows, queued and finished.
+    static func runStatusTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitStatusTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-status-test")
+            try? fm.removeItem(at: root)
+            let pack = root.appendingPathComponent("src/Pack"), dest = root.appendingPathComponent("dst")
+            try? fm.createDirectory(at: pack, withIntermediateDirectories: true)
+            try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
+            for name in ["a.bin", "b.bin"] { fm.createFile(atPath: pack.appendingPathComponent(name).path, contents: Data(count: 1 << 20)) }
+            @MainActor func show(_ label: String, _ folder: URL) {
+                let items = (try? BrowserModel.listLocal(folder, showHidden: false)) ?? []
+                for item in items.sorted(by: { $0.name < $1.name }) {
+                    let s = transfers.status(for: item)
+                    lines.append("\(label) \(item.name): \(s.map { "\($0.glyph.map(String.init) ?? "")\($0.text)" } ?? "—")")
+                }
+            }
+            if let message = transfers.enqueue([.local(pack)], to: .local(dest), destinationName: "dst") { lines.append("enqueue: \(message)") }
+            show("queued src", root.appendingPathComponent("src"))
+            show("queued src/Pack", pack)
+            for _ in 0..<60 where transfers.transferJobs.last?.status != .finished { try? await Task.sleep(for: .milliseconds(250)) }
+            show("done src", root.appendingPathComponent("src"))
+            show("done src/Pack", pack)
+            show("done dst", dest)
+            show("done dst/Pack", dest.appendingPathComponent("Pack"))
+            transfers.dismissFinished()
+            show("dismissed dst/Pack", dest.appendingPathComponent("Pack"))
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {
