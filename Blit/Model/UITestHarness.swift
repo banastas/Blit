@@ -808,6 +808,72 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRenderProductImage out.png` (with -BlitIsolatedQueue YES): a 1600×1200
+    /// product image for the store: icon, name, tagline and the real HUD.
+    static func renderProductImageIfRequested(transfers: TransferManager) {
+        guard let path = UserDefaults.standard.string(forKey: "BlitRenderProductImage") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let job = TransferJob(kind: .download(ServerConfig()), sources: [], destination: URL(fileURLWithPath: "/tmp"),
+                                  title: "SHOOT_2026-09", destinationName: "Incoming")
+            job.persistent = false
+            job.status = .running
+            job.fileCount = 26; job.filesFinished = 17; job.filesVerified = 17
+            job.totalBytes = 61_200_000_000; job.counter.add(40_900_000_000)
+            job.connections = 3; job.link = "3× · 255K×32 · EN7"; job.rttMilliseconds = 148
+            job.rate = 74.2; job.peakRate = 81.3; job.hashCacheHits = 5
+            job.history = (0..<60).map { i in 62 + 12 * sin(Double(i) / 5) + Double(i % 7) }
+            job.connectionRates = [25.1, 23.8, 25.3]
+            job.hashed = ["A001_C017.MOV": 2_600_000_000]; job.hashSizes = ["A001_C017.MOV": 4_100_000_000]
+            for (i, text) in ["CONNECT · 3 CONNECTIONS · 255K×32 · EN7", "RESUME A001_C015.MOV · 1.4 GB ON DISK",
+                              "✓ SHA256 9F3A1C… VERIFIED · A001_C015.MOV", "DOWNLOADED A001_C016.MOV · VERIFYING",
+                              "✓ SHA256 2B77E0… VERIFIED · A001_C016.MOV · SERVER CACHE", "GET A001_C018.MOV → INCOMING"].enumerated() {
+                _ = i; job.note(text)
+            }
+            let art = ["......##......", "......##......", "......##......", "......##......",
+                       "..##########..", "...########...", "....######....", ".....####.....",
+                       "......##......", "..............", "..............", "##.##.##.##.::"]
+            let icon = Canvas { context, size in
+                let cell = size.width / 14
+                for (y, row) in art.enumerated() {
+                    for (x, ch) in row.enumerated() where ch != "." {
+                        context.fill(Path(CGRect(x: CGFloat(x) * cell, y: CGFloat(y) * cell, width: cell, height: cell)),
+                                     with: .color(ch == "#" ? HUDColor.bright : Color(white: 0.29)))
+                    }
+                }
+            }
+            .frame(width: 112, height: 96)
+            let content = VStack(alignment: .leading, spacing: 34) {
+                HStack(alignment: .center, spacing: 34) {
+                    RoundedRectangle(cornerRadius: 34).fill(Color(white: 0.07))
+                        .overlay(RoundedRectangle(cornerRadius: 34).strokeBorder(HUDColor.border, lineWidth: 1))
+                        .overlay(icon)
+                        .frame(width: 168, height: 168)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("BLIT").font(HUDFont.label(92)).foregroundStyle(HUDColor.bright)
+                        Text("Big files, moved fast, proven intact.").font(HUDFont.terminal(44)).foregroundStyle(HUDColor.bright)
+                        Text("SFTP · DRIVES · NAS  —  EVERY FILE SHA-256 VERIFIED WHERE IT LANDS")
+                            .font(HUDFont.label(15)).foregroundStyle(HUDColor.dim)
+                    }
+                }
+                // Laid out at 1152 wide, drawn 1.25× (whole-pixel cells) to fill the width.
+                TransferHUD(job: job).environment(transfers).frame(width: 1152)
+                    .scaleEffect(1.25, anchor: .topLeading)
+                    .frame(width: 1440, height: 461 * 1.25, alignment: .topLeading)
+            }
+            .padding(.horizontal, 80)
+            .frame(width: 1600, height: 1200, alignment: .center)
+            .background(HUDColor.background)
+            .environment(\.colorScheme, .dark)
+            let renderer = ImageRenderer(content: content)
+            renderer.scale = 1
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: path))
+            }
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {
