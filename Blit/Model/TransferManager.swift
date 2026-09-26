@@ -1,6 +1,7 @@
-// Transfers started by drag and drop (PRD R2.10): a queue run one job at a
-// time, using BlitKit's parallel verified download (server → local) or
-// verified copy (local → local, cloning within one APFS volume).
+// Transfers started by drag and drop (PRD R2.10): a queue with two lanes, one
+// download and one local copy at a time (they use different links), using
+// BlitKit's parallel verified download (server → local) or verified copy
+// (local → local, cloning within one APFS volume).
 
 import BlitLocal
 import BlitRemote
@@ -229,6 +230,16 @@ final class TransferJob: Identifiable {
         if case .operation = kind { return true }
         return false
     }
+    /// Downloads and local copies run in separate lanes, one of each at a time:
+    /// they use different links (internet vs. the home network).
+    enum Lane: Hashable { case download, copy }
+    var lane: Lane {
+        if case .download = kind { return .download }
+        return .copy
+    }
+    /// Connections this job holds while running (closed on pause, cancel or quit).
+    @ObservationIgnored var liveConnections: [SSHConnection] = []
+
     /// Set when the user pauses or cancels this job while it runs.
     var stopRequest: StopRequest? {
         didSet { stopFlag.set(stopRequest != nil) }
@@ -301,13 +312,14 @@ final class TransferManager {
     @ObservationIgnored var onFinished: ((TransferJob) -> Void)?
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let verifier: BlitHostKeyVerifier
-    @ObservationIgnored private var running = false
-    @ObservationIgnored private var runTask: Task<Void, Never>?
-    @ObservationIgnored private weak var runningJob: TransferJob?
+    /// The job running in each lane, and its task.
+    @ObservationIgnored private var runningJobs: [TransferJob.Lane: TransferJob] = [:]
+    @ObservationIgnored private var runTasks: [TransferJob.Lane: Task<Void, Never>] = [:]
+    /// Jobs running right now (keeps the Mac awake while any is).
+    @ObservationIgnored private var activeRuns = 0
     /// Every job finished so far in the current batch verified its files.
     @ObservationIgnored private var batchVerified = true
-    /// Connections held by the running job, closed if Blit quits mid-transfer.
-    @ObservationIgnored private var liveConnections: [SSHConnection] = []
+
     @ObservationIgnored private var isQuitting = false
     @ObservationIgnored private var notificationProblemReported = false
     /// Held while transferring so the Mac doesn't idle-sleep (PRD R5.6).
@@ -322,8 +334,8 @@ final class TransferManager {
     func prepareForQuit() async {
         saveQueue()
         isQuitting = true
-        let connections = liveConnections
-        liveConnections.removeAll()
+        let connections = jobs.flatMap(\.liveConnections)
+        for job in jobs { job.liveConnections.removeAll() }
         await withTaskGroup(of: Void.self) { group in
             for connection in connections { group.addTask { await connection.close() } }
             group.addTask { try? await Task.sleep(for: .seconds(1)) }
@@ -384,8 +396,10 @@ final class TransferManager {
         didSet { UserDefaults.standard.set(queuePaused, forKey: "queuePaused") }
     }
 
+    private func isRunning(_ job: TransferJob) -> Bool { runningJobs[job.lane] === job }
+
     func pause(_ job: TransferJob) {
-        if job === runningJob {
+        if isRunning(job) {
             stop(job, .pause)
         } else if job.status == .queued {
             job.status = .paused
@@ -402,7 +416,7 @@ final class TransferManager {
     }
 
     func cancel(_ job: TransferJob) {
-        if job === runningJob {
+        if isRunning(job) {
             stop(job, .cancel)
         } else if job.status == .queued || job.status == .paused {
             job.status = .cancelled
@@ -458,7 +472,7 @@ final class TransferManager {
 
     func pauseAll() {
         queuePaused = true
-        if let runningJob { stop(runningJob, .pause) }
+        for job in runningJobs.values { stop(job, .pause) }
     }
 
     func resumeAll() {
@@ -475,13 +489,17 @@ final class TransferManager {
     /// the copy engine stops at its next block, and a retry wait is cut short.
     private func stop(_ job: TransferJob, _ request: TransferJob.StopRequest) {
         job.stopRequest = request
-        let connections = liveConnections
-        liveConnections.removeAll()
+        let connections = job.liveConnections
+        job.liveConnections.removeAll()
         for connection in connections { Task { await connection.close() } }
-        runTask?.cancel()
+        runTasks[job.lane]?.cancel()
     }
 
     #if DEBUG
+    /// Adds jobs without starting them (self-tests of queue rules).
+    func debugAppend(_ newJobs: [TransferJob]) { jobs += newJobs }
+    func debugRemove(_ old: [TransferJob]) { jobs.removeAll { job in old.contains { $0 === job } } }
+
     /// `-BlitFakeTransfer YES`: a simulated download in the HUD (percent ticking,
     /// connection rates changing) to reproduce layout issues without a server.
     func startFakeTransferIfRequested() {
@@ -711,15 +729,34 @@ final class TransferManager {
         return names.count == 1 ? first : "\(first) +\(names.count - 1)"
     }
 
+    /// Starts the next waiting job in each free lane (queue order within a lane).
     private func runNext() {
-        guard !running, !queuePaused, let job = jobs.first(where: { $0.status == .queued }) else { return }
-        running = true
-        runningJob = job
-        runTask = Task {
+        guard !queuePaused else { return }
+        for lane in [TransferJob.Lane.download, .copy] where runningJobs[lane] == nil {
+            guard let job = jobs.first(where: { $0.status == .queued && $0.lane == lane && !isBlocked($0) }) else { continue }
+            start(job)
+        }
+    }
+
+    /// A copy waits for downloads queued ahead of it into its source (copying a
+    /// pack to the NAS while it's still downloading would copy half of it).
+    func isBlocked(_ job: TransferJob) -> Bool {
+        guard job.lane == .copy, let index = jobs.firstIndex(where: { $0 === job }) else { return false }
+        let sources = job.sources.compactMap { $0.localURL?.standardizedFileURL.path }
+        return jobs[..<index].contains { earlier in
+            guard earlier.lane == .download, earlier.status == .queued || earlier.isActive || earlier.status == .paused else { return false }
+            let destination = earlier.destination.standardizedFileURL.path
+            return sources.contains { $0 == destination || $0.hasPrefix(destination + "/") || destination.hasPrefix($0 + "/") }
+        }
+    }
+
+    private func start(_ job: TransferJob) {
+        let lane = job.lane
+        runningJobs[lane] = job
+        runTasks[lane] = Task {
             await run(job)
-            running = false
-            runningJob = nil
-            runTask = nil
+            runningJobs[lane] = nil
+            runTasks[lane] = nil
             saveQueue()
             if job.isPausedOrCancelled {
                 // Held or stopped by the user: no notification, no batch verdict.
@@ -769,13 +806,17 @@ final class TransferManager {
         saveQueue()
         let sampler = Task { await sample(job) }
         defer { sampler.cancel() }
+        activeRuns += 1
         if keepAwake == nil {
             keepAwake = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled],
                                                               reason: "Blit is transferring files")
         }
         defer {
-            if let activity = keepAwake { ProcessInfo.processInfo.endActivity(activity) }
-            keepAwake = nil
+            activeRuns -= 1
+            if activeRuns == 0, let activity = keepAwake {
+                ProcessInfo.processInfo.endActivity(activity)
+                keepAwake = nil
+            }
         }
 
         var stalled = 0
@@ -1041,7 +1082,9 @@ final class TransferManager {
             let hashedNow = job.hashedTotal
             job.hashRate = Double(hashedNow - min(lastHashed, hashedNow)) / seconds / 1e6
             lastHashed = hashedNow
-            if job.isActive { DockProgress.shared.update(job.isVerifyingOnly ? (job.verifyProgress ?? job.progress) : job.progress) }
+            if job.isActive, featured === job {
+                DockProgress.shared.update(job.isVerifyingOnly ? (job.verifyProgress ?? job.progress) : job.progress)
+            }
             guard job.status == .running else { continue }
             job.rate = rate
             job.peakRate = max(job.peakRate, rate)
@@ -1086,9 +1129,9 @@ final class TransferManager {
             }
             return opened.sorted { $0.0 < $1.0 }.map(\.1)
         }
-        liveConnections = clients.map(\.connection)
+        job.liveConnections = clients.map(\.connection)
         defer {
-            liveConnections.removeAll()
+            job.liveConnections.removeAll()
             for c in clients { Task { await c.connection.close() } }
         }
         let strategy = clients[0].strategy
@@ -1336,7 +1379,7 @@ final class TransferManager {
                 let connection = try await SSHConnection.connect(to: login.endpoint, credential: .password(password),
                                                                  verifier: verifier)
                 nasConnection = connection
-                liveConnections = [connection]
+                job.liveConnections = [connection]
                 nas = NASVerifier(connection: connection, mountPoint: mount.mountPoint, nasRoot: root)
                 job.nasVerified = true
                 job.note("NAS \(login.host.uppercased()) · VERIFYING ON \(root.uppercased())")
@@ -1345,7 +1388,7 @@ final class TransferManager {
             }
         }
         defer {
-            liveConnections.removeAll()
+            job.liveConnections.removeAll()
             if let nasConnection { Task { await nasConnection.close() } }
         }
 

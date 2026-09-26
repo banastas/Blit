@@ -7,6 +7,7 @@
 #if DEBUG
 import AppKit
 import BlitRemote
+import BlitSFTP
 import SwiftUI
 
 @MainActor
@@ -381,6 +382,35 @@ enum UITestHarness {
             let rows = tables(in: logWindow?.contentView).first?.numberOfRows ?? -1
             let records = TransferLog.records().count
             lines.append("log window open: \(logWindow != nil) · rows \(rows) · records in file \(records)")
+            lines.append("done")
+            try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
+    static func runLaneTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }
+        Task { @MainActor in
+            var server = ServerConfig()
+            server.host = "example.invalid"
+            let ssd = URL(fileURLWithPath: "/Volumes/TestSSD/Downloads")
+            let download = TransferJob(kind: .download(server), sources: [.remote(server.id, RemotePath("files/Pack"))],
+                                       destination: ssd, title: "Pack", destinationName: "Downloads")
+            download.status = .paused   // stays put: never starts
+            let dependent = TransferJob(kind: .copy, sources: [.local(ssd.appendingPathComponent("Pack"))],
+                                        destination: URL(fileURLWithPath: "/Volumes/Media/Movies"), title: "Pack",
+                                        destinationName: "Movies")
+            let unrelated = TransferJob(kind: .copy, sources: [.local(URL(fileURLWithPath: "/Volumes/TestSSD/Other"))],
+                                        destination: URL(fileURLWithPath: "/Volumes/Media/Movies"), title: "Other",
+                                        destinationName: "Movies")
+            for job in [dependent, unrelated] { job.status = .paused }
+            transfers.debugAppend([download, dependent, unrelated])
+            var lines = ["lanes: download=\(download.lane) copy=\(dependent.lane)"]
+            lines.append("dependent blocked while download waits: \(transfers.isBlocked(dependent))")
+            lines.append("unrelated blocked: \(transfers.isBlocked(unrelated))")
+            download.status = .finished
+            lines.append("dependent blocked after download finished: \(transfers.isBlocked(dependent))")
+            transfers.debugRemove([download, dependent, unrelated])
             lines.append("done")
             try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
         }
