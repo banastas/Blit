@@ -157,7 +157,7 @@ A failure adds a compact red `✕ N warning` tag in the top line (in place of th
 - **Dock icon:** a strip of pixel progress cells while transferring; a pixel ✓ for five seconds when a batch finishes verified.
 - **Verified badge:** a small pixel ✓ after the names of local files Blit copied and verified by SHA-256 (server, NAS or read-back), from the transfer log, while their size still matches; hover for how and when. Renames and moves in Blit keep it for the session.
 - **Spinners:** a pixel dot chasing round a 3×3 ring (Refreshing…, expanding folders, first load).
-- **Drop targets:** pixel marching ants instead of a dashed outline: file list, sidebar rows and path-bar segments.
+- **Drop targets:** pixel marching ants instead of a dashed outline: file list, sidebar rows and path-bar segments. Sidebar rows (favorites, servers, drives, shares) also get a Finder-style tinted highlight while targeted, drawn inside the row, since a sidebar row clips anything past its edges.
 - **NAS verification shield:** a pixel shield with a check knocked out.
 - **About Blit:** the pixel-terminal style, with version and build.
 

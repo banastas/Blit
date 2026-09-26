@@ -174,6 +174,10 @@ private struct TransferTarget: ViewModifier {
     let name: String
     let onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
     @State private var isTargeted = false
+    #if DEBUG
+    /// Draws every row as targeted, for a layout render (-BlitRenderSidebarTarget).
+    @MainActor static var showAllTargeted = false
+    #endif
 
     func body(content: Content) -> some View {
         content
@@ -185,13 +189,33 @@ private struct TransferTarget: ViewModifier {
                 onTransfer(sources, location, name)
                 return true
             } isTargeted: { isTargeted = $0 }
+            // Drawn inside the row: a sidebar row clips anything past its edges,
+            // which hid the old outline (drawn 3 pt outside) entirely.
+            .background {
+                if showsTarget {
+                    RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.22)).padding(-2)
+                }
+            }
             .overlay {
-                if isTargeted {
-                    PixelMarchingAnts(cell: 1.5).padding(-3)
+                if showsTarget {
+                    PixelMarchingAnts(cell: 1.5).padding(.horizontal, -1).padding(.vertical, 0)
                 }
             }
     }
+
+    private var showsTarget: Bool {
+        #if DEBUG
+        if Self.showAllTargeted { return true }
+        #endif
+        return isTargeted
+    }
 }
+
+#if DEBUG
+@MainActor enum TransferTargetDebug {
+    static func showAll() { TransferTarget.showAllTargeted = true }
+}
+#endif
 
 extension View {
     func transferTarget(_ location: BrowseLocation, name: String,
