@@ -484,7 +484,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         </ul>
         <div class="price-cta">
           <a class="btn is-soon" id="buy-button" aria-disabled="true"
-             data-checkout="https://blit.lemonsqueezy.com/checkout/buy/1eb9b37f-ef04-4947-a7ab-ee13a6af1fc6?embed=1">Buy Blit · $19</a>
+             data-checkout="https://blit.lemonsqueezy.com/checkout/buy/1eb9b37f-ef04-4947-a7ab-ee13a6af1fc6?embed=1&desc=0">Buy Blit · $19</a>
           <span class="label dim" id="buy-note">Checkout opens soon · secure payment by Lemon Squeezy</span>
         </div>
       </div>
@@ -664,7 +664,10 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
   const buy = $("buy-button");
   if (buy && (CHECKOUT_LIVE || new URLSearchParams(location.search).has("checkout"))) {
     const url = buy.dataset.checkout;
-    buy.href = url.replace("?embed=1", "");
+    // The same checkout as a plain page (without embed=1), for the fallback.
+    const page = new URL(url);
+    page.searchParams.delete("embed");
+    buy.href = page.href;
     buy.classList.remove("is-soon");
     buy.removeAttribute("aria-disabled");
     $("buy-note").textContent = (CHECKOUT_LIVE ? "" : "TEST MODE · ") + "Secure payment by Lemon Squeezy · 30-day refunds";
