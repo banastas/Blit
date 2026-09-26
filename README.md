@@ -489,6 +489,11 @@ The setup Blit is tuned against:
 8. **Connection ramp:** does the seedbox's sshd drop near-simultaneous logins above `MaxStartups`? Opening 3–4 connections 250 ms apart worked every time in M1. 8–16 at once wasn't tested, and isn't needed at 3–4 connections.
 9. ~~**Cold-file throughput**~~ **Answered (M2):** 22–36 MB/s, set by the seedbox's shared disk and its load; more connections and server-side prefetch don't raise it ([results](#cold-file-results-m2)).
 10. **Fetch new downloads automatically?** Freshly completed files are usually still in the seedbox's cache and download 2–3× faster. A watch mode that fetches new completed downloads as they appear would take advantage of that. It's a candidate for after v1.
+12. ~~**Distribution?**~~ **Decided (2026-09-26): sold directly from the website, not the Mac App Store.** Price $15–20, one-time, with a 7-day trial. Closed source for now; when v2.0 ships, v1.0 may be open-sourced (the license is still to be chosen).
+    - Reasons: Blit isn't sandboxed and relies on things the sandbox makes hard (`~/.ssh` keys and `known_hosts`, any mounted volume, Finder Services), same-day notarized releases, and better margins.
+    - Still to build: merchant-of-record checkout (it handles sales tax and VAT), license keys with the trial, automatic updates (Sparkle), a first-run flow, a privacy policy, a EULA and a support address. Also a trademark check on the name, and possibly a lower minimum macOS to widen the audience.
+    - When the trial ends, starting new transfers is locked. Transfers already queued or running still finish, and browsing, the log and files stay available.
+    - Marketing stays on big-file work (photo and video, archiving, NAS backups).
 11. ~~**Chained transfers (seedbox → SSD → NAS in one go)?**~~ **Decided: deprioritized.** The user is the review step between SSD and NAS: everything downloaded gets reviewed on the SSD, renamed to the naming conventions where needed, and only then archived to whichever NAS location fits (or not at all). Automating SSD → NAS would skip that step. Work on the middle of the workflow should make review faster, not bypass it.
 
 ## Repository layout
