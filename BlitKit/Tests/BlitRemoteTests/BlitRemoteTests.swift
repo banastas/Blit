@@ -176,34 +176,50 @@ let ecdsaFingerprint = "SHA256:76qoOQkgBMCQb+Pv8st5gk/vAkC3VBxLHcxjifRRDkw"
         try fm.createDirectory(at: bin, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
         let shim = bin.appendingPathComponent("stat")
-        try "#!/bin/sh\n# GNU-style: stat -L -c \"%s %Y\" -- FILE\nexec /usr/bin/stat -L -f \"%z %m\" \"$5\"\n"
+        try "#!/bin/sh\n# GNU-style: stat -L -c \"%s %Y %Z %i\" -- FILE\nexec /usr/bin/stat -L -f \"%z %m %c %i\" \"$5\"\n"
             .write(to: shim, atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
 
         for name in ["plain.bin", "it's a \"quoted\" name $(x).bin", "new\nline.bin"] {
             let file = root.appendingPathComponent(name)
             try Data("abcdef".utf8).write(to: file)
-            func run() throws -> RemoteHasher.Result? {
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/bin/sh")
-                p.arguments = ["-c", RemoteHasher.script, "blit", file.path]
-                var env = ProcessInfo.processInfo.environment
-                env["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
-                env["HOME"] = root.path
-                env.removeValue(forKey: "XDG_CACHE_HOME")
-                p.environment = env
-                let out = Pipe()
-                p.standardOutput = out
-                try p.run()
-                p.waitUntilExit()
-                return RemoteHasher.parse(scriptOutput: Array(out.fileHandleForReading.readDataToEndOfFile()))
+            func run(bypassCache: Bool = false) throws -> RemoteHasher.Result? {
+                try runScript(file, bin: bin, home: root, bypassCache: bypassCache)
             }
             let first = try #require(try run())
             #expect(first.sha256 == "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721")
             #expect(first.size == 6)
             #expect(!first.cached)
             #expect(try run()?.cached == true)
+            #expect(try run(bypassCache: true)?.cached == false)
         }
+
+        // A failed read must never produce (or cache) a hash of a truncated
+        // stream: an unreadable file exits with no result, and stays uncached.
+        let locked = root.appendingPathComponent("locked.bin")
+        try Data("secret".utf8).write(to: locked)
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: locked.path) }
+        #expect(try runScript(locked, bin: bin, home: root) == nil)
+        #expect(try runScript(locked, bin: bin, home: root) == nil)
+    }
+
+    private func runScript(_ file: URL, bin: URL, home: URL, bypassCache: Bool = false) throws -> RemoteHasher.Result? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", RemoteHasher.script, "blit", file.path]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = bin.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
+        env["HOME"] = home.path
+        env.removeValue(forKey: "XDG_CACHE_HOME")
+        if bypassCache { env["BLIT_NOCACHE"] = "1" } else { env.removeValue(forKey: "BLIT_NOCACHE") }
+        p.environment = env
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        p.waitUntilExit()
+        return RemoteHasher.parse(scriptOutput: Array(out.fileHandleForReading.readDataToEndOfFile()))
     }
 }
 
@@ -274,5 +290,44 @@ let ecdsaFingerprint = "SHA256:76qoOQkgBMCQb+Pv8st5gk/vAkC3VBxLHcxjifRRDkw"
 
     @Test func scriptHasNoSingleQuotes() {
         #expect(!RemoteHasher.script.contains("'"))
+    }
+}
+
+@Suite struct LocalNameSafetyTests {
+    @Test func serverNamesCannotLeaveTheFolder() {
+        #expect(TransferPlan.localName(RemotePath("x/../../../Library/evil.plist")) == "x%2F..%2F..%2F..%2FLibrary%2Fevil.plist")
+        #expect(TransferPlan.localName(RemotePath("..")) == "%2E%2E")
+        #expect(TransferPlan.localName(RemotePath(".")) == "%2E")
+        #expect(TransferPlan.localName(RemotePath(bytes: [0x61, 0x2F, 0xFF])) == "a%2F%FF")
+        #expect(TransferPlan.localName(RemotePath("Movie.2160p.mkv")) == "Movie.2160p.mkv")
+        #expect(TransferPlan.isContained("Pack/Sample/a.mkv"))
+        #expect(!TransferPlan.isContained("Pack/../../a.mkv"))
+        #expect(!TransferPlan.isContained("/etc/passwd"))
+        #expect(!TransferPlan.isContained("Pack//a.mkv"))
+    }
+}
+
+@Suite struct RenameIntoPlaceTests {
+    @Test func neverReplacesSomethingThatAppeared() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("blit-rename-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let part = dir.appendingPathComponent("a.mkv.blitpart").path
+        let final = dir.appendingPathComponent("a.mkv").path
+
+        try Data("new".utf8).write(to: URL(fileURLWithPath: part))
+        try renameIntoPlace(part, final, overwrite: false)
+        #expect(try String(contentsOfFile: final, encoding: .utf8) == "new")
+
+        // Someone else created the final name meanwhile: kept, not replaced.
+        try Data("newer".utf8).write(to: URL(fileURLWithPath: part))
+        #expect(throws: POSIXFailure.self) { try renameIntoPlace(part, final, overwrite: false) }
+        #expect(try String(contentsOfFile: final, encoding: .utf8) == "new")
+        #expect(fm.fileExists(atPath: part))
+
+        // --overwrite replaces.
+        try renameIntoPlace(part, final, overwrite: true)
+        #expect(try String(contentsOfFile: final, encoding: .utf8) == "newer")
     }
 }

@@ -253,16 +253,26 @@ final class FileOperations {
     /// Whether deleting `items` moves them to the Trash. Items on servers and on
     /// network shares have no Trash, so they're deleted immediately (as in Finder).
     func canTrash(_ items: [BrowseLocation]) -> Bool {
-        items.allSatisfy { item in
-            guard let url = item.localURL else { return false }
-            return (try? url.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal == true
-        }
+        let local = items.compactMap(\.localURL)
+        guard local.count == items.count else { return false }
+        // Judge by the volume, via the parent folder: an item that has already
+        // vanished (moved in Finder) mustn't turn a trash into a permanent delete.
+        let present = local.filter { FileManager.default.fileExists(atPath: $0.path) }
+        let probes = present.isEmpty ? local.map { $0.deletingLastPathComponent() } : present
+        return probes.allSatisfy { (try? $0.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal == true }
     }
 
     func moveToTrash(_ items: [BrowseLocation]) async -> String? {
         let problems = await track("TRASH", done: "MOVED TO TRASH", items, to: "Trash") { item in
             guard let url = item.localURL else { return }
-            try await Task.detached { try FileManager.default.trashItem(at: url, resultingItemURL: nil) }.value
+            try await Task.detached {
+                do {
+                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                } catch CocoaError.fileNoSuchFile {
+                    // Already gone: nothing to trash.
+                }
+            }.value
+            VerifiedIndex.shared.removed(url)
         }
         onChanged?(items.compactMap(\.parent))
         return Self.summary(problems)
@@ -286,6 +296,7 @@ final class FileOperations {
                         // Already gone: that's what was asked for.
                     }
                 }.value
+                VerifiedIndex.shared.removed(url)
             }
         }
         let remote = Dictionary(grouping: items.filter { $0.serverID != nil }, by: { $0.serverID! })
@@ -344,12 +355,20 @@ final class FileOperations {
         .message("“\(name)” has the same name as the folder it's in, so it can't sit next to that folder in “\(destination)”. Rename it first (for a video, add its extension, such as .mp4), then move it.")
     }
 
-    /// Fails if `path` exists: SFTP servers differ on whether a rename replaces its target.
+    /// Fails unless `path` definitely doesn't exist: SFTP servers differ on
+    /// whether a rename replaces its target (SFTPGo does), so any stat answer
+    /// other than "no such file" (including permission denied or a timeout)
+    /// stops the operation. SFTP v3 can't close the remaining race.
     private static func ensureMissing(_ path: RemotePath, on client: SFTPClient, in folder: String) async throws {
-        if (try? await client.stat(path)) != nil {
-            let where_ = folder.isEmpty ? "the home folder" : "“\(folder)”"
-            throw FileOperationError.message("“\(path.lastComponent)” already exists in \(where_).")
+        do {
+            _ = try await client.stat(path)
+        } catch SFTPError.status(let code, _) where code == SFTPStatusCode.noSuchFile.rawValue {
+            return
+        } catch {
+            throw FileOperationError.message("Couldn't check whether “\(path.lastComponent)” already exists: \(describe(error))")
         }
+        let where_ = folder.isEmpty ? "the home folder" : "“\(folder)”"
+        throw FileOperationError.message("“\(path.lastComponent)” already exists in \(where_).")
     }
 
     /// Problems for an alert: repeats dropped, and at most five listed.

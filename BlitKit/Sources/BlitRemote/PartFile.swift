@@ -84,6 +84,11 @@ public struct POSIXFailure: Error, CustomStringConvertible, Sendable {
         self.code = errno
     }
 
+    public init(_ operation: String, code: Int32) {
+        self.operation = operation
+        self.code = code
+    }
+
     public var description: String { "\(operation): \(String(cString: strerror(code)))" }
 }
 
@@ -106,4 +111,25 @@ public func localSHA256(path: String) throws -> String {
         hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: buffer[..<n]))
     }
     return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+}
+
+/// Moves a finished part file to its final name. Unless `overwrite`, fails if
+/// something now exists there: the exists check at planning time can be hours
+/// old, and another writer may have created the file since (RENAME_EXCL where
+/// the volume supports it; a check just before the rename elsewhere, e.g. SMB).
+public func renameIntoPlace(_ part: String, _ final: String, overwrite: Bool) throws {
+    if overwrite {
+        guard rename(part, final) == 0 else { throw POSIXFailure("rename to \(final)") }
+        return
+    }
+    if renamex_np(part, final, UInt32(RENAME_EXCL)) == 0 { return }
+    let code = errno
+    if code == EEXIST {
+        throw POSIXFailure("\(final) appeared at the destination during the transfer; kept \(part)", code: code)
+    }
+    guard code == ENOTSUP || code == EINVAL else { throw POSIXFailure("rename to \(final)", code: code) }
+    if access(final, F_OK) == 0 {
+        throw POSIXFailure("\(final) appeared at the destination during the transfer; kept \(part)", code: EEXIST)
+    }
+    guard rename(part, final) == 0 else { throw POSIXFailure("rename to \(final)") }
 }

@@ -45,17 +45,27 @@ final class VerifiedIndex {
 
     private func apply(_ record: TransferRecord) {
         let key = URL(fileURLWithPath: record.destination).standardizedFileURL.path
-        if record.result == "ok", Self.strongMethods.contains(record.verification) {
-            entries[key] = Entry(size: record.size, method: record.verification, time: record.time)
-        } else if record.result != "ok" {
+        switch (record.result, record.verification) {
+        case ("ok", let method) where Self.strongMethods.contains(method):
+            entries[key] = Entry(size: record.size, method: method, time: record.time)
+        case ("ok", "already-present"), ("ok", "cloned"):
+            break   // the same bytes as before: keep whatever was known
+        default:
+            // Rewritten without a hash (size only, unverified) or failed: the old
+            // badge no longer describes these bytes.
             entries[key] = nil
         }
-        // "already-present", "cloned", "size-only": keep whatever was known.
     }
 
     func entry(for url: URL, size: Int64) -> Entry? {
         guard let entry = entries[url.standardizedFileURL.path], Int64(entry.size) == size else { return nil }
         return entry
+    }
+
+    /// Drops badges for an item Blit deleted or trashed (and anything inside it).
+    func removed(_ url: URL) {
+        let path = url.standardizedFileURL.path
+        for key in entries.keys where key == path || key.hasPrefix(path + "/") { entries[key] = nil }
     }
 
     /// Keeps badges when Blit renames or moves items on a volume (this session).

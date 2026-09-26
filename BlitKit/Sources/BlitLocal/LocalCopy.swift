@@ -206,8 +206,13 @@ public func copy(
         }
     }
 
-    // Queue-wide space check before anything is written (PRD R5.8).
-    let needed = work.reduce(UInt64(0)) { $0 + $1.size }
+    // Queue-wide space check before anything is written (PRD R5.8). Files that
+    // will be APFS clones (same volume) take no new space.
+    let destinationDeviceForSpace = deviceID(directory)
+    let needed = work.reduce(UInt64(0)) { total, file in
+        let clones = options.allowClone && destinationDeviceForSpace != nil && deviceID(file.path) == destinationDeviceForSpace
+        return clones ? total : total + file.size
+    }
     if let available = availableBytes(at: directory), needed > available {
         throw CopyPreflightError.notEnoughSpace(needed: needed, available: available, volume: MountInfo.of(directory)?.mountPoint ?? directory)
     }
@@ -230,27 +235,34 @@ public func copy(
                     do {
                         try FileManager.default.createDirectory(atPath: (final as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
                         events(.fileStarted(file))
-                        let verification: CopyVerification
+                        var verification: CopyVerification?
                         if options.allowClone, destinationDevice != nil, deviceID(file.path) == destinationDevice {
-                            // Same volume: APFS clone (PRD R3.8).
+                            // Same volume: APFS clone (PRD R3.8). Other file systems
+                            // (SMB, HFS+, exFAT) can't clone; they fall through to a copy.
                             unlink(part)
-                            guard clonefile(file.path, part, 0) == 0 else { throw POSIXFailure("clone \(file.path)") }
-                            progress(Int(file.size))
-                            events(.fileCopied(file))
-                            verification = .cloned
-                        } else {
+                            if clonefile(file.path, part, 0) == 0 {
+                                progress(Int(file.size))
+                                events(.fileCopied(file))
+                                verification = .cloned
+                            }
+                        }
+                        if verification == nil {
                             let sourceHash = try await Task.detached {
                                 try StreamCopy.copy(from: file.path, to: part, progress: progress)
                             }.value
+                            // Source stability (as R3.9 for downloads): a file still being
+                            // written would copy torn yet match its own streamed hash.
+                            try checkUnchanged(file, part: part)
                             events(.fileCopied(file))
                             verification = try await verify(part: part, sourceHash: sourceHash, size: file.size,
                                                             nas: options.verify ? nas : nil, verify: options.verify,
                                                             limiter: hashLimiter)
                         }
+                        guard let verification else { throw POSIXFailure("copy \(file.path)", code: EIO) }
                         if let mtime = file.modificationTime {
                             try? FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: part)
                         }
-                        guard rename(part, final) == 0 else { throw POSIXFailure("rename to \(final)") }
+                        try renameIntoPlace(part, final, overwrite: options.overwrite)
                         events(.fileFinished(file, verification: verification))
                         summary.withLock {
                             $0.finished.append(file)
@@ -281,11 +293,15 @@ private func verify(part: String, sourceHash: String, size: UInt64, nas: NASVeri
                 throw CopyMismatch(description: "SHA-256 mismatch: source \(sourceHash), NAS \(remote.sha256); kept \(part)")
             }
             return .nas(sourceHash)
+        } catch let unavailable as RemoteHasher.Unavailable {
+            // The NAS can't hash at all: fall back to a read-back, labelled as weaker.
+            fallbackReason = "NAS check unavailable: \(unavailable.reason)"
         } catch let mismatch as CopyMismatch {
             throw mismatch
         } catch {
-            // Couldn't get a hash from the NAS: fall back to a read-back, labelled as weaker.
-            fallbackReason = "NAS check unavailable: \(error)"
+            // Interrupted (connection lost, Blit quitting): never downgrade to a
+            // read-back, which a move would then trust. Keep the part; retry.
+            throw CopyMismatch(description: "NAS verification interrupted (\(error)); kept \(part)")
         }
     }
     let readBack = try await Task.detached { try readBackSHA256(path: part) }.value
@@ -293,6 +309,22 @@ private func verify(part: String, sourceHash: String, size: UInt64, nas: NASVeri
         throw CopyMismatch(description: "SHA-256 mismatch on read-back: source \(sourceHash), copy \(readBack); kept \(part)")
     }
     return .readBack(readBack, reason: fallbackReason)
+}
+
+/// Fails the file if the source changed while it was copied, or the copy isn't
+/// the listed size.
+private func checkUnchanged(_ file: LocalFile, part: String) throws {
+    let fm = FileManager.default
+    let now = try? fm.attributesOfItem(atPath: file.path)
+    let size = (now?[.size] as? NSNumber)?.uint64Value
+    let mtime = now?[.modificationDate] as? Date
+    if size != file.size || (file.modificationTime != nil && mtime != file.modificationTime) {
+        throw CopyMismatch(description: "changed while it was copied (still being written?); kept \(part)")
+    }
+    let copied = (try? fm.attributesOfItem(atPath: part)[.size] as? NSNumber)?.uint64Value
+    guard copied == file.size else {
+        throw CopyMismatch(description: "copy is \(copied ?? 0) bytes, expected \(file.size); kept \(part)")
+    }
 }
 
 private func deviceID(_ path: String) -> dev_t? {

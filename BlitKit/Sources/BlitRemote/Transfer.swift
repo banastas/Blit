@@ -54,12 +54,32 @@ public enum TransferPlan {
     }
 
     /// A local path component for a remote name (PRD R3.10). Valid UTF-8 is
-    /// kept; otherwise non-printable-ASCII bytes are percent-escaped.
+    /// kept; otherwise non-printable-ASCII bytes are percent-escaped. A name
+    /// can never add path structure: "/" is escaped, and "." or ".." (which a
+    /// hostile server could send) become "%2E"/"%2E%2E", so every component
+    /// stays inside the download folder.
     public static func localName(_ name: RemotePath) -> String {
-        if let s = name.string, !s.contains("\0") { return s }
-        return name.bytes.map { b in
-            (0x20...0x7E).contains(b) && b != UInt8(ascii: "%") ? String(UnicodeScalar(b)) : String(format: "%%%02X", b)
-        }.joined()
+        let escaped: String
+        if let s = name.string, !s.contains("\0") {
+            escaped = s.replacingOccurrences(of: "/", with: "%2F")
+        } else {
+            escaped = name.bytes.map { b in
+                (0x20...0x7E).contains(b) && b != UInt8(ascii: "%") && b != UInt8(ascii: "/")
+                    ? String(UnicodeScalar(b)) : String(format: "%%%02X", b)
+            }.joined()
+        }
+        switch escaped {
+        case "": return "%00"
+        case ".": return "%2E"
+        case "..": return "%2E%2E"
+        default: return escaped
+        }
+    }
+
+    /// True if `relativePath` stays inside the folder it's joined to.
+    public static func isContained(_ relativePath: String) -> Bool {
+        !relativePath.hasPrefix("/") && !relativePath.split(separator: "/", omittingEmptySubsequences: false)
+            .contains { $0 == ".." || $0 == "." || $0.isEmpty }
     }
 }
 
@@ -198,29 +218,43 @@ public struct RemoteHasher: Sendable {
     /// BusyBox `stat -c`. Prints "sha256 size mtime cached|computed". Where
     /// GNU dd has status=progress, the bytes hashed so far go to stderr about
     /// once a second.
+    ///
+    /// Only a complete, successful read is cached or reported: dd's exit
+    /// status is checked (a failed read would otherwise hash a truncated
+    /// stream), and the file must be unchanged afterwards. The cache key adds
+    /// ctime and inode to size and mtime, so a same-size re-upload that
+    /// preserves mtime isn't served a stale hash. BLIT_NOCACHE=1 recomputes.
     static let script = #"""
     p=$1
-    set -- $(stat -L -c "%s %Y" -- "$p" 2>/dev/null)
-    [ $# -eq 2 ] || exit 3
+    set -- $(stat -L -c "%s %Y %Z %i" -- "$p" 2>/dev/null)
+    [ $# -eq 4 ] || exit 3
+    before="$1 $2 $3 $4"
     d="${XDG_CACHE_HOME:-$HOME/.cache}/blit/sha256"
-    k=$(printf "%s|%s|%s" "$p" "$1" "$2" | sha256sum | cut -c1-64)
-    if [ -s "$d/$k" ]; then
+    k=$(printf "%s|%s" "$p" "$before" | sha256sum | cut -c1-64)
+    if [ -z "$BLIT_NOCACHE" ] && [ -s "$d/$k" ]; then
       h=$(cut -c1-64 "$d/$k"); c=cached
     else
+      mkdir -p "$d" || exit 4
+      t="$d/.status.$$"
       if dd if=/dev/null of=/dev/null status=progress 2>/dev/null; then
-        h=$(dd if="$p" bs=4M status=progress | sha256sum | cut -c1-64)
+        h=$( { dd if="$p" bs=4M status=progress; echo $? > "$t"; } | sha256sum | cut -c1-64 )
       else
-        h=$(sha256sum < "$p" | cut -c1-64)
+        h=$( { cat -- "$p"; echo $? > "$t"; } | sha256sum | cut -c1-64 )
       fi
+      s=$(cat "$t" 2>/dev/null); rm -f "$t"
+      [ "$s" = 0 ] || exit 5
       [ ${#h} -eq 64 ] || exit 4
-      mkdir -p "$d" && printf "%s\n" "$h" > "$d/$k.$$" && mv -f "$d/$k.$$" "$d/$k"
+      [ "$(stat -L -c "%s %Y %Z %i" -- "$p" 2>/dev/null)" = "$before" ] || exit 6
+      printf "%s\n" "$h" > "$d/$k.$$" && mv -f "$d/$k.$$" "$d/$k"
       c=computed
     fi
     printf "%s %s %s %s\n" "$h" "$1" "$2" "$c"
     """#
 
     /// `progress` gets the bytes hashed so far, where the server can report them.
-    public func sha256(_ path: RemotePath, progress: (@Sendable (UInt64) -> Void)? = nil) async throws -> Result {
+    /// `bypassCache` recomputes instead of trusting a cached hash.
+    public func sha256(_ path: RemotePath, bypassCache: Bool = false,
+                       progress: (@Sendable (UInt64) -> Void)? = nil) async throws -> Result {
         let stdin = mapPath(path).bytes + [0]
         var onStderr: (@Sendable ([UInt8]) -> Void)?
         if let progress {
@@ -230,7 +264,8 @@ public struct RemoteHasher: Sendable {
         }
         let cachedRun: SSHConnection.CommandResult
         do {
-            cachedRun = try await connection.run("xargs -0 sh -c '\(Self.script)' blit", stdin: stdin, onStderr: onStderr)
+            let prefix = bypassCache ? "env BLIT_NOCACHE=1 " : ""
+            cachedRun = try await connection.run("\(prefix)xargs -0 sh -c '\(Self.script)' blit", stdin: stdin, onStderr: onStderr)
         } catch SSHError.channelRequestRefused(let what) {
             throw Unavailable(reason: "the server refused to run commands (\(what))")
         }
@@ -247,9 +282,16 @@ public struct RemoteHasher: Sendable {
         if line.hasPrefix("\\") { line.removeFirst() }   // sha256sum escapes odd filenames this way
         let hash = String(line.prefix(64))
         guard Self.isHash(hash) else {
-            guard plain.exitStatus != nil else { throw SSHError.disconnected("the hash was interrupted") }
+            guard let status = plain.exitStatus else { throw SSHError.disconnected("the hash was interrupted") }
             let err = String(decoding: plain.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw Unavailable(reason: "sha256sum failed: \(err.isEmpty ? line : err)")
+            // Only "no such command" (126/127) means the server can't hash at all.
+            // Anything else (unreadable file, a path the shell sees differently,
+            // a noisy login script) is a per-file failure: kept and retried, never
+            // accepted on size alone (PRD R4.1).
+            if status == 126 || status == 127 {
+                throw Unavailable(reason: "sha256sum isn't available on the server: \(err.isEmpty ? line : err)")
+            }
+            throw SFTPError.unexpected("the server couldn't hash the file (exit \(status)): \(err.isEmpty ? line : err)")
         }
         return Result(sha256: hash, size: nil, modificationTime: nil, cached: false)
     }
@@ -346,6 +388,8 @@ actor FileJob {
     var partPath: String { finalPath + ".blitpart" }
     var statePath: String { finalPath + ".blitpart.state" }
 
+    var hasStarted: Bool { part != nil }
+
     /// Opens the part file on first use; returns whether this is the first range.
     func begin() throws -> (PartFile, first: Bool) {
         if let part { return (part, false) }
@@ -372,8 +416,12 @@ actor FileJob {
     /// writing to it (a reused descriptor could otherwise receive late writes).
     func rangeEnded(_ range: Range<UInt64>, succeeded: Bool) -> PartFile? {
         if succeeded, failure == nil {
-            state.done.insert(range)
-            try? state.save(statePath)
+            // Bytes must be on disk before the state says they are: after a power
+            // loss, resume trusts `done` (PRD R3.6).
+            if (try? part?.sync()) != nil {
+                state.done.insert(range)
+                try? state.save(statePath)
+            }
         }
         remaining -= 1
         guard remaining == 0 else { return nil }
@@ -432,6 +480,12 @@ public func download(
     let collisions = TransferPlan.collisions(files.map(\.relativePath), caseSensitive: caseSensitive)
 
     for (index, file) in files.enumerated() {
+        guard TransferPlan.isContained(file.relativePath) else {
+            let reason = "unsafe name from the server (would leave the download folder); skipped"
+            events(.fileFailed(file, reason))
+            summary.withLock { $0.failed.append((file, reason)) }
+            continue
+        }
         if let other = collisions[index] {
             let reason = "same local name as \(other) on this volume; skipped"
             events(.fileFailed(file, reason))
@@ -530,15 +584,17 @@ public func download(
                             var succeeded = false
                             if await job.failure == nil {
                                 do {
-                                    let (part, first) = try await job.begin()
-                                    if first {
-                                        // Stability gate (PRD R3.9): the file must still match the listing.
+                                    if !(await job.hasStarted) {
+                                        // Stability gate (PRD R3.9): the file must still match the
+                                        // listing, checked before a part file is created, so a file
+                                        // still being written doesn't leave a preallocated part.
                                         let now = try await client.stat(job.file.path)
                                         guard now.size == job.file.size, now.modificationTime == job.file.modificationTime else {
-                                            throw SFTPError.unexpected("changed since it was listed (still being written?)")
+                                            throw SFTPError.unexpected("changed since it was listed (still being written?); will re-list")
                                         }
-                                        events(.fileStarted(job.file))
                                     }
+                                    let (part, first) = try await job.begin()
+                                    if first { events(.fileStarted(job.file)) }
                                     let stats = try await client.download(job.file.path, range: range, into: part,
                                                                           progress: progress)
                                     if stats.endedEarly {
@@ -566,7 +622,8 @@ public func download(
                 for await (job, part) in finished {
                     verifiers.addTask {
                         do {
-                            let verification = try await finalize(job: job, part: part, verify: effectiveHasher != nil)
+                            let verification = try await finalize(job: job, part: part, hasher: effectiveHasher,
+                                                                  overwrite: options.overwrite)
                             events(.fileFinished(job.file, verification: verification))
                             summary.withLock {
                                 $0.finished.append(job.file)
@@ -583,7 +640,8 @@ public func download(
     return summary.withLock { $0 }
 }
 
-private func finalize(job: FileJob, part: PartFile, verify: Bool) async throws -> Verification {
+private func finalize(job: FileJob, part: PartFile, hasher: RemoteHasher?, overwrite: Bool) async throws -> Verification {
+    let verify = hasher != nil
     try part.sync()
     part.close()
     let file = job.file
@@ -596,7 +654,13 @@ private func finalize(job: FileJob, part: PartFile, verify: Bool) async throws -
         async let local = Task.detached { try localSHA256(path: partPath) }.value
         let remote: RemoteHasher.Result
         do {
-            remote = try await remoteHash.value
+            var result = try await remoteHash.value
+            // A cached server hash that disagrees gets one fresh computation: the
+            // cache may predate a change the key didn't catch.
+            if result.cached, let hasher, let mine = try? await local, mine != result.sha256 {
+                result = try await hasher.sha256(file.path, bypassCache: true)
+            }
+            remote = result
         } catch let unavailable as RemoteHasher.Unavailable {
             // The server can't hash at all (no shell access, no sha256sum): fall
             // back to a size check and say so (PRD R4.1).
@@ -635,7 +699,7 @@ private func finalize(job: FileJob, part: PartFile, verify: Bool) async throws -
         try? FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: TimeInterval(mtime))],
                                                ofItemAtPath: partPath)
     }
-    guard rename(partPath, finalPath) == 0 else { throw POSIXFailure("rename to \(finalPath)") }
+    try renameIntoPlace(partPath, finalPath, overwrite: overwrite)
     try? FileManager.default.removeItem(atPath: statePath)
     return verification
 }

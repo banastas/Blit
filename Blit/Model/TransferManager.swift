@@ -31,26 +31,31 @@ struct TransferPayload: Codable, Transferable {
 /// Source files whose copies were verified by SHA-256, so a move may remove
 /// them. Filled from the engines' event callbacks, which run off the main actor.
 final class VerifiedSources: @unchecked Sendable {
+    /// A verified source with its size and modification time when it was
+    /// verified; removal re-checks them, so a file rewritten since is kept.
+    struct Remote: Hashable, Sendable { let path: RemotePath; let size: UInt64; let modificationTime: UInt32? }
+    struct Local: Hashable, Sendable { let path: String; let size: UInt64; let modificationTime: Date? }
+
     private let lock = NSLock()
-    private var local: [String] = []
-    private var remote: [RemotePath] = []
+    private var local: [Local] = []
+    private var remote: [Remote] = []
 
     func record(_ event: TransferEvent) {
         guard case .fileFinished(let file, .sha256) = event else { return }
-        lock.withLock { remote.append(file.path) }
+        lock.withLock { remote.append(Remote(path: file.path, size: file.size, modificationTime: file.modificationTime)) }
     }
 
     func record(_ event: CopyEvent) {
         switch event {
         case .fileFinished(let file, .nas), .fileFinished(let file, .readBack):
-            lock.withLock { local.append(file.path) }
+            lock.withLock { local.append(Local(path: file.path, size: file.size, modificationTime: file.modificationTime)) }
         default: break
         }
     }
 
-    /// Takes the recorded paths, leaving the ledger empty.
-    func takeLocal() -> [String] { lock.withLock { defer { local = [] }; return local } }
-    func takeRemote() -> [RemotePath] { lock.withLock { defer { remote = [] }; return remote } }
+    /// Takes the recorded sources (each once), leaving the ledger empty.
+    func takeLocal() -> [Local] { lock.withLock { defer { local = [] }; return local.uniqued() } }
+    func takeRemote() -> [Remote] { lock.withLock { defer { remote = [] }; return remote.uniqued() } }
 }
 
 struct LogLine: Identifiable {
@@ -177,11 +182,23 @@ final class TransferJob: Identifiable {
         }
     }
     /// How files are verified, for the HUD.
+    /// How files are actually being verified, from what they finished with:
+    /// weaker outcomes (size only, read-back instead of the NAS) are named.
     var verificationMethod: String {
-        if case .download = kind { return "SERVER SHA256" }
-        return nasVerified ? "NAS SHA256" : "READ-BACK"
+        if case .download = kind {
+            if sizeOnlyCount > 0 { return filesVerified > 0 ? "SERVER SHA256 · \(sizeOnlyCount) SIZE ONLY" : "SIZE ONLY" }
+            return "SERVER SHA256"
+        }
+        if nasVerified { return readBackCount > 0 ? "NAS SHA256 · \(readBackCount) READ-BACK" : "NAS SHA256" }
+        return "READ-BACK"
     }
     var nasVerified = false
+    /// Files that finished with a weaker check than the job's method.
+    var sizeOnlyCount = 0
+    var readBackCount = 0
+    /// Verification-class failures per file across attempts (SHA-256 mismatch,
+    /// changed while transferring), so a file that keeps failing stops retrying.
+    @ObservationIgnored var verificationFailureCounts: [String: Int] = [:]
     /// Include hidden files when walking folders (captured at drop time).
     var includeHidden = false
     /// A move (Cut, then Paste on another drive or from a server): each source
@@ -209,6 +226,8 @@ final class TransferManager {
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let verifier: BlitHostKeyVerifier
     @ObservationIgnored private var running = false
+    /// Every job finished so far in the current batch verified its files.
+    @ObservationIgnored private var batchVerified = true
     /// Connections held by the running job, closed if Blit quits mid-transfer.
     @ObservationIgnored private var liveConnections: [SSHConnection] = []
     @ObservationIgnored private var isQuitting = false
@@ -486,8 +505,12 @@ final class TransferManager {
             await run(job)
             running = false
             saveQueue()
+            let jobVerified = job.status == .finished && job.failures.isEmpty && job.sizeOnlyCount == 0
+                && (job.filesVerified > 0 || job.fileCount == 0)
+            batchVerified = batchVerified && jobVerified
             if !isQuitting, !jobs.contains(where: { !$0.isOperation && ($0.status == .queued || $0.isActive) }) {
-                DockProgress.shared.finish(verified: job.status == .finished && job.failures.isEmpty)
+                DockProgress.shared.finish(verified: batchVerified)
+                batchVerified = true
             }
             onFinished?(job)
             await notify(job)
@@ -497,9 +520,9 @@ final class TransferManager {
 
     /// Failure reasons a retry can't fix (from BlitKit's messages).
     private static let permanentMarkers = [
-        "already exists", "same local name", "changed since it was listed", "changed on the server",
-        "shorter than listed", "no such file", "permission denied", "status 2", "status 3",
-        "server refused", "authentication failed", "host key", "no password", "no longer exists",
+        "already exists", "same local name", "no such file", "permission denied", "status 2", "status 3",
+        "server refused", "authentication failed", "host key", "no password", "nopassword", "no longer exists",
+        "gave up after", "source kept", "unsafe name",
     ]
 
     static func isRetryable(_ reason: String) -> Bool {
@@ -721,13 +744,20 @@ final class TransferManager {
         let roots = job.sources.compactMap(\.remotePath)
         var folders = Set<RemotePath>()
         var removed = 0
-        for path in job.verifiedSources.takeRemote() {
+        for source in job.verifiedSources.takeRemote() {
+            let path = source.path
             do {
+                // Only if it's still the file that was verified (PRD R2.12).
+                let now = try await client.stat(path)
+                guard now.size == source.size, now.modificationTime == source.modificationTime else {
+                    throw SFTPError.unexpected("changed on the server since it was verified")
+                }
                 try await client.removeFile(path)
                 removed += 1
                 folders.formUnion(Self.folders(of: path.bytes, under: roots.map(\.bytes)).map { RemotePath(bytes: $0) })
             } catch {
-                job.note("✕ KEPT \(path.description.uppercased()) · \(error)".uppercased(), failure: true)
+                job.failures.append("source kept: \(path.description): \(error)")
+                job.note("✕ SOURCE KEPT \(path.description) · \(error)".uppercased(), failure: true)
             }
         }
         for folder in folders.sorted(by: { $0.bytes.count > $1.bytes.count }) {
@@ -741,14 +771,24 @@ final class TransferManager {
     /// then any source folders left empty (a lone .DS_Store counts as empty).
     private func removeVerifiedSources(_ job: TransferJob) async {
         let roots = job.sources.compactMap { $0.localURL?.standardizedFileURL.path }
-        let paths = job.verifiedSources.takeLocal()
+        let sources = job.verifiedSources.takeLocal()
         let result = await Task.detached { () -> (removed: Int, failed: [String]) in
             let fm = FileManager.default
             var folders = Set<String>()
             var removed = 0
             var failed: [String] = []
-            for path in paths {
+            for source in sources {
+                let path = source.path
                 do {
+                    // Only if it's still the regular file that was verified: a file
+                    // rewritten since (or replaced by a folder) is kept.
+                    let now = try fm.attributesOfItem(atPath: path)
+                    guard now[.type] as? FileAttributeType == .typeRegular,
+                          (now[.size] as? NSNumber)?.uint64Value == source.size,
+                          source.modificationTime == nil || now[.modificationDate] as? Date == source.modificationTime else {
+                        failed.append("\(path): changed since it was verified")
+                        continue
+                    }
                     try fm.removeItem(atPath: path)
                     removed += 1
                     for folder in Self.folders(of: Array(path.utf8), under: roots.map { Array($0.utf8) }) {
@@ -765,16 +805,19 @@ final class TransferManager {
             }
             return (removed, failed)
         }.value
-        for failure in result.failed { job.note("✕ KEPT \(failure)".uppercased(), failure: true) }
+        for failure in result.failed {
+            job.failures.append("source kept: \(failure)")
+            job.note("✕ SOURCE KEPT \(failure)".uppercased(), failure: true)
+        }
         job.removedSources += result.removed
         noteMoveResult(job, removedNow: result.removed)
     }
 
     private func noteMoveResult(_ job: TransferJob, removedNow: Int) {
         if removedNow > 0 { job.note("✓ MOVED · REMOVED \(removedNow) SOURCE FILE\(removedNow == 1 ? "" : "S")") }
-        let kept = job.fileCount - job.removedSources
-        if kept > 0, job.failures.isEmpty {
-            job.note("= \(kept) SOURCE FILE\(kept == 1 ? "" : "S") KEPT · NOT VERIFIED BY SHA256 IN THIS MOVE", failure: true)
+        let kept = job.fileCount - job.removedSources - job.failures.count
+        if kept > 0 {
+            job.note("= \(kept) SOURCE FILE\(kept == 1 ? "" : "S") KEPT · ALREADY THERE OR NOT HASH-VERIFIED", failure: true)
         }
     }
 
@@ -807,8 +850,8 @@ final class TransferManager {
             if let host, let path = NetworkPath.to(host: host) {
                 job.link = "SMB · \(path.interface.uppercased())"
                 if path.wifiDespiteWired {
+                    // An advisory (PRD R1.7), not a failure: the copy itself is fine.
                     job.note("✕ ROUTE IS WI-FI (\(path.interface)) WHILE WIRED IS UP · SEE PRD R1.7", failure: true)
-                    job.failures.append("Copy is going over Wi-Fi while a wired link is up")
                 }
             } else {
                 job.link = "SMB"
@@ -913,7 +956,9 @@ extension TransferJob {
             case .sha256(let hash, let cached):
                 filesVerified += 1
                 note("✓ SHA256 \(hash.prefix(8).uppercased())… VERIFIED · \(f.relativePath.uppercased())\(cached ? " · SERVER CACHE" : "")")
-            case .sizeOnly(let why): note("✓ SIZE ONLY · \(f.relativePath.uppercased()) · \(why.uppercased())")
+            case .sizeOnly(let why):
+                sizeOnlyCount += 1
+                note("= SIZE ONLY · NOT HASH-VERIFIED · \(f.relativePath.uppercased()) · \(why.uppercased())", failure: true)
             case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
             case .alreadyPresent:
                 filesAlreadyPresent += 1
@@ -924,8 +969,7 @@ extension TransferJob {
             verifying[f.relativePath] = nil
             hashed[f.relativePath] = nil
             hashSizes[f.relativePath] = nil
-            failures.append("\(f.relativePath): \(reason)")
-            note("✕ \(f.relativePath.uppercased()) · \(reason.uppercased())", failure: true)
+            recordFailure(f.relativePath, reason)
         }
     }
 
@@ -956,9 +1000,10 @@ extension TransferJob {
             case .nas(let hash):
                 filesVerified += 1
                 note("✓ SHA256 \(hash.prefix(8).uppercased())… VERIFIED ON NAS · \(f.relativePath.uppercased())")
-            case .readBack(let hash, _):
+            case .readBack(let hash, let reason):
                 filesVerified += 1
-                note("✓ SHA256 \(hash.prefix(8).uppercased())… READ-BACK · \(f.relativePath.uppercased())")
+                if reason != nil { readBackCount += 1 }
+                note("✓ SHA256 \(hash.prefix(8).uppercased())… READ-BACK · \(f.relativePath.uppercased())\(reason.map { " · \($0.uppercased())" } ?? "")")
             case .cloned: note("✓ CLONED · \(f.relativePath.uppercased())")
             case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
             case .alreadyPresent:
@@ -968,9 +1013,25 @@ extension TransferJob {
             }
         case .fileFailed(let f, let reason):
             verifying[f.relativePath] = nil
-            failures.append("\(f.relativePath): \(reason)")
-            note("✕ \(f.relativePath.uppercased()) · \(reason.uppercased())", failure: true)
+            recordFailure(f.relativePath, reason)
         }
+    }
+
+    /// Records a file's failure. A file whose bytes keep failing verification
+    /// (SHA-256 mismatch, changed while transferring) stops being retried after
+    /// a few attempts, even though each attempt moved bytes (PRD R4.3: one
+    /// automatic re-download, not an endless loop).
+    private func recordFailure(_ path: String, _ reason: String) {
+        let r = reason.lowercased()
+        var text = "\(path): \(reason)"
+        if r.contains("mismatch") || r.contains("changed since") || r.contains("changed while") || r.contains("changed on the server") {
+            let count = (verificationFailureCounts[path] ?? 0) + 1
+            verificationFailureCounts[path] = count
+            let limit = r.contains("mismatch") ? 2 : 3
+            if count >= limit { text = "\(path): gave up after \(count) attempts: \(reason)" }
+        }
+        failures.append(text)
+        note("✕ \(text.uppercased())", failure: true)
     }
 
     static func bytes(_ n: Int64) -> String {
