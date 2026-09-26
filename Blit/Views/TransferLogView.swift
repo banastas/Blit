@@ -138,6 +138,12 @@ struct TransferLogView: View {
                     Text(sha).font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }
             }
+            if entry.record.cached == true {
+                GridRow {
+                    Text("Server hash").foregroundStyle(.secondary)
+                    Text("From the server's cache: computed earlier for this exact file (same size, time and inode)")
+                }
+            }
             if let detail = entry.record.detail {
                 GridRow {
                     Text("Detail").foregroundStyle(.secondary)

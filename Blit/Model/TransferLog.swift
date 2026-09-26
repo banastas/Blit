@@ -16,6 +16,9 @@ struct TransferRecord: Codable, Sendable {
     var verification: String
     var result: String        // "ok" or "failed"
     var detail: String?
+    /// The server reused a SHA-256 it computed earlier for this exact file
+    /// (same size, time and inode). Optional: older records don't have it.
+    var cached: Bool?
 }
 
 @MainActor
@@ -70,10 +73,10 @@ enum TransferLog {
             let v = s ?? ""
             return v.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" }) ? "\"" + v.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : v
         }
-        var csv = "time,result,verification,size,sha256,source,destination,detail\n"
+        var csv = "time,result,verification,size,sha256,server_cache,source,destination,detail\n"
         for r in records() {
             csv += [formatter.string(from: r.time), r.result, r.verification, String(r.size), r.sha256 ?? "",
-                    r.source, r.destination, r.detail ?? ""].map(field).joined(separator: ",") + "\n"
+                    r.cached == true ? "yes" : "", r.source, r.destination, r.detail ?? ""].map(field).joined(separator: ",") + "\n"
         }
         try? csv.write(to: target, atomically: true, encoding: .utf8)
     }

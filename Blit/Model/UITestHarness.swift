@@ -571,6 +571,24 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitDiskBoundTest <log>`: the "server disk bound" hint appears for an even,
+    /// slow download and not for an uneven one or a fast one.
+    static func runDiskBoundTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitDiskBoundTest") else { return }
+        var lines: [String] = []
+        for (label, rate, rates) in [("even 25 MB/s", 25.0, [8.0, 9, 8]), ("uneven 25 MB/s", 25.0, [20.0, 4, 1]),
+                                     ("even 70 MB/s", 70.0, [23.0, 24, 23])] {
+            let job = TransferJob(kind: .download(ServerConfig()), sources: [], destination: URL(fileURLWithPath: "/tmp"),
+                                  title: "T", destinationName: "D")
+            job.status = .running
+            job.history = Array(repeating: rate, count: 60)
+            job.connectionRates = rates
+            transfers.noteIfDiskBound(job)
+            lines.append("\(label): \(job.log.last?.text ?? "no hint")")
+        }
+        try? (lines + ["done"]).joined(separator: "\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

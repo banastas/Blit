@@ -177,6 +177,7 @@ struct TransferHUD: View {
             if case .download = job.kind {
                 HUDRow("RTT", job.rttMilliseconds.map { "\(Int($0.rounded())) MS" } ?? "—")
                 HUDRow("WINDOW", "\(SSHTuning().maximumPacketSize * 64 >> 20) MB · RCVBUF \(SSHTuning().receiveBufferBytes >> 20) MB")
+                HUDRow("HASH CACHE", job.filesVerified > 0 ? "\(job.hashCacheHits)/\(job.filesVerified)" : "—")
             }
             HUDRow("VERIFY", job.verificationMethod)
             HUDRow("EXISTS", job.existsRule.hudLabel)

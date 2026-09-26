@@ -292,6 +292,10 @@ final class TransferJob: Identifiable {
     /// Round trip to the server (an SFTP stat), measured at connect and every
     /// 30 s during a download, for the Link data panel.
     var rttMilliseconds: Double?
+    /// Files whose SHA-256 the server answered from its hash cache (Link panel).
+    var hashCacheHits = 0
+    /// The "server disk bound" hint has been shown for this job.
+    @ObservationIgnored var notedDiskBound = false
     /// Retry Now: ends the backoff wait (and waits for the network or a drive) early.
     @ObservationIgnored var retryNowRequested = false
     /// What to do with files already at the destination (PRD R5.3), chosen in
@@ -1227,7 +1231,23 @@ final class TransferManager {
             // Once only checksums remain, the histogram shows the server's hash rate.
             job.history.append(job.isVerifyingOnly ? job.hashRate : rate)
             if job.history.count > 60 { job.history.removeFirst(job.history.count - 60) }
+            noteIfDiskBound(job)
         }
+    }
+
+    /// Says why a download is slow when the likely cause is the server's disk
+    /// (cold files), so it isn't mistaken for a network problem: a minute in,
+    /// every connection moving and roughly even, the total under 40 MB/s.
+    /// Worded as a likelihood, once per job.
+    func noteIfDiskBound(_ job: TransferJob) {
+        guard !job.notedDiskBound, case .download = job.kind, !job.isVerifyingOnly, job.history.count >= 60 else { return }
+        let average = job.history.reduce(0, +) / Double(job.history.count)
+        let rates = job.connectionRates
+        guard average > 1, average < 40, rates.count > 1, let low = rates.min(), let high = rates.max(),
+              low > 0.1, low >= high * 0.5 else { return }
+        job.notedDiskBound = true
+        job.note(String(format: "RATE LOOKS SERVER-DISK BOUND · %.0f MB/S WITH ALL %d CONNECTIONS EVEN · COLD FILES READ SLOWER THAN CACHED ONES",
+                        average, rates.count))
     }
 
     // MARK: Engines
@@ -1582,11 +1602,11 @@ extension TransferJob {
     }
 
     private func record(source: String, relativePath: String, size: UInt64, sha256: String?, verification: String,
-                        failed: String? = nil) {
+                        failed: String? = nil, cached: Bool? = nil) {
         TransferLog.append(TransferRecord(time: Date(), source: sourceDescription(source),
                                           destination: destination.appendingPathComponent(relativePath).path,
                                           size: size, sha256: sha256, verification: verification,
-                                          result: failed == nil ? "ok" : "failed", detail: failed))
+                                          result: failed == nil ? "ok" : "failed", detail: failed, cached: cached))
     }
 
     func handle(_ event: TransferEvent) {
@@ -1610,7 +1630,13 @@ extension TransferJob {
             case .alreadyPresent: (nil, "already-present")
             case .alreadyPresentVerified(let h): (h, "present-sha256")
             }
-            record(source: f.path.description, relativePath: f.relativePath, size: f.size, sha256: hash, verification: method)
+            var cached: Bool?
+            if case .sha256(_, let hit) = v {
+                cached = hit
+                if hit { hashCacheHits += 1 }
+            }
+            record(source: f.path.description, relativePath: f.relativePath, size: f.size, sha256: hash, verification: method,
+                   cached: cached)
             outcomes[f.relativePath] = method
             inFlight.remove(f.relativePath)
         } else if case .fileFailed(let f, let reason) = event {
