@@ -280,6 +280,11 @@ final class TransferJob: Identifiable {
     /// Source roots (as dropped) that a move has removed entirely, so a retry
     /// doesn't list them again (a remote "no such file" is otherwise permanent).
     var removedRoots = Set<String>()
+    /// The source's folders and symlinks as last listed (PRD R3.1): empty
+    /// folders and links are recreated, and a move cleans the folders up.
+    @ObservationIgnored var remoteSourceDirectories: [RemotePath] = []
+    @ObservationIgnored var localSourceDirectories: [String] = []
+    @ObservationIgnored var localSourceSymlinks: [LocalTree.Symlink] = []
 
     func note(_ text: String, failure: Bool = false) {
         log.append(LogLine(text: text, isFailure: failure))
@@ -853,8 +858,12 @@ final class TransferManager {
 
     // MARK: Free space (PRD R5.8)
 
-    /// Kept free on the destination beyond what the transfer needs.
-    private static let spaceReserve: UInt64 = 1 << 30
+    /// Kept free on the destination beyond what the transfer needs: 1 GB, or
+    /// 2% of the volume if smaller (so a small USB stick isn't blocked forever).
+    nonisolated static func spaceReserve(at url: URL) -> UInt64 {
+        let capacity = (try? url.resourceValues(forKeys: [.volumeTotalCapacityKey]))?.volumeTotalCapacity.map { UInt64(max($0, 0)) }
+        return min(1 << 30, (capacity ?? (50 << 30)) / 50)
+    }
 
     nonisolated static func isOutOfSpace(_ reason: String) -> Bool {
         let r = reason.lowercased()
@@ -898,14 +907,15 @@ final class TransferManager {
         let volume = (try? destination.resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName
             ?? job.destinationName
         var waited = false
+        let reserve = await Task.detached { Self.spaceReserve(at: destination) }.value
         while true {
             if job.stopRequest != nil || isQuitting || Task.isCancelled { return false }
             let free = await Task.detached { Self.freeSpace(at: destination) }.value ?? .max
-            if free >= needed + Self.spaceReserve {
+            if free >= needed + reserve {
                 if waited { job.note("SPACE AVAILABLE ON \(volume.uppercased()) · CONTINUING") }
                 return true
             }
-            let short = needed + Self.spaceReserve - free
+            let short = needed + reserve - free
             let reason = "\(volume) needs \(TransferJob.bytes(Int64(short))) more"
             job.status = .waitingForSpace(reason)
             job.rate = 0
@@ -1086,9 +1096,17 @@ final class TransferManager {
         job.link = "\(clients.count)× · \(strategy.readSize / 1024)K×\(strategy.maxInFlight)"
 
         var files: [RemoteFile] = []
+        var directories: [String] = []
+        job.remoteSourceDirectories = []
         for source in job.sources where !job.removedRoots.contains(Self.rootKey(source)) {
             if let path = source.remotePath {
-                files += try await remoteFiles(at: path, using: clients[0], includeHidden: job.includeHidden)
+                let tree = try await remoteTree(at: path, using: clients[0], includeHidden: job.includeHidden)
+                files += tree.files
+                directories += tree.directories
+                job.remoteSourceDirectories += tree.sourceDirectories
+                for link in tree.skippedSymlinks {
+                    job.note("= SKIPPED SYMLINK \(link.uppercased()) · NOT COPIED FROM SERVERS", failure: true)
+                }
             }
         }
         job.fileCount = files.count
@@ -1100,6 +1118,13 @@ final class TransferManager {
         }.value
         guard await waitForSpace(job, needed: needed) else { return }
         job.status = .running
+        // Folders first, so empty ones exist at the destination too (PRD R3.1).
+        await Task.detached {
+            for relative in directories where TransferPlan.isContained(relative) {
+                try? FileManager.default.createDirectory(at: destination.appendingPathComponent(relative),
+                                                         withIntermediateDirectories: true)
+            }
+        }.value
 
         let hasher = RemoteHasher(connection: clients[0].connection)
         var options = TransferOptions()
@@ -1158,6 +1183,8 @@ final class TransferManager {
             job.verifiedSources.add(remote: interrupted)
             job.failures.append("removing \(interrupted.count) verified source file(s) was interrupted; will retry")
         }
+        // Every listed source folder, empty ones included, deepest first.
+        folders.formUnion(job.remoteSourceDirectories)
         for folder in folders.sorted(by: { $0.bytes.count > $1.bytes.count }) {
             // Fails, harmlessly, if anything is left in it.
             if (try? await client.removeDirectory(folder)) != nil, roots.contains(folder) {
@@ -1173,6 +1200,9 @@ final class TransferManager {
     private func removeVerifiedSources(_ job: TransferJob) async {
         let roots = job.sources.compactMap { $0.localURL?.standardizedFileURL.path }
         let sources = job.verifiedSources.takeLocal()
+        let destinationPath = job.destination.path
+        let links = job.localSourceSymlinks
+        let listedFolders = job.localSourceDirectories
         let result = await Task.detached { () -> (removed: Int, failed: [String], gone: [String]) in
             let fm = FileManager.default
             var folders = Set<String>()
@@ -1205,6 +1235,14 @@ final class TransferManager {
                     failed.append("\(path): \(error.localizedDescription)")
                 }
             }
+            // Symlinks that now exist at the destination with the same target.
+            for link in links {
+                let copied = try? fm.destinationOfSymbolicLink(atPath: destinationPath + "/" + link.relativePath)
+                if copied == link.target, (try? fm.removeItem(atPath: link.source)) != nil, roots.contains(link.source) {
+                    gone.append(link.source)
+                }
+            }
+            folders.formUnion(listedFolders)
             for folder in folders.sorted(by: { $0.utf8.count > $1.utf8.count }) {
                 guard let contents = try? fm.contentsOfDirectory(atPath: folder),
                       contents.allSatisfy({ $0 == ".DS_Store" }) else { continue }
@@ -1245,10 +1283,17 @@ final class TransferManager {
 
     private func copy(_ job: TransferJob) async throws {
         var files: [LocalFile] = []
+        var directories: [String] = []
+        job.localSourceDirectories = []
+        job.localSourceSymlinks = []
         for source in job.sources where !job.removedRoots.contains(Self.rootKey(source)) {
             guard let url = source.localURL else { continue }
             // Off the main actor: walking a big tree over SMB would beachball the app.
-            files += try await Task.detached { try localFiles(at: url.path) }.value
+            let tree = try await Task.detached { try localTree(at: url.path) }.value
+            files += tree.files
+            directories += tree.directories
+            job.localSourceDirectories += tree.sourceDirectories
+            job.localSourceSymlinks += tree.symlinks
         }
         job.fileCount = files.count
         job.totalBytes = Int64(files.reduce(0) { $0 + $1.size })
@@ -1317,6 +1362,18 @@ final class TransferManager {
                                      streamCounters: job.connectionCounters) { event in
             ledger.record(event)
             Task { @MainActor in job.handle(event) }
+        }
+        // Empty folders and symlinks too (PRD R3.1).
+        let links = job.localSourceSymlinks
+        let structureProblems = await Task.detached {
+            recreateStructure(directories: directories, symlinks: links, into: destination.path)
+        }.value
+        for problem in structureProblems {
+            job.failures.append(problem)
+            job.note("✕ \(problem)".uppercased(), failure: true)
+        }
+        if !links.isEmpty, structureProblems.isEmpty {
+            job.note("✓ RECREATED \(links.count) SYMLINK\(links.count == 1 ? "" : "S")")
         }
         if job.deleteSources, !isQuitting { await removeVerifiedSources(job) }
     }

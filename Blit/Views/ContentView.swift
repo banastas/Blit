@@ -348,6 +348,7 @@ struct ContentView: View {
         UITestHarness.runQueueTestIfRequested(transfers: transfers)
         UITestHarness.runSpaceTestIfRequested(transfers: transfers)
         UITestHarness.runExistsTestIfRequested(transfers: transfers)
+        UITestHarness.runStructureTestIfRequested(transfers: transfers)
         #endif
         connections.warmUp(servers.browsable)
         wireRefresh(browser, secondBrowser)

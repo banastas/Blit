@@ -235,6 +235,60 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitStructureTest <log> -BlitStructureTestDest <folder on another volume>`:
+    /// copies and moves a tree with empty folders and symlinks (PRD R3.1).
+    static func runStructureTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitStructureTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitStructureTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-structure")
+            try? fm.removeItem(at: root)
+            func makeTree(_ name: String) -> URL {
+                let pack = root.appendingPathComponent(name)
+                try? fm.createDirectory(at: pack.appendingPathComponent("Sample"), withIntermediateDirectories: true)
+                try? fm.createDirectory(at: pack.appendingPathComponent("a/b"), withIntermediateDirectories: true)
+                try? Data("movie".utf8).write(to: pack.appendingPathComponent("movie.mkv"))
+                try? fm.createSymbolicLink(atPath: pack.appendingPathComponent("link.mkv").path, withDestinationPath: "movie.mkv")
+                try? fm.createSymbolicLink(atPath: pack.appendingPathComponent("dangling").path, withDestinationPath: "/nowhere/at/all")
+                return pack
+            }
+            func describe(_ url: URL) -> String {
+                let items = ((try? fm.subpathsOfDirectory(atPath: url.path)) ?? []).sorted()
+                return items.map { item -> String in
+                    let path = url.appendingPathComponent(item).path
+                    if let target = try? fm.destinationOfSymbolicLink(atPath: path) { return "\(item)->\(target)" }
+                    var isDir: ObjCBool = false
+                    fm.fileExists(atPath: path, isDirectory: &isDir)
+                    return isDir.boolValue ? "\(item)/" : item
+                }.joined(separator: " ")
+            }
+            let dest = URL(fileURLWithPath: destPath)
+            try? fm.removeItem(at: dest)
+            try? fm.createDirectory(at: dest.appendingPathComponent("copy"), withIntermediateDirectories: true)
+            try? fm.createDirectory(at: dest.appendingPathComponent("move"), withIntermediateDirectories: true)
+            let copySource = makeTree("CopyPack"), moveSource = makeTree("MovePack")
+            lines.append("source: \(describe(copySource))")
+            _ = transfers.enqueue([.local(copySource)], to: .local(dest.appendingPathComponent("copy")), destinationName: "copy")
+            _ = transfers.enqueue([.local(moveSource)], to: .local(dest.appendingPathComponent("move")), destinationName: "move", move: true)
+            for _ in 0..<300 where transfers.transferJobs.suffix(2).contains(where: { $0.isActive || $0.status == .queued }) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            for job in transfers.transferJobs.suffix(2) {
+                lines.append("\(job.title): \(job.status) · \(job.failures)")
+                for line in job.log { lines.append("    \(line.text.prefix(110))") }
+            }
+            lines.append("copied: \(describe(dest.appendingPathComponent("copy/CopyPack")))")
+            lines.append("moved: \(describe(dest.appendingPathComponent("move/MovePack")))")
+            lines.append("move source still exists: \(fm.fileExists(atPath: moveSource.path))")
+            lines.append("done")
+            try? fm.removeItem(at: root)
+        }
+    }
+
     static func runIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitRightClickTest") else { return }
         var lines: [String] = ["started"] {

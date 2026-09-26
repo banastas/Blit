@@ -217,7 +217,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 
 ### Transfer engine
 
-- **R3.1** Download and copy recursively, preserving folder structure and modification times.
+- **R3.1** Download and copy recursively, preserving folder structure and modification times. Empty folders are recreated; local symlinks are recreated as links (not followed), and a move removes them from the source once they exist at the destination. Symlinks on servers are skipped and each one is named in the log. After a move, source folders are removed deepest first once empty.
 - **R3.2** **Parallel files:** N files in flight at once, N configurable per server.
 - **R3.3** **Split files:** files above a size threshold are downloaded in byte-range chunks over several connections.
 - **R3.4** **Deep request pipelining:** many SFTP read requests in flight per connection, and a large SSH channel window. **Shortened read replies are normal:** when a server returns fewer bytes than requested (SFTPGo caps replies at 32 KB), request the remainder and keep the pipeline full. Use `limits@openssh.com` to choose the read size where the server offers it (OpenSSH 8.5 and later). See [findings](#benchmark-findings).

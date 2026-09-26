@@ -21,6 +21,22 @@ public struct LocalFile: Sendable, Equatable {
 /// the root's own name, like `cp -r`. Hidden files and package internals are
 /// included; `.blitpart` leftovers and `.DS_Store` are skipped.
 public func localFiles(at root: String) throws -> [LocalFile] {
+    try localTree(at: root).files
+}
+
+/// Everything under a local root: files, folders (empty ones included) and
+/// symlinks (not followed), so a copy keeps the whole structure (PRD R3.1).
+public struct LocalTree: Sendable {
+    public var files: [LocalFile] = []
+    /// Folders, relative (root name first).
+    public var directories: [String] = []
+    public struct Symlink: Sendable { public let relativePath: String; public let source: String; public let target: String }
+    public var symlinks: [Symlink] = []
+    /// Absolute paths of the folders at the source (for cleaning up after a move).
+    public var sourceDirectories: [String] = []
+}
+
+public func localTree(at root: String) throws -> LocalTree {
     let fm = FileManager.default
     let rootURL = URL(fileURLWithPath: root).standardizedFileURL
     let name = rootURL.lastPathComponent
@@ -28,24 +44,71 @@ public func localFiles(at root: String) throws -> [LocalFile] {
     guard fm.fileExists(atPath: rootURL.path, isDirectory: &isDirectory) else {
         throw POSIXFailure("\(root): not found")
     }
-    let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
-    func file(_ url: URL, _ relative: String) throws -> LocalFile? {
+    let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
+    var tree = LocalTree()
+    func add(_ url: URL, _ relative: String) throws {
         let v = try url.resourceValues(forKeys: Set(keys))
-        guard v.isRegularFile == true else { return nil }
-        return LocalFile(path: url.path, relativePath: relative, size: UInt64(v.fileSize ?? 0), modificationTime: v.contentModificationDate)
+        if v.isSymbolicLink == true {
+            if let target = try? fm.destinationOfSymbolicLink(atPath: url.path) {
+                tree.symlinks.append(.init(relativePath: relative, source: url.path, target: target))
+            }
+        } else if v.isRegularFile == true {
+            tree.files.append(LocalFile(path: url.path, relativePath: relative, size: UInt64(v.fileSize ?? 0),
+                                        modificationTime: v.contentModificationDate))
+        } else if v.isDirectory == true {
+            tree.directories.append(relative)
+            tree.sourceDirectories.append(url.path)
+        }
     }
-    if !isDirectory.boolValue { return try file(rootURL, name).map { [$0] } ?? [] }
-
-    var result: [LocalFile] = []
-    guard let walker = fm.enumerator(at: rootURL, includingPropertiesForKeys: keys) else { return [] }
-    let prefix = rootURL.path.count + 1
-    for case let url as URL in walker {
-        let last = url.lastPathComponent
+    if !isDirectory.boolValue {
+        try add(rootURL, name)
+        return tree
+    }
+    tree.directories.append(name)
+    tree.sourceDirectories.append(rootURL.path)
+    // Relative paths straight from the walker: re-deriving them from each URL
+    // breaks for a symlink whose target doesn't exist (its URL standardizes
+    // differently from the root's).
+    guard let walker = fm.enumerator(atPath: rootURL.path) else { return tree }
+    while let relativePath = walker.nextObject() as? String {
+        let last = (relativePath as NSString).lastPathComponent
         if last == ".DS_Store" || last.hasSuffix(".blitpart") { continue }
-        let relative = name + "/" + String(url.standardizedFileURL.path.dropFirst(prefix))
-        if let f = try file(url, relative) { result.append(f) }
+        try add(rootURL.appendingPathComponent(relativePath), name + "/" + relativePath)
     }
-    return result.sorted { $0.relativePath < $1.relativePath }
+    tree.files.sort { $0.relativePath < $1.relativePath }
+    return tree
+}
+
+/// Creates a tree's folders and symlinks under `directory` (its files are
+/// copied by `copy`). Returns problems, one line each.
+public func recreateStructure(directories: [String], symlinks: [LocalTree.Symlink], into directory: String) -> [String] {
+    let fm = FileManager.default
+    var problems: [String] = []
+    for relative in directories {
+        do {
+            try fm.createDirectory(atPath: directory + "/" + relative, withIntermediateDirectories: true)
+        } catch {
+            problems.append("\(relative): \(error.localizedDescription)")
+        }
+    }
+    for link in symlinks {
+        let path = directory + "/" + link.relativePath
+        if let existing = try? fm.destinationOfSymbolicLink(atPath: path) {
+            if existing != link.target { problems.append("\(link.relativePath): a different link already exists") }
+            continue
+        }
+        if fm.fileExists(atPath: path) {
+            problems.append("\(link.relativePath): something else already exists there")
+            continue
+        }
+        do {
+            try fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try fm.createSymbolicLink(atPath: path, withDestinationPath: link.target)
+        } catch {
+            problems.append("\(link.relativePath): \(error.localizedDescription)")
+        }
+    }
+    return problems
 }
 
 // MARK: - NAS-side verification

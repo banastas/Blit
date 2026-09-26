@@ -188,15 +188,34 @@ public struct TransferSummary: Sendable {
 /// with ".", such as a torrent client's `.parts` files) are skipped unless
 /// `includeHidden`.
 public func remoteFiles(at root: RemotePath, using client: SFTPClient, includeHidden: Bool = false) async throws -> [RemoteFile] {
+    try await remoteTree(at: root, using: client, includeHidden: includeHidden).files
+}
+
+/// Everything under a remote root: its files, its folders (so empty ones can
+/// be recreated, PRD R3.1) and the symlinks that were skipped.
+public struct RemoteTree: Sendable {
+    public var files: [RemoteFile] = []
+    /// Folders, relative to the download folder (root name first), empty ones included.
+    public var directories: [String] = []
+    /// The same folders on the server, for cleaning up after a move.
+    public var sourceDirectories: [RemotePath] = []
+    /// Relative paths of symlinks, which aren't followed or recreated from servers.
+    public var skippedSymlinks: [String] = []
+}
+
+public func remoteTree(at root: RemotePath, using client: SFTPClient, includeHidden: Bool = false) async throws -> RemoteTree {
     let attributes = try await client.stat(root)
     let rootName = TransferPlan.localName(root.lastComponent)
+    var tree = RemoteTree()
     if !attributes.isDirectory {
-        return [RemoteFile(path: root, relativePath: rootName, size: attributes.size ?? 0,
-                           modificationTime: attributes.modificationTime)]
+        tree.files = [RemoteFile(path: root, relativePath: rootName, size: attributes.size ?? 0,
+                                 modificationTime: attributes.modificationTime)]
+        return tree
     }
-    var files: [RemoteFile] = []
     var folders: [(RemotePath, String)] = [(root, rootName)]
     while let (folder, local) = folders.popLast() {
+        tree.directories.append(local)
+        tree.sourceDirectories.append(folder)
         for entry in try await client.list(folder) {
             if !includeHidden, entry.filename.bytes.first == UInt8(ascii: ".") { continue }
             let path = folder.appending(entry.filename)
@@ -204,13 +223,16 @@ public func remoteFiles(at root: RemotePath, using client: SFTPClient, includeHi
             if entry.attributes.isDirectory {
                 folders.append((path, name))
             } else if entry.attributes.isRegularFile {
-                files.append(RemoteFile(path: path, relativePath: name, size: entry.attributes.size ?? 0,
-                                        modificationTime: entry.attributes.modificationTime))
+                tree.files.append(RemoteFile(path: path, relativePath: name, size: entry.attributes.size ?? 0,
+                                             modificationTime: entry.attributes.modificationTime))
+            } else if entry.attributes.isSymlink {
+                tree.skippedSymlinks.append(name)
             }
-            // Symlinks and special files are skipped for now.
         }
     }
-    return files.sorted { $0.relativePath < $1.relativePath }
+    tree.files.sort { $0.relativePath < $1.relativePath }
+    tree.directories.sort()
+    return tree
 }
 
 // MARK: - Remote hashing
