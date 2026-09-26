@@ -472,6 +472,7 @@ The setup Blit is tuned against:
 8. **Connection ramp:** does the seedbox's sshd drop near-simultaneous logins above `MaxStartups`? Opening 3–4 connections 250 ms apart worked every time in M1. 8–16 at once wasn't tested, and isn't needed at 3–4 connections.
 9. ~~**Cold-file throughput**~~ **Answered (M2):** 22–36 MB/s, set by the seedbox's shared disk and its load; more connections and server-side prefetch don't raise it ([results](#cold-file-results-m2)).
 10. **Fetch new downloads automatically?** Freshly completed files are usually still in the seedbox's cache and download 2–3× faster. A watch mode that fetches new completed downloads as they appear would take advantage of that. It's a candidate for after v1.
+11. ~~**Chained transfers (seedbox → SSD → NAS in one go)?**~~ **Decided: deprioritized.** The user is the review step between SSD and NAS: everything downloaded gets reviewed on the SSD, renamed to the naming conventions where needed, and only then archived to whichever NAS location fits (or not at all). Automating SSD → NAS would skip that step. Work on the middle of the workflow should make review faster, not bypass it.
 
 ## Repository layout
 
