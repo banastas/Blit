@@ -156,7 +156,11 @@ struct TransferStrip: View {
     @ViewBuilder private var queueMenu: some View {
         if !job.isOperation {
             switch job.status {
-            case .queued, .preparing, .running, .waiting, .waitingForSpace:
+            case .waiting:
+                Button("Retry Now") { transfers.retryNow(job) }
+                Button("Pause") { transfers.pause(job) }
+                Button("Cancel") { transfers.cancel(job) }
+            case .queued, .preparing, .running, .waitingForSpace:
                 Button("Pause") { transfers.pause(job) }
                 Button("Cancel") { transfers.cancel(job) }
             case .paused:
@@ -238,10 +242,17 @@ struct TransferStrip: View {
             Text("WAITING FOR SPACE · \(reason.uppercased()) · FREE SOME UP OR PAUSE")
                 .foregroundStyle(HUDColor.failureText)
         } else if case .waiting(let until, let reason) = job.status {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let left = max(0, Int(until.timeIntervalSince(context.date)))
-                Text("RETRY IN \(left / 60):\(String(format: "%02d", left % 60)) · \(reason.uppercased())")
-                    .foregroundStyle(HUDColor.failureText)
+            HStack(spacing: 8) {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let left = Int(until.timeIntervalSince(context.date))
+                    // Past the countdown it's waiting on something (network, a drive): say that.
+                    Text(left > 0 ? "RETRY IN \(TransferJob.duration(left)) · \(reason.uppercased())" : reason.uppercased())
+                        .foregroundStyle(HUDColor.failureText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 4)
+                HUDButton("RETRY NOW", help: "Try again now (the cause is fixed)") { transfers.retryNow(job) }
             }
         } else if job.status == .preparing {
             Text(job.attempt > 0 ? "RECONNECTING · ATTEMPT \(job.attempt + 1)…" : "PREPARING · LISTING FILES…").foregroundStyle(HUDColor.dim)

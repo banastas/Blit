@@ -58,6 +58,9 @@ struct MenuBarPanel: View {
             }
             Divider()
             HStack {
+                if let job = transfers.featured, case .waiting = job.status {
+                    Button("Retry Now") { transfers.retryNow(job) }
+                }
                 if transfers.hasActiveWork || transfers.queuePaused {
                     Button(transfers.queuePaused ? "Resume All" : "Pause All") {
                         transfers.queuePaused ? transfers.resumeAll() : transfers.pauseAll()

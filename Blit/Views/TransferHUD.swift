@@ -492,7 +492,11 @@ private struct QueueRow: View {
                 HUDButton("▼", help: "Move down") { transfers.move(job, by: 1) }
                 HUDButton("‖", help: "Pause") { transfers.pause(job) }
                 HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
-            case .preparing, .running, .waiting, .waitingForSpace:
+            case .waiting:
+                HUDButton("RETRY NOW", help: "Try again now (the cause is fixed)") { transfers.retryNow(job) }
+                HUDButton("‖", help: "Pause") { transfers.pause(job) }
+                HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
+            case .preparing, .running, .waitingForSpace:
                 HUDButton("‖ PAUSE") { transfers.pause(job) }
                 HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
             case .paused:

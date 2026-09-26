@@ -352,6 +352,7 @@ struct ContentView: View {
         UITestHarness.runHUDKeysTestIfRequested(transfers: transfers)
         UITestHarness.runNoticeTestIfRequested(transfers: transfers)
         UITestHarness.runStatusTestIfRequested(transfers: transfers)
+        UITestHarness.runRetryNowTestIfRequested(transfers: transfers)
         UITestHarness.runSpaceTestIfRequested(transfers: transfers)
         UITestHarness.runExistsTestIfRequested(transfers: transfers)
         UITestHarness.runStructureTestIfRequested(transfers: transfers)

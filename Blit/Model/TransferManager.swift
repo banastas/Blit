@@ -289,6 +289,8 @@ final class TransferJob: Identifiable {
     var persistent = true
     /// A problem shown in the strip instead of an alert (see notice(_:action:place:)).
     var notice: String?
+    /// Retry Now: ends the backoff wait (and waits for the network or a drive) early.
+    @ObservationIgnored var retryNowRequested = false
     /// What to do with files already at the destination (PRD R5.3), chosen in
     /// Settings when the transfer was queued.
     var existsRule: ExistsRule = TransferJob.defaultExistsRule
@@ -595,6 +597,12 @@ final class TransferManager {
         }
     }
     var queuedCount: Int { jobs.filter { $0.status == .queued }.count }
+
+    /// Ends a waiting job's backoff and tries again at once (the cause was fixed).
+    func retryNow(_ job: TransferJob) {
+        guard case .waiting = job.status else { return }
+        job.retryNowRequested = true
+    }
 
     /// A problem that needs no decision: a ✕ line in the strip that stays
     /// until dismissed, instead of an alert (PRD: no popups unless a decision
@@ -962,10 +970,19 @@ final class TransferManager {
             job.note("RETRY IN \(delay) S · \(reason)".uppercased(), failure: true)
             job.rate = 0
             job.connectionRates = []
-            job.status = .waiting(until: Date().addingTimeInterval(TimeInterval(delay)), reason: reason)
-            try? await Task.sleep(for: .seconds(delay))
-            await waitForNetwork(job)
-            await waitForVolumes(job)
+            let until = Date().addingTimeInterval(TimeInterval(delay))
+            job.status = .waiting(until: until, reason: reason)
+            job.retryNowRequested = false
+            // Sleeps in short steps so Retry Now (or pause/cancel) ends it early.
+            while Date() < until, !job.retryNowRequested, job.stopRequest == nil, !isQuitting, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            if !job.retryNowRequested {
+                await waitForNetwork(job)
+                await waitForVolumes(job)
+            }
+            if job.retryNowRequested { job.note("RETRY NOW") }
+            job.retryNowRequested = false
             if let request = job.stopRequest {
                 finishStop(job, request)
                 break
@@ -1088,6 +1105,9 @@ final class TransferManager {
     /// (a local copy on an offline Mac mustn't wait forever); the retry then
     /// runs regardless and fails or succeeds on its own.
     private func waitForNetwork(_ job: TransferJob) async {
+        if case .waiting(_, let reason) = job.status {
+            job.status = .waiting(until: .distantPast, reason: "waiting for the network · " + reason)
+        }
         final class Once: @unchecked Sendable {
             private let lock = NSLock()
             private var done = false
@@ -1142,7 +1162,12 @@ final class TransferManager {
             for name in missing where noted.insert(name).inserted {
                 job.note("WAITING FOR \(name.uppercased()) TO COME BACK", failure: true)
             }
-            try? await Task.sleep(for: .seconds(5))
+            // The countdown is over; say what it's really waiting for.
+            job.status = .waiting(until: .distantPast, reason: "waiting for \(missing.joined(separator: ", ")) to come back · reconnect it")
+            for _ in 0..<20 where !job.retryNowRequested && job.stopRequest == nil {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            if job.retryNowRequested || job.stopRequest != nil { return }
         }
     }
 

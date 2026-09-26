@@ -512,6 +512,52 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRetryNowTest <log>`: a copy into a read-only folder waits to retry;
+    /// Retry Now tries again at once instead of after the backoff.
+    static func runRetryNowTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitRetryNowTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-retry-test")
+            try? fm.removeItem(at: root)
+            let pack = root.appendingPathComponent("src/Pack"), dest = root.appendingPathComponent("dst")
+            try? fm.createDirectory(at: pack, withIntermediateDirectories: true)
+            try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
+            fm.createFile(atPath: pack.appendingPathComponent("a.bin").path, contents: Data(count: 1 << 16))
+            try? fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dest.path)
+            _ = transfers.enqueue([.local(pack)], to: .local(dest), destinationName: "dst")
+            guard let job = transfers.transferJobs.last else { return lines.append("no job") }
+            @MainActor func describe() -> String {
+                switch job.status {
+                case .waiting(let until, let reason): "waiting \(max(0, Int(until.timeIntervalSinceNow)))s · \(reason) · attempt \(job.attempt)"
+                default: "\(job.status) · attempt \(job.attempt)"
+                }
+            }
+            @MainActor func waitUntil(_ seconds: Double, _ done: () -> Bool) async {
+                let end = Date().addingTimeInterval(seconds)
+                while Date() < end, !done() { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+            await waitUntil(15) { if case .waiting = job.status { true } else { false } }
+            lines.append("first failure: \(describe())")
+            let start = Date()
+            transfers.retryNow(job)
+            await waitUntil(8) { job.attempt >= 1 }
+            await waitUntil(8) { if case .waiting = job.status { true } else { false } }
+            lines.append(String(format: "after Retry Now (%.1f s): ", Date().timeIntervalSince(start)) + describe())
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
+            transfers.retryNow(job)
+            await waitUntil(15) { job.status == .finished }
+            lines.append("after fixing and Retry Now: \(describe()) · copied \(fm.fileExists(atPath: dest.appendingPathComponent("Pack/a.bin").path))")
+            transfers.dismissFinished()
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {
