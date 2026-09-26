@@ -347,7 +347,11 @@ final class TransferManager {
     @ObservationIgnored private var isQuitting = false
     @ObservationIgnored private var notificationProblemReported = false
     /// Held while transferring so the Mac doesn't idle-sleep (PRD R5.6).
-    @ObservationIgnored private var keepAwake: NSObjectProtocol?
+    @ObservationIgnored private var keepAwake: NSObjectProtocol? {
+        didSet { isKeepingAwake = keepAwake != nil }
+    }
+    /// Idle sleep is held off while transfers run (PRD R5.6); shown in the menu bar panel.
+    private(set) var isKeepingAwake = false
     @ObservationIgnored private var wakeObserver: NSObjectProtocol?
 
     var hasActiveWork: Bool { jobs.contains { $0.isActive } }
@@ -600,6 +604,16 @@ final class TransferManager {
         }
     }
     var queuedCount: Int { jobs.filter { $0.status == .queued }.count }
+
+    /// The whole queue at a glance (menu bar panel): bytes still to move in
+    /// running and queued jobs whose size is known, and an ETA at the current
+    /// combined rate.
+    var queueTotals: (queued: Int, bytesLeft: Int64, eta: Int?) {
+        let pending = transferJobs.filter { $0.isActive || $0.status == .queued }
+        let left = pending.reduce(Int64(0)) { $0 + max($1.totalBytes - $1.transferred, 0) }
+        let rate = pending.filter(\.isActive).reduce(0) { $0 + $1.rate }
+        return (queuedCount, left, rate > 0.1 && left > 0 ? Int(Double(left) / (rate * 1e6)) : nil)
+    }
 
     /// One SFTP round trip in milliseconds (a stat of the home folder), or nil
     /// if it failed. During a download it includes queueing behind reads, which

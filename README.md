@@ -157,7 +157,7 @@ A failure adds a compact red `✕ N warning` tag in the top line (in place of th
 - **Dock icon:** a strip of pixel progress cells while transferring; a pixel ✓ for five seconds when a batch finishes verified.
 - **Verified badge:** a small pixel ✓ after the names of local files Blit copied and verified by SHA-256 (server, NAS or read-back), from the transfer log, while their size still matches; hover for how and when. Renames and moves in Blit keep it for the session.
 - **Spinners:** a pixel dot chasing round a 3×3 ring (Refreshing…, expanding folders, first load).
-- **Drop targets:** pixel marching ants instead of a dashed outline.
+- **Drop targets:** pixel marching ants instead of a dashed outline: file list, sidebar rows and path-bar segments.
 - **NAS verification shield:** a pixel shield with a check knocked out.
 - **About Blit:** the pixel-terminal style, with version and build.
 
@@ -266,8 +266,8 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R5.3** When a file already exists, apply a rule per queue: skip, overwrite, keep both, or overwrite only if different (size and hash). *Implemented* as Settings › When a file already exists, captured per transfer when queued (saved with the queue; shown as EXISTS in the HUD): **Skip if the same size** (default; a different size fails the file), **Replace if different** (same size: SHA-256 of both copies, on the server or NAS where possible; identical is left and counts as verified, so a move may remove its source; different is transferred again), **Replace** (always, verified as usual), **Keep both** (the new file becomes "name 2.ext").
 - **R5.4** Show live throughput per connection and overall, plus time remaining.
 - **R5.5** Send a notification when a queue finishes or fails.
-- **R5.6** Keep the Mac awake while transfers run.
-- **R5.7** A menu bar icon shows overall progress and speed when the main window is closed.
+- **R5.6** Keep the Mac awake while transfers run. The menu bar panel says so ("Keeping the Mac awake · 2 queued · 1.9 TB left · ~2 d 4 h"), so it can be confirmed before walking away. Idle sleep is held off; the display can still sleep.
+- **R5.7** A menu bar icon shows overall progress and speed when the main window is closed ("58 MB/s · 64%"). The panel adds queue totals: jobs queued, bytes left in jobs whose size is known, and a day-scale ETA at the combined rate.
 - **R5.8** **Queue-wide disk space:** before starting each item, check the destination's free space against everything still queued for it. If it would run out, pause the queue; don't fail the file. *Implemented per item:* after listing, a transfer works out the new space it needs (files already there, part files, which reserve their full size, and same-volume clones count as nothing) and, if the destination is short (plus a 1 GB reserve; APFS purgeable space counts), waits with `WAITING FOR SPACE · <volume> NEEDS <n> MORE`, notifies once, and rechecks every 15 s, continuing by itself; Pause and Cancel still work. Running out mid-transfer ("No space left on device") waits the same way instead of retrying into a full disk.
 
 ### Finder integration

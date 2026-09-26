@@ -118,6 +118,10 @@ private struct PathSegmentView: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(.primary.opacity(isTargeted ? 0.15 : (isHovered && segment.isFolder ? 0.08 : 0)))
             }
+            // Pixel marching ants, like every other drop target (not color alone).
+            .overlay {
+                if isTargeted { PixelMarchingAnts(cell: 1).padding(-1).allowsHitTesting(false) }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -34,7 +34,7 @@ struct MenuBarLabel: View {
         if !job.verifying.isEmpty, job.transferred >= job.totalBytes { return "SHA256" }
         if job.status == .preparing { return "…" }
         if case .waiting = job.status { return "RETRY" }
-        return String(format: "%.0f MB/s", job.rate)
+        return String(format: "%.0f MB/s · %d%%", job.rate, Int((job.progress * 100).rounded(.down)))
     }
 }
 
@@ -56,6 +56,9 @@ struct MenuBarPanel: View {
                 Text("No transfers").foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if transfers.isKeepingAwake || transfers.queuedCount > 0 {
+                footer
+            }
             Divider()
             HStack {
                 if let job = transfers.featured, case .waiting = job.status {
@@ -76,6 +79,22 @@ struct MenuBarPanel: View {
         }
         .padding(12)
         .frame(width: 320)
+    }
+
+    /// "Keeping the Mac awake · 2 queued · 1.9 TB left · ~2 d 4 h".
+    private var footer: some View {
+        let totals = transfers.queueTotals
+        var parts: [String] = []
+        if transfers.isKeepingAwake { parts.append("Keeping the Mac awake") }
+        if totals.queued > 0 { parts.append("\(totals.queued) queued") }
+        if totals.bytesLeft > 0 { parts.append("\(totals.bytesLeft.formatted(.byteCount(style: .file))) left") }
+        if let eta = totals.eta { parts.append(TransferJob.duration(eta)) }
+        return Label(parts.joined(separator: " · "), systemImage: transfers.isKeepingAwake ? "cup.and.saucer" : "tray.full")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .help(transfers.isKeepingAwake
+                  ? "Blit holds off idle sleep while transferring. The display can still sleep. Bytes left count jobs whose size is known."
+                  : "Bytes left count jobs whose size is known.")
     }
 }
 
