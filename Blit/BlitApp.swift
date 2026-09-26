@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UITestHarness.runIfRequested()
         UITestHarness.renderStatusIconsIfRequested()
         UITestHarness.runUndoTestIfRequested()
+        UITestHarness.runPartialTestIfRequested()
         UITestHarness.renderInfoIfRequested()
         UITestHarness.runLogWindowTestIfRequested()
         #endif

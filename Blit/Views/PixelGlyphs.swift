@@ -6,7 +6,7 @@ import AppKit
 import SwiftUI
 
 enum PixelGlyph: Character, CaseIterable {
-    case check = "✓", cross = "✕", up = "▲", down = "▼", arrow = "→", pause = "‖", play = "▶"
+    case check = "✓", cross = "✕", up = "▲", down = "▼", arrow = "→", pause = "‖", play = "▶", partial = "◐"
 
     var rows: [String] {
         switch self {
@@ -17,6 +17,7 @@ enum PixelGlyph: Character, CaseIterable {
         case .arrow: [".......", "....#..", ".....#.", "#######", ".....#.", "....#..", "......."]
         case .pause: [".......", ".##.##.", ".##.##.", ".##.##.", ".##.##.", ".##.##.", "......."]
         case .play:  [".#.....", ".##....", ".###...", ".####..", ".###...", ".##....", ".#....."]
+        case .partial: ["#######", "####..#", "####..#", "####..#", "####..#", "####..#", "#######"]
         }
     }
 

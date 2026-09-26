@@ -384,6 +384,9 @@ public func copy(
                             if case .nas = verification { $0.verifiedOnNAS += 1 }
                         }
                     } catch {
+                        // A copy never resumes (a retry copies from the start), so a
+                        // failed or stopped part is only dead weight on the share.
+                        unlink(part)
                         events(.fileFailed(file, "\(error)"))
                         summary.withLock { $0.failed.append((file, "\(error)")) }
                     }
@@ -402,10 +405,10 @@ private func verify(part: String, sourceHash: String, size: UInt64, nas: NASVeri
         do {
             let remote = try await limiter.run { try await nas.hasher.sha256(RemotePath(part)) }
             if let remoteSize = remote.size, remoteSize != size {
-                throw CopyMismatch(description: "size on the NAS is \(remoteSize), expected \(size); kept \(part)")
+                throw CopyMismatch(description: "size on the NAS is \(remoteSize), expected \(size)")
             }
             guard remote.sha256 == sourceHash else {
-                throw CopyMismatch(description: "SHA-256 mismatch: source \(sourceHash), NAS \(remote.sha256); kept \(part)")
+                throw CopyMismatch(description: "SHA-256 mismatch: source \(sourceHash), NAS \(remote.sha256)")
             }
             return .nas(sourceHash)
         } catch let unavailable as RemoteHasher.Unavailable {
@@ -415,13 +418,13 @@ private func verify(part: String, sourceHash: String, size: UInt64, nas: NASVeri
             throw mismatch
         } catch {
             // Interrupted (connection lost, Blit quitting): never downgrade to a
-            // read-back, which a move would then trust. Keep the part; retry.
-            throw CopyMismatch(description: "NAS verification interrupted (\(error)); kept \(part)")
+            // read-back, which a move would then trust. Fail the file; a retry copies again.
+            throw CopyMismatch(description: "NAS verification interrupted (\(error))")
         }
     }
     let readBack = try await Task.detached { try readBackSHA256(path: part) }.value
     guard readBack == sourceHash else {
-        throw CopyMismatch(description: "SHA-256 mismatch on read-back: source \(sourceHash), copy \(readBack); kept \(part)")
+        throw CopyMismatch(description: "SHA-256 mismatch on read-back: source \(sourceHash), copy \(readBack)")
     }
     return .readBack(readBack, reason: fallbackReason)
 }
@@ -434,11 +437,11 @@ private func checkUnchanged(_ file: LocalFile, part: String) throws {
     let size = (now?[.size] as? NSNumber)?.uint64Value
     let mtime = now?[.modificationDate] as? Date
     if size != file.size || (file.modificationTime != nil && mtime != file.modificationTime) {
-        throw CopyMismatch(description: "changed while it was copied (still being written?); kept \(part)")
+        throw CopyMismatch(description: "changed while it was copied (still being written?)")
     }
     let copied = (try? fm.attributesOfItem(atPath: part)[.size] as? NSNumber)?.uint64Value
     guard copied == file.size else {
-        throw CopyMismatch(description: "copy is \(copied ?? 0) bytes, expected \(file.size); kept \(part)")
+        throw CopyMismatch(description: "copy is \(copied ?? 0) bytes, expected \(file.size)")
     }
 }
 

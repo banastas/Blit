@@ -2,6 +2,7 @@
 // default, monospaced digits for sizes and dates (PRD R2.4–R2.6), with file
 // management from the context menu and drag and drop (R2.12).
 
+import BlitRemote
 import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
@@ -95,6 +96,12 @@ struct FileListView: View {
                                     .foregroundStyle(.secondary)
                                     .help(verified.summary)
                                     .accessibilityLabel("Verified")
+                            }
+                            if browser.renaming != item.location, let partial = item.partial {
+                                Image(nsImage: PixelGlyph.partial.image(size: 9))
+                                    .foregroundStyle(.secondary)
+                                    .help(partialSummary(partial))
+                                    .accessibilityLabel("Partial download")
                             }
                         }
                     } icon: {
@@ -209,6 +216,13 @@ struct FileListView: View {
             if items.count == 1 {
                 Button("Get Info") { browser.infoItem = items[0] }
             }
+            if items.count == 1, items[0].partial != nil {
+                Divider()
+                let problem = browser.resumeProblem(items[0])
+                Button("Resume Download") { browser.resumeDownload(items[0]) }
+                    .disabled(problem != nil)
+                    .help(problem ?? "Download the rest of this file into this folder.")
+            }
             Divider()
             Button("New Folder") { browser.newFolder() }
             if items.count == 1 {
@@ -227,6 +241,13 @@ struct FileListView: View {
             Divider()
             Button("Refresh") { browser.reload() }
         }
+    }
+
+    private func partialSummary(_ partial: PartialDownload) -> String {
+        let done = Int64(partial.done).formatted(.byteCount(style: .file))
+        let total = Int64(partial.size).formatted(.byteCount(style: .file))
+        let from = browser.server(for: partial)?.displayName ?? partial.source?.host ?? "a server"
+        return "\(done) of \(total) downloaded from \(from): \(partial.remotePath). Right-click › Resume Download to finish it, or Move to Trash to discard it."
     }
 
     /// The triangle that shows a folder's contents in place, like Finder's list view.

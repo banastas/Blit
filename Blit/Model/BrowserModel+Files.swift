@@ -2,6 +2,8 @@
 // menus, the context menu and drag and drop (PRD R2.12).
 
 import AppKit
+import BlitRemote
+import BlitSFTP
 import Foundation
 import UniformTypeIdentifiers
 
@@ -151,7 +153,7 @@ extension BrowserModel {
         guard !items.isEmpty else { return }
         if operations.canTrash(items.map(\.location)) {
             Task {
-                if let message = await operations.moveToTrash(items.map(\.location)) { operationError = message }
+                if let message = await operations.moveToTrash(withResumeData(items)) { operationError = message }
             }
         } else {
             deleteRequest = items
@@ -161,7 +163,64 @@ extension BrowserModel {
     func confirmDelete(_ items: [FileItem]) {
         deleteRequest = nil
         Task {
-            if let message = await operations.deletePermanently(items.map(\.location)) { operationError = message }
+            if let message = await operations.deletePermanently(withResumeData(items)) { operationError = message }
+        }
+    }
+
+    /// A `.blitpart` goes with its `.state` sidecar, which is useless alone.
+    private func withResumeData(_ items: [FileItem]) -> [BrowseLocation] {
+        var locations = items.map(\.location)
+        for item in items where item.partial != nil {
+            guard let url = item.location.localURL else { continue }
+            let state = BrowseLocation.local(URL(fileURLWithPath: url.path + ".state"))
+            if !locations.contains(state), FileManager.default.fileExists(atPath: url.path + ".state") { locations.append(state) }
+        }
+        return locations
+    }
+
+    // MARK: Partial downloads
+
+    /// The configured server a partial download came from.
+    func server(for partial: PartialDownload) -> ServerConfig? {
+        guard let source = partial.source else { return nil }
+        return servers.servers.first {
+            !$0.isNASLogin && $0.host == source.host && $0.port == source.port && $0.username == source.username
+        }
+    }
+
+    /// Why a partial download can't be resumed from here, or nil if it can.
+    func resumeProblem(_ item: FileItem) -> String? {
+        guard let partial = item.partial, let url = item.location.localURL else { return "Not a partial download." }
+        guard server(for: partial) != nil else {
+            return partial.source == nil
+                ? "This part file doesn't record its server (it's from an older version of Blit)."
+                : "The server it came from (\(partial.source!.host)) isn't in the sidebar anymore."
+        }
+        let folder = url.deletingLastPathComponent().standardizedFileURL.path
+        if operations.transfers.transferJobs.contains(where: { job in
+            let destination = job.destination.standardizedFileURL.path
+            return (job.isActive || job.status == .queued) && (folder == destination || folder.hasPrefix(destination + "/"))
+        }) {
+            return "A transfer into this folder is already queued or running."
+        }
+        return nil
+    }
+
+    /// Queues the file again into the part's folder; the download picks up
+    /// where the part file left off (PRD R3.6).
+    func resumeDownload(_ item: FileItem) {
+        guard resumeProblem(item) == nil, let partial = item.partial, let server = server(for: partial),
+              let url = item.location.localURL else { return }
+        let remoteName = partial.remotePath.bytes.split(separator: UInt8(ascii: "/")).last.map { RemotePath(bytes: Array($0)) }
+        let expected = remoteName.map(TransferPlan.localName)! + ".blitpart"
+        if item.name != expected {
+            operationError = "This part file was renamed. Rename it back to “\(expected)” to resume it, or it would download again from the start."
+            return
+        }
+        let folder = url.deletingLastPathComponent()
+        let source = BrowseLocation.remote(server: server.id, path: partial.remotePath.bytes)
+        if let message = operations.transfers.enqueue([source], to: .local(folder), destinationName: folder.lastPathComponent) {
+            operationError = message
         }
     }
 }

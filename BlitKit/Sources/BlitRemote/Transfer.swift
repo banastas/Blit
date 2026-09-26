@@ -402,6 +402,11 @@ struct PartState: Codable, Equatable {
     var size: UInt64
     var modificationTime: UInt32?
     var done: ByteRangeSet
+    /// Where it's downloading from, so the browser can offer to resume it.
+    /// (Optional: state saved before this still decodes.)
+    var host: String?
+    var port: Int?
+    var username: String?
 
     func matches(_ file: RemoteFile) -> Bool {
         version == 1 && remotePath == Data(file.path.bytes) && size == file.size && modificationTime == file.modificationTime
@@ -414,6 +419,37 @@ struct PartState: Codable, Equatable {
 
     func save(_ path: String) throws {
         try JSONEncoder().encode(self).write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    init(remotePath: Data, size: UInt64, modificationTime: UInt32?, done: ByteRangeSet, source: SSHEndpoint?) {
+        self.remotePath = remotePath
+        self.size = size
+        self.modificationTime = modificationTime
+        self.done = done
+        host = source?.host
+        port = source?.port
+        username = source?.username
+    }
+}
+
+/// A resumable `.blitpart` as the browser shows it: how far along it is and
+/// where it comes from (read from its `.state` sidecar).
+public struct PartialDownload: Hashable, Sendable {
+    public var remotePath: RemotePath
+    public var size: UInt64
+    public var done: UInt64
+    public var source: SSHEndpoint?
+
+    public var fraction: Double { size == 0 ? 1 : Double(done) / Double(size) }
+
+    public static func read(partPath: String) -> PartialDownload? {
+        guard let state = PartState.load(partPath + ".state") else { return nil }
+        var source: SSHEndpoint?
+        if let host = state.host, let username = state.username {
+            source = SSHEndpoint(host: host, port: state.port ?? 22, username: username)
+        }
+        return PartialDownload(remotePath: RemotePath(bytes: [UInt8](state.remotePath)), size: state.size,
+                               done: min(state.done.byteCount, state.size), source: source)
     }
 }
 
@@ -529,6 +565,7 @@ public func download(
     let fm = FileManager.default
     let hashLimiter = AsyncLimiter(options.concurrentHashes)
     let effectiveHasher = options.verify ? hasher : nil
+    let source = clients.first?.connection.endpoint
 
     let (finished, finishedSink) = AsyncStream.makeStream(of: (FileJob, PartFile).self)
     var work: [(FileJob, Range<UInt64>)] = []
@@ -592,7 +629,8 @@ public func download(
         // Resume if a matching part file and state exist (PRD R3.6).
         let partPath = finalPath + ".blitpart"
         let statePath = partPath + ".state"
-        var state = PartState(remotePath: Data(file.path.bytes), size: file.size, modificationTime: file.modificationTime, done: ByteRangeSet())
+        var state = PartState(remotePath: Data(file.path.bytes), size: file.size, modificationTime: file.modificationTime,
+                              done: ByteRangeSet(), source: source)
         var resuming = false
         if let saved = PartState.load(statePath), saved.matches(file), fm.fileExists(atPath: partPath) {
             state = saved
@@ -644,7 +682,7 @@ public func download(
         for file in differing {
             let finalPath = directory + "/" + file.relativePath
             let state = PartState(remotePath: Data(file.path.bytes), size: file.size, modificationTime: file.modificationTime,
-                                  done: ByteRangeSet())
+                                  done: ByteRangeSet(), source: source)
             let ranges = TransferPlan.ranges(size: file.size, connections: clients.count, gaps: nil)
             let job = FileJob(file: file, finalPath: finalPath, state: state, resuming: false, ranges: ranges.count, replace: true)
             work += ranges.map { (job, $0) }

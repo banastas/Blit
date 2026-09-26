@@ -18,6 +18,8 @@ struct FileItem: Identifiable, Hashable, Sendable {
     var kind: String
     /// Nesting under the current folder when folders are expanded in place.
     var depth = 0
+    /// For a resumable `.blitpart`: progress and source, from its sidecar.
+    var partial: PartialDownload?
     var id: BrowseLocation { location }
 }
 
@@ -299,10 +301,19 @@ final class BrowserModel {
         return urls.compactMap { url in
             guard let v = try? url.resourceValues(forKeys: Set(keys)) else { return nil }
             let isFolder = (v.isDirectory ?? false) && !(v.isPackage ?? false)
-            return FileItem(location: .local(url), name: url.lastPathComponent, isDirectory: isFolder,
+            let name = url.lastPathComponent
+            var kind = v.localizedTypeDescription ?? (isFolder ? "Folder" : "Document")
+            var partial: PartialDownload?
+            // Blit's own leftovers, labelled so they aren't mistaken for broken media.
+            if !isFolder, name.hasSuffix(".blitpart") {
+                partial = PartialDownload.read(partPath: url.path)
+                kind = partial.map { "Partial download · \(Int(($0.fraction * 100).rounded(.down)))%" } ?? "Blit partial file"
+            } else if !isFolder, name.hasSuffix(".blitpart.state") {
+                kind = "Blit resume data"
+            }
+            return FileItem(location: .local(url), name: name, isDirectory: isFolder,
                             modified: v.contentModificationDate ?? .distantPast,
-                            size: isFolder ? -1 : Int64(v.fileSize ?? 0),
-                            kind: v.localizedTypeDescription ?? (isFolder ? "Folder" : "Document"))
+                            size: isFolder ? -1 : Int64(v.fileSize ?? 0), kind: kind, partial: partial)
         }
     }
 }

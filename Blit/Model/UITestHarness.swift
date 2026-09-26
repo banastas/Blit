@@ -298,6 +298,39 @@ enum UITestHarness {
 
     /// `-BlitUndoTest <log>`: rename, move and trash in a temporary folder,
     /// each followed by Edit › Undo, checking the disk after each step.
+    /// `-BlitPartialTest <log>`: part files in the list (kinds, progress, resume
+    /// problem) and trashing a part takes its `.state` sidecar with it.
+    static func runPartialTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitPartialTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active else { return lines.append("no browser") }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-partial-test")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            fm.createFile(atPath: root.appendingPathComponent("movie.mkv.blitpart").path, contents: Data(count: 1000))
+            let state = #"{"version":1,"remotePath":"\#(Data("/files/movie.mkv".utf8).base64EncodedString())","size":1000,"modificationTime":5,"done":{"ranges":[[0,370]]},"host":"nowhere.invalid","port":22,"username":"u"}"#
+            fm.createFile(atPath: root.appendingPathComponent("movie.mkv.blitpart.state").path, contents: Data(state.utf8))
+            fm.createFile(atPath: root.appendingPathComponent("copy.bin.blitpart").path, contents: Data(count: 10))
+            browser.open(.local(root))
+            for _ in 0..<20 where browser.items.count < 3 { try? await Task.sleep(for: .milliseconds(200)) }
+            for item in browser.items.sorted(by: { $0.name < $1.name }) {
+                lines.append("\(item.name) · \(item.kind) · partial \(item.partial.map { "\($0.done)/\($0.size) \($0.remotePath)" } ?? "none")")
+            }
+            if let part = browser.items.first(where: { $0.name == "movie.mkv.blitpart" }) {
+                lines.append("resume: \(browser.resumeProblem(part) ?? "ok")")
+                browser.requestDelete([part])
+                try? await Task.sleep(for: .seconds(2))
+                lines.append("left: \(((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).sorted().joined(separator: " "))")
+            }
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

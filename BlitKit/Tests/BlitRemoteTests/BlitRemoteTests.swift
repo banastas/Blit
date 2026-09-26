@@ -455,3 +455,29 @@ struct KeyLoginTests {
         try await listener.close()
     }
 }
+
+/// What the browser reads from a `.blitpart.state` sidecar.
+struct PartialDownloadTests {
+    @Test func readsProgressAndSource() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let part = dir.appendingPathComponent("a.mkv.blitpart").path
+        let state = PartState(remotePath: Data("/home/u/a.mkv".utf8), size: 1000, modificationTime: 5,
+                              done: ByteRangeSet([0..<250, 500..<750]),
+                              source: SSHEndpoint(host: "box.example", port: 2222, username: "u"))
+        try state.save(part + ".state")
+        let partial = try #require(PartialDownload.read(partPath: part))
+        #expect(partial.done == 500 && partial.size == 1000 && partial.fraction == 0.5)
+        #expect(partial.remotePath == RemotePath("/home/u/a.mkv"))
+        #expect(partial.source == SSHEndpoint(host: "box.example", port: 2222, username: "u"))
+
+        // State saved before the source was recorded still reads, without one.
+        var old = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: part + ".state"))) as! [String: Any]
+        for key in ["host", "port", "username"] { old.removeValue(forKey: key) }
+        try JSONSerialization.data(withJSONObject: old).write(to: URL(fileURLWithPath: part + ".state"))
+        #expect(PartialDownload.read(partPath: part)?.source == nil)
+        #expect(PartialDownload.read(partPath: part)?.done == 500)
+        #expect(PartialDownload.read(partPath: dir.appendingPathComponent("none.blitpart").path) == nil)
+    }
+}

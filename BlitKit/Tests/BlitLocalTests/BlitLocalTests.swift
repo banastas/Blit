@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Synchronization
 import Testing
 
 @testable import BlitLocal
@@ -85,6 +86,28 @@ func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(forma
         let copiedTime = try FileManager.default.attributesOfItem(atPath: dest.appendingPathComponent("Pack/a (1).cbz").path)[.modificationDate] as? Date
         #expect(copiedTime == mtime)
         #expect(counter.total == expected.values.reduce(0) { $0 + $1.count })
+    }
+
+    /// A copy can't resume, so a stopped or failed one removes its part file.
+    @Test func stoppedCopyLeavesNoPartFile() async throws {
+        let (source, _) = try makeSource()
+        let dest = try tempDir("dst")
+        defer {
+            try? FileManager.default.removeItem(at: source.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: dest)
+        }
+        let files = try localFiles(at: source.path).filter { $0.relativePath.hasSuffix("big.mkv") }
+        let started = Mutex(false)
+        var options = CopyOptions()
+        options.allowClone = false
+        options.concurrentFiles = 1
+        options.shouldStop = { started.withLock { $0 } }
+        let summary = try await copy(files, into: dest.path, nas: nil, options: options, counter: ByteCounter()) { event in
+            if case .fileStarted = event { started.withLock { $0 = true } }
+        }
+        #expect(summary.failed.count == 1)
+        let left = (try FileManager.default.subpathsOfDirectory(atPath: dest.path)).filter { $0.hasSuffix(".blitpart") }
+        #expect(left.isEmpty)
     }
 
     @Test func refusesExistingFilesUnlessOverwriting() async throws {
