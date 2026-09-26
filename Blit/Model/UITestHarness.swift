@@ -759,6 +759,55 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitLicenseTest <log>` (with -BlitIsolatedQueue YES, so the trial and
+    /// license live in memory): trial days, the transfer gate, offline grace,
+    /// and one real call to Lemon Squeezy with a made-up key.
+    static func runLicenseTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitLicenseTest") else { return }
+        Task { @MainActor in
+            var lines: [String] = []
+            guard TransferManager.isIsolated, let memory = LicenseManager.shared.storage as? MemoryLicenseStorage else {
+                try? "refusing: not isolated\n".write(toFile: logPath, atomically: true, encoding: .utf8); return
+            }
+            let license = LicenseManager.shared
+            let now = Date()
+            for days in [0.0, 3, 6.9, 7, 30] {
+                lines.append("trial started \(days) days ago: \(LicenseManager.trialState(start: now.addingTimeInterval(-days * 86_400), now: now))")
+            }
+            @MainActor func setTrial(daysAgo: Double) {
+                memory.items["trial-start"] = Data(String(now.addingTimeInterval(-daysAgo * 86_400).timeIntervalSince1970).utf8)
+                memory.items["license"] = nil
+            }
+            // The gate: a server destination gets past the license check to the
+            // "uploading isn't supported" message, so nothing is queued either way.
+            let probe = BrowseLocation.remote(server: UUID(), path: Array("x".utf8))
+            setTrial(daysAgo: 2)
+            lines.append("day 2, enqueue: \(transfers.enqueue([.local(URL(fileURLWithPath: "/tmp"))], to: probe, destinationName: "x") ?? "queued")")
+            setTrial(daysAgo: 8)
+            lines.append("day 8, enqueue: \(transfers.enqueue([.local(URL(fileURLWithPath: "/tmp"))], to: probe, destinationName: "x") ?? "queued")")
+            lines.append("day 8, can start: \(license.canStartTransfers) · \(license.summary)")
+            // Offline grace
+            for daysAgo in [3.0, 40] {
+                let stored = StoredLicense(key: "ABCD-1234-EFGH-5678", instanceID: "i", email: "buyer@example.com", name: nil,
+                                           lastValidated: now.addingTimeInterval(-daysAgo * 86_400))
+                memory.items["license"] = try? JSONEncoder().encode(stored)
+                license.refresh()
+                lines.append("licensed, last checked \(Int(daysAgo)) days ago: \(license.summary) · can start \(license.canStartTransfers)")
+            }
+            memory.items["license"] = nil
+            setTrial(daysAgo: 1)
+            license.refresh()
+            // Error wording
+            for e in ["license_key not found.", "This license key has reached the activation limit.", "license_key is disabled."] {
+                lines.append("explain \"\(e)\" → \(LicenseManager.explain(e))")
+            }
+            // One real request with a key that doesn't exist.
+            let problem = await license.activate("BLIT-TEST-0000-0000-NOT-A-REAL-KEY", instanceName: "Blit test")
+            lines.append("live API, made-up key: \(problem ?? "activated?!") · state \(license.summary)")
+            try? (lines + ["done"]).joined(separator: "\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

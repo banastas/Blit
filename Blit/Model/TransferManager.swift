@@ -675,6 +675,11 @@ final class TransferManager {
     /// if it can't be done.
     func enqueue(_ sources: [BrowseLocation], to destination: BrowseLocation, destinationName: String,
                  includeHidden: Bool = false, move: Bool = false) -> String? {
+        // After the trial (or a revoked key), new transfers don't start; queued
+        // and running ones still finish (PRD open question 12).
+        let license = LicenseManager.shared
+        license.refresh()
+        guard license.canStartTransfers else { return license.lockedMessage }
         guard let folder = destination.localURL else {
             return "Uploading to a server isn't supported yet. Drop onto a local folder, drive or NAS share."
         }

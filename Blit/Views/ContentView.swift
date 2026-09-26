@@ -365,6 +365,7 @@ struct ContentView: View {
         UITestHarness.runHUDKeysTestIfRequested(transfers: transfers)
         UITestHarness.runNoticeTestIfRequested(transfers: transfers)
         UITestHarness.runStatusTestIfRequested(transfers: transfers)
+        UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)
         UITestHarness.runRetryNowTestIfRequested(transfers: transfers)
         UITestHarness.runBatchRenameTestIfRequested(transfers: transfers)
@@ -375,6 +376,7 @@ struct ContentView: View {
         UITestHarness.runLaneTestIfRequested(transfers: transfers)
         #endif
         connections.warmUp(servers.browsable)
+        Task { await LicenseManager.shared.revalidateIfDue() }
         #if DEBUG
         UITestHarness.runLinkTestIfRequested(connections: connections, servers: servers)
         #endif

@@ -493,6 +493,11 @@ The setup Blit is tuned against:
     - Reasons: Blit isn't sandboxed and relies on things the sandbox makes hard (`~/.ssh` keys and `known_hosts`, any mounted volume, Finder Services), same-day notarized releases, and better margins.
     - Still to build: merchant-of-record checkout (it handles sales tax and VAT), license keys with the trial, automatic updates (Sparkle), a first-run flow, a privacy policy, a EULA and a support address. Also a trademark check on the name, and possibly a lower minimum macOS to widen the audience.
     - When the trial ends, starting new transfers is locked. Transfers already queued or running still finish, and browsing, the log and files stay available.
+    - **Built (app side):**
+      - The trial runs 7 days from first launch; its start is kept in the Keychain, so a reinstall doesn't restart it.
+      - Settings › License shows the trial or license status, takes a key (Activate), frees this Mac (Deactivate This Mac), and links to Buy. The Blit menu has Buy Blit… and Enter License….
+      - Keys are activated per Mac with Lemon Squeezy's public license API (`/v1/licenses/activate`, `validate`, `deactivate`), with no Blit server. Each key is re-checked weekly. A Mac that can't reach the API stays licensed for 30 days past the weekly check, then asks to reconnect (the key is kept). Only an answer from the store revokes a key.
+      - Keys from other stores and products are refused once `LicenseConfig.storeID`/`productID` are set.
     - Marketing stays on big-file work (photo and video, archiving, NAS backups).
 11. ~~**Chained transfers (seedbox → SSD → NAS in one go)?**~~ **Decided: deprioritized.** The user is the review step between SSD and NAS: everything downloaded gets reviewed on the SSD, renamed to the naming conventions where needed, and only then archived to whichever NAS location fits (or not at all). Automating SSD → NAS would skip that step. Work on the middle of the workflow should make review faster, not bypass it.
 

@@ -206,29 +206,88 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Toggle("Show Blit in the menu bar", isOn: $showMenuBarExtra)
-            Text("Shows transfer speed while Blit is working, and keeps the transfer HUD one click away when the window is closed.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Toggle("Open the full transfer HUD when a transfer starts", isOn: $expandHUDOnTransfer)
-            Text("Collapse it and it stays collapsed until those transfers finish.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Picker("Notifications", selection: $notifyEachTransfer) {
-                Text("When each transfer finishes").tag(true)
-                Text("When the queue finishes, and on problems").tag(false)
+            LicenseSection()
+            Section("General") {
+                Toggle("Show Blit in the menu bar", isOn: $showMenuBarExtra)
+                Text("Shows transfer speed while Blit is working, and keeps the transfer HUD one click away when the window is closed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Toggle("Open the full transfer HUD when a transfer starts", isOn: $expandHUDOnTransfer)
+                Text("Collapse it and it stays collapsed until those transfers finish.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Notifications", selection: $notifyEachTransfer) {
+                    Text("When each transfer finishes").tag(true)
+                    Text("When the queue finishes, and on problems").tag(false)
+                }
+                Text("Problems, files that were only size-checked, and waiting for disk space always notify.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("When a file already exists", selection: $existsRule) {
+                    ForEach(ExistsRule.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Text(existsRule.explanation + " Applies to transfers queued from now on.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Text("Problems, files that were only size-checked, and waiting for disk space always notify.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Picker("When a file already exists", selection: $existsRule) {
-                ForEach(ExistsRule.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            Text(existsRule.explanation + " Applies to transfers queued from now on.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
-        .frame(width: 420)
+        .frame(width: 440)
+    }
+}
+
+/// Settings › License: trial or license status, enter a key, deactivate, buy.
+private struct LicenseSection: View {
+    @State private var license = LicenseManager.shared
+    @State private var key = ""
+    @State private var problem: String?
+
+    var body: some View {
+        Section("License") {
+            LabeledContent("Status") {
+                Text(license.summary)
+                    .foregroundStyle(license.canStartTransfers ? .primary : Color.failureText)
+            }
+            if let stored = license.license {
+                LabeledContent("Key", value: "…" + stored.key.suffix(8))
+                HStack {
+                    Spacer()
+                    Button("Deactivate This Mac") {
+                        Task { problem = await license.deactivate() }
+                    }
+                    .disabled(license.isWorking)
+                    .help("Frees this Mac's activation so the license can be used on another Mac")
+                }
+            } else {
+                HStack {
+                    TextField("License key", text: $key, prompt: Text("From your receipt email"))
+                        .onSubmit(activate)
+                    Button("Activate", action: activate)
+                        .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || license.isWorking)
+                }
+                HStack {
+                    Text(trialNote).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Buy Blit…") { license.openBuyPage() }
+                }
+            }
+            if license.isWorking { ProgressView().controlSize(.small) }
+            if let problem {
+                Text(problem).font(.caption).foregroundStyle(Color.failureText).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var trialNote: String {
+        license.canStartTransfers
+            ? "Everything works during the \(LicenseConfig.trialDays)-day trial."
+            : "New transfers need a license. Queued ones still finish, and browsing and the log keep working."
+    }
+
+    private func activate() {
+        Task {
+            problem = await license.activate(key)
+            if problem == nil { key = "" }
+        }
     }
 }

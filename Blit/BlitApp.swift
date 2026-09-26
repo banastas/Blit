@@ -308,10 +308,14 @@ struct FileCommands: Commands {
 /// Blit › About Blit opens the pixel-terminal About window.
 struct AboutCommands: Commands {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About Blit") { openWindow(id: "about") }
+            Divider()
+            Button("Buy Blit…") { LicenseManager.shared.openBuyPage() }
+            Button("Enter License…") { openSettings() }
         }
     }
 }
