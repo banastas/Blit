@@ -247,8 +247,7 @@ do {
             }
         }
 
-        let summary = await download(files, into: localFolder, clients: clients, hasher: hasher,
-                                     options: options, counter: counter) { event in
+        let handle: @Sendable (TransferEvent) -> Void = { event in
             switch event {
             case .fileResumed(let f, let bytes):
                 progress.resumed(bytes)
@@ -272,6 +271,19 @@ do {
                 progress.finished()
                 print("\r  ✗ \(f.relativePath): \(reason)            ")
             }
+        }
+        var summary = await download(files, into: localFolder, clients: clients, hasher: hasher,
+                                     options: options, counter: counter, events: handle)
+        // PRD R4.3: a SHA-256 mismatch re-downloads the file, once.
+        let mismatched = summary.failed.filter { $0.reason.contains("mismatch") }.map(\.file)
+        if !mismatched.isEmpty {
+            print("\r  re-downloading \(mismatched.count) file\(mismatched.count == 1 ? "" : "s") after a SHA-256 mismatch…            ")
+            let retry = await download(mismatched, into: localFolder, clients: clients, hasher: hasher,
+                                       options: options, counter: counter, events: handle)
+            summary.failed.removeAll { failure in mismatched.contains(failure.file) }
+            summary.failed += retry.failed
+            summary.finished += retry.finished
+            summary.verified += retry.verified
         }
         ticker.cancel()
         _ = await ticker.result

@@ -106,6 +106,7 @@ final class SidebarModel {
             s.host = Self.deviceName(forMount: share.url.path)
             return s
         }.sorted { $0.name < $1.name }
+        VolumeKinds.networkRoots = Set(networkShares.map { $0.url.standardizedFileURL.path })
         regroupDevices()
         if modelBrowser == nil, !networkShares.isEmpty { browseDeviceModels() }
     }
@@ -245,5 +246,19 @@ final class SidebarModel {
         if let data = try? JSONEncoder().encode(favorites) {
             UserDefaults.standard.set(data, forKey: Self.favoritesKey)
         }
+    }
+}
+
+/// Which mounted volumes are network shares, from the sidebar's last volume
+/// scan. Menus and drops ask this instead of the file system, which blocks
+/// for the SMB timeout when a share has dropped off the network.
+@MainActor
+enum VolumeKinds {
+    static var networkRoots: Set<String> = []
+
+    /// True for a path on a network share (SMB), false for local volumes.
+    static func isNetwork(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        return networkRoots.contains { path == $0 || path.hasPrefix($0 + "/") }
     }
 }

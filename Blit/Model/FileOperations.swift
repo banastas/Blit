@@ -270,11 +270,10 @@ final class FileOperations {
     func canTrash(_ items: [BrowseLocation]) -> Bool {
         let local = items.compactMap(\.localURL)
         guard local.count == items.count else { return false }
-        // Judge by the volume, via the parent folder: an item that has already
-        // vanished (moved in Finder) mustn't turn a trash into a permanent delete.
-        let present = local.filter { FileManager.default.fileExists(atPath: $0.path) }
-        let probes = present.isEmpty ? local.map { $0.deletingLastPathComponent() } : present
-        return probes.allSatisfy { (try? $0.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal == true }
+        // Judged by volume kind from the sidebar's scan, not the file system: this
+        // runs for menu titles, and a query on a dead share would freeze the app.
+        // (An item that already vanished stays trashable: its volume still is.)
+        return local.allSatisfy { !VolumeKinds.isNetwork($0) }
     }
 
     func moveToTrash(_ items: [BrowseLocation]) async -> String? {
@@ -463,7 +462,7 @@ final class FileOperations {
         guard let item else { return "" }
         if item.serverID != nil { return "SFTP" }
         guard let url = item.localURL else { return "" }
-        return (try? url.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal == false ? "SMB" : "LOCAL"
+        return VolumeKinds.isNetwork(url) ? "SMB" : "LOCAL"
     }
 
     private static func volumeName(of item: BrowseLocation) -> String {

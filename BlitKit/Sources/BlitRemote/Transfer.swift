@@ -363,6 +363,9 @@ public actor AsyncLimiter {
         defer {
             if waiters.isEmpty { running -= 1 } else { waiters.removeFirst().resume() }
         }
+        // Cancelled while waiting (e.g. the file failed): don't start the work,
+        // just pass the slot on.
+        try Task.checkCancellation()
         return try await body()
     }
 }

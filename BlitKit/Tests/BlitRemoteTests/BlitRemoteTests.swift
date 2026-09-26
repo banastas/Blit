@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import NIOCore
 import NIOSSH
@@ -329,5 +330,17 @@ let ecdsaFingerprint = "SHA256:76qoOQkgBMCQb+Pv8st5gk/vAkC3VBxLHcxjifRRDkw"
         // --overwrite replaces.
         try renameIntoPlace(part, final, overwrite: true)
         #expect(try String(contentsOfFile: final, encoding: .utf8) == "newer")
+    }
+}
+
+@Suite struct HashedKnownHostsTests {
+    @Test func matchesOpenSSHHashedEntries() {
+        // `ssh-keygen -H` style entry for "[example.org]:2222", salt "blitsalt".
+        let salt = Data("blitsalt".utf8)
+        let mac = HMAC<Insecure.SHA1>.authenticationCode(for: Data("[example.org]:2222".utf8), using: SymmetricKey(data: salt))
+        let field = "|1|\(salt.base64EncodedString())|\(Data(mac).base64EncodedString())"
+        #expect(hashedEntry(field, matches: "[example.org]:2222"))
+        #expect(!hashedEntry(field, matches: "example.org"))
+        #expect(!hashedEntry("|1|notbase64|x", matches: "example.org"))
     }
 }

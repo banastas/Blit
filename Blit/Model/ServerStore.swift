@@ -83,25 +83,36 @@ final class ServerStore {
     }
 }
 
-/// Internet passwords in the login keychain, keyed by host, port and user.
+/// Internet passwords in the login keychain, keyed by host, port, user and
+/// the server entry's id (so two entries for the same account don't share,
+/// or delete, one password). Items saved before that (no id) are still read.
 enum Keychain {
-    private static func query(_ server: ServerConfig) -> [String: Any] {
-        [
+    private static func query(_ server: ServerConfig, perEntry: Bool = true) -> [String: Any] {
+        var q: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrServer as String: server.host,
             kSecAttrPort as String: server.port,
             kSecAttrAccount as String: server.username,
             kSecAttrProtocol as String: kSecAttrProtocolSSH,
         ]
+        if perEntry { q[kSecAttrPath as String] = "/blit/\(server.id.uuidString)" }
+        return q
     }
 
     static func password(for server: ServerConfig) -> String? {
-        var q = query(server)
-        q[kSecReturnData as String] = true
-        q[kSecMatchLimit as String] = kSecMatchLimitOne
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        func read(_ q: [String: Any]) -> String? {
+            var q = q
+            q[kSecReturnData as String] = true
+            q[kSecMatchLimit as String] = kSecMatchLimitOne
+            var item: CFTypeRef?
+            guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+        if let own = read(query(server)) { return own }
+        // Saved before passwords were per entry: use it, and give this entry its own copy.
+        guard let legacy = read(query(server, perEntry: false)) else { return nil }
+        setPassword(legacy, for: server)
+        return legacy
     }
 
     static func setPassword(_ password: String, for server: ServerConfig) {
