@@ -365,6 +365,7 @@ struct ContentView: View {
         UITestHarness.runHUDKeysTestIfRequested(transfers: transfers)
         UITestHarness.runNoticeTestIfRequested(transfers: transfers)
         UITestHarness.runStatusTestIfRequested(transfers: transfers)
+        UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)
         UITestHarness.runRetryNowTestIfRequested(transfers: transfers)
         UITestHarness.runBatchRenameTestIfRequested(transfers: transfers)
         UITestHarness.runDiskBoundTestIfRequested(transfers: transfers)

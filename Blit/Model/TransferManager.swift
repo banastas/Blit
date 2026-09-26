@@ -728,9 +728,20 @@ final class TransferManager {
     }
 
     /// Saves unfinished jobs, so a quit or restart doesn't lose them.
+    /// `-BlitIsolatedQueue YES` (debug test copies): don't read or write the saved
+    /// queue, so a test copy running beside the installed Blit can't start its
+    /// jobs or overwrite its queue.
+    static var isIsolated: Bool {
+        #if DEBUG
+        UserDefaults.standard.bool(forKey: "BlitIsolatedQueue")
+        #else
+        false
+        #endif
+    }
+
     private func saveQueue() {
         // While quitting, the running job fails as its connections close; keep it saved.
-        guard !isQuitting else { return }
+        guard !isQuitting, !Self.isIsolated else { return }
         let pending = jobs.filter { $0.persistent && !$0.isOperation && ($0.status == .queued || $0.status == .paused || $0.isActive) }.map { job -> SavedJob in
             var serverID: UUID?
             if case .download(let server) = job.kind { serverID = server.id }
@@ -751,7 +762,7 @@ final class TransferManager {
     /// Brings back jobs that hadn't finished when Blit last quit. Downloads resume
     /// from their .blitpart files; files already complete are skipped.
     func restoreQueue() {
-        guard jobs.isEmpty, let data = try? Data(contentsOf: Self.queueURL),
+        guard jobs.isEmpty, !Self.isIsolated, let data = try? Data(contentsOf: Self.queueURL),
               let saved = try? JSONDecoder().decode([SavedJob].self, from: data), !saved.isEmpty else { return }
         for s in saved {
             let kind: TransferJob.Kind

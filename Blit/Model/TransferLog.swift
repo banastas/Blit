@@ -38,6 +38,7 @@ enum TransferLog {
     static let didAppend = Notification.Name("BlitTransferLogDidAppend")
 
     static func append(_ record: TransferRecord) {
+        guard !TransferManager.isIsolated else { return }   // a test copy: keep the real log clean
         VerifiedIndex.shared.record(record)
         defer { NotificationCenter.default.post(name: didAppend, object: nil) }
         guard var line = try? encoder.encode(record) else { return }

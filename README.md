@@ -165,7 +165,12 @@ A failure adds a compact red `✕ N warning` tag in the top line (in place of th
 
 **Sidebar status:** each server's browsing connection shows as 7×7 pixel signal bars: all lit when connected, filling left to right in a loop while connecting, dim when not connected, and a pixel ✕ in muted red on failure (hover for the reason).
 
-**Expanded:** the full HUD described below. It opens by itself when a transfer starts (Settings; collapsing it keeps it collapsed until that batch finishes). File operations (delete, move…) only use the condensed strip. Switching between the two, or the HUD appearing and leaving, animates like a CRT: a bright line sweeps out, then opens vertically.
+**Expanded:** the full HUD described below. It opens by itself when a transfer starts (Settings; collapsing it keeps it collapsed until that batch finishes). File operations (delete, move…) only use the condensed strip. Switching between the two, or the HUD appearing and leaving, animates like a CRT: a bright line sweeps out, then opens vertically. The expanded HUD keeps a fixed height while it runs.
+  - The log always shows six lines at a fixed line height.
+  - Connections and server hashing share a fixed six-line area. Connections keep up to four lines; hashing gets at least a label and one file. Overflow is summed up ("+6 MORE · 42.0 MB/S", "SERVER SHA256 · +2 MORE").
+  - The Link panel always has the same rows, with "—" where one doesn't apply.
+  - The WARNING panel takes exactly the log's height and scrolls inside.
+  - The queue panel appears once there's more than one job, always three rows tall, scrolling beyond. Measured: 461 pt with one job in every state, 586 pt with a queue.
 
 **Layout:** the HUD and strip float over the bottom of the window (an overlay), with matching space reserved below the file list. As a safe-area inset, every HUD update during a download (the percent ticking) re-sized the window's content; macOS then briefly reported a shorter toolbar for one layout pass and the list and HUD jumped.
 

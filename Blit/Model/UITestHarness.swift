@@ -717,6 +717,62 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitHUDHeightTest <log>` (use with -BlitIsolatedQueue YES): the expanded
+    /// HUD's fitted height across states. It should be the same in all of them.
+    static func runHUDHeightTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitHUDHeightTest") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            @MainActor func job(_ kind: TransferJob.Kind) -> TransferJob {
+                let j = TransferJob(kind: kind, sources: [], destination: URL(fileURLWithPath: "/tmp"), title: "SHOOT_2026-09", destinationName: "Incoming")
+                j.persistent = false
+                j.status = .running
+                j.fileCount = 26; j.filesFinished = 7; j.totalBytes = 100; j.connections = 3; j.link = "3× · 255K×32 · EN7"
+                return j
+            }
+            @MainActor func height(_ j: TransferJob) -> CGFloat {
+                let view = NSHostingView(rootView: TransferHUD(job: j).environment(transfers).frame(width: 960))
+                return view.fittingSize.height
+            }
+            var lines: [String] = []
+            let a = job(.download(ServerConfig()))
+            a.note("CONNECT · 3 CONNECTIONS")
+            transfers.debugAppend([a])
+            lines.append("download, 1 log line, no rates (1 job): \(height(a))")
+            for i in 0..<12 { a.note(i % 2 == 0 ? "✓ SHA256 9F3A1C… VERIFIED · A001_C00\(i).MOV" : "GET A001_C00\(i).MOV → INCOMING", failure: i == 5) }
+            a.connectionRates = [9, 8, 9]
+            lines.append("download, full log with glyphs, 3 connections: \(height(a))")
+            a.connectionRates = Array(repeating: 7, count: 8)
+            a.hashed = ["a.mov": 10, "b.mov": 20, "c.mov": 30]; a.hashSizes = ["a.mov": 100, "b.mov": 100, "c.mov": 100]
+            lines.append("download, 8 connections + 3 hashing: \(height(a))")
+            a.connectionRates = [9, 8, 9]
+            lines.append("download, 3 connections + 3 hashing: \(height(a))")
+            if let png = UserDefaults.standard.string(forKey: "BlitHUDHeightPNG") {
+                let renderer = ImageRenderer(content: TransferHUD(job: a).environment(transfers).frame(width: 960))
+                renderer.scale = 1.5
+                if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+                   let data = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? data.write(to: URL(fileURLWithPath: png))
+                }
+            }
+            a.failures = ["A001_C003.MOV: SHA-256 MISMATCH"]
+            lines.append("download, 1 failure: \(height(a))")
+            a.failures = (0..<9).map { "A001_C00\($0).MOV: SHA-256 MISMATCH · KEPT .BLITPART · A LONG REASON THAT WRAPS ONTO MORE LINES" }
+            lines.append("download, 9 long failures (1 job): \(height(a))")
+            let c = job(.copy)
+            c.connectionRates = [50, 48]
+            c.note("COPY A001_C001.MOV")
+            transfers.debugAppend([c])
+            lines.append("copy, 2 streams, 2 jobs queued: \(height(c))")
+            let more = (0..<5).map { _ in job(.copy) }
+            more.forEach { $0.status = .queued }
+            transfers.debugAppend(more)
+            lines.append("copy, 7 jobs queued: \(height(c))")
+            transfers.debugRemove([a, c] + more)
+            try? (lines + ["done"]).joined(separator: "\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {
