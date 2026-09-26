@@ -239,7 +239,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 ### Queue and UX
 
 - **R5.1** The queue survives app restarts and reboots.
-- **R5.2** Pause, resume, reorder, and cancel, per item and globally.
+- **R5.2** Pause, resume, reorder, and cancel, per item and globally. The HUD's Queue panel lists every transfer with its state; each row has Pause/Resume, Cancel (✕), ▲/▼ to reorder waiting jobs, and Retry for failed or cancelled ones, and clicking a row shows it in the HUD. Pause All / Resume All hold the whole queue (also in the menu bar panel and the strip's right-click menu). Pausing a running job closes its connections (downloads) or stops the copy at its next block; it resumes from its part files. Cancel keeps part files, so Retry picks up where it stopped; files already at the destination are skipped. Paused jobs and a paused queue survive a restart.
 - **R5.3** When a file already exists, apply a rule per queue: skip, overwrite, keep both, or overwrite only if different (size and hash).
 - **R5.4** Show live throughput per connection and overall, plus time remaining.
 - **R5.5** Send a notification when a queue finishes or fails.

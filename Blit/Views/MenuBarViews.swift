@@ -51,6 +51,11 @@ struct MenuBarPanel: View {
             }
             Divider()
             HStack {
+                if transfers.hasActiveWork || transfers.queuePaused {
+                    Button(transfers.queuePaused ? "Resume All" : "Pause All") {
+                        transfers.queuePaused ? transfers.resumeAll() : transfers.pauseAll()
+                    }
+                }
                 Button("Open Blit") {
                     openWindow(id: "main")
                     NSApp.activate()
@@ -125,6 +130,8 @@ struct MenuBarTransfer: View {
 
     private var headline: String {
         if case .operation(let verb, _) = job.kind { return verb }
+        if job.status == .paused { return "PAUSED" }
+        if job.status == .cancelled { return "CANCELLED" }
         if job.isVerifyingOnly { return "SHA256" }
         if job.status == .preparing { return "…" }
         if case .waiting = job.status { return "RETRY" }

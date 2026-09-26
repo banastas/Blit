@@ -129,9 +129,35 @@ struct TransferStrip: View {
         .padding(.top, 8)
         .padding(.bottom, 7)
         .background(HUDColor.background, in: RoundedRectangle(cornerRadius: 10))
+        .contextMenu { queueMenu }
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(HUDColor.border, lineWidth: 0.5))
         .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Right-click on the strip: the queue controls without opening the HUD.
+    @ViewBuilder private var queueMenu: some View {
+        if !job.isOperation {
+            switch job.status {
+            case .queued, .preparing, .running, .waiting:
+                Button("Pause") { transfers.pause(job) }
+                Button("Cancel") { transfers.cancel(job) }
+            case .paused:
+                Button("Resume") { transfers.resume(job) }
+                Button("Cancel") { transfers.cancel(job) }
+            case .failed, .cancelled:
+                Button("Retry") { transfers.retry(job) }
+            case .finished:
+                EmptyView()
+            }
+            Divider()
+            if transfers.queuePaused {
+                Button("Resume All") { transfers.resumeAll() }
+            } else {
+                Button("Pause All") { transfers.pauseAll() }
+            }
+            Button("Show Queue") { transfers.isExpanded = true }
+        }
     }
 
     private var separator: some View {
@@ -139,7 +165,8 @@ struct TransferStrip: View {
     }
 
     private var countLabel: String {
-        let arrow = job.isActive ? "▲" : (job.status == .finished ? (job.allAlreadyPresent ? "=" : "✓") : "✕")
+        let arrow = job.status == .paused ? "‖"
+            : job.isActive ? "▲" : (job.status == .finished ? (job.allAlreadyPresent ? "=" : "✓") : "✕")
         guard job.fileCount > 0 else { return "\(arrow) --/--" }
         let width = max(2, String(job.fileCount).count)
         let done = String(job.filesFinished).leftPadded(width)
@@ -154,7 +181,11 @@ struct TransferStrip: View {
     }
 
     @ViewBuilder private var rate: some View {
-        if case .operation(let verb, _) = job.kind {
+        if job.status == .paused || job.status == .cancelled {
+            Text(job.status == .paused ? "PAUSED" : "CANCELLED")
+                .font(HUDFont.terminal(26))
+                .fixedSize()
+        } else if case .operation(let verb, _) = job.kind {
             Text(verb)
                 .font(HUDFont.terminal(26))
                 .fixedSize()

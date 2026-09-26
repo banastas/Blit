@@ -132,6 +132,8 @@ public struct CopyOptions: Sendable {
     public var allowClone = true
     /// Treat an existing destination file of the same size as done (PRD R5.3).
     public var skipExistingSameSize = false
+    /// Checked between blocks and files: true stops the copy (pause/cancel, PRD R5.2).
+    public var shouldStop: (@Sendable () -> Bool)? = nil
     public init() {}
 }
 
@@ -229,7 +231,7 @@ public func copy(
                 streamCounter?.add(n)
             }
             group.addTask {
-                while let file = queue.withLock({ $0.popFirst() }) {
+                while options.shouldStop?() != true, let file = queue.withLock({ $0.popFirst() }) {
                     let final = directory + "/" + file.relativePath
                     let part = final + ".blitpart"
                     do {
@@ -247,8 +249,9 @@ public func copy(
                             }
                         }
                         if verification == nil {
+                            let stop = options.shouldStop
                             let sourceHash = try await Task.detached {
-                                try StreamCopy.copy(from: file.path, to: part, progress: progress)
+                                try StreamCopy.copy(from: file.path, to: part, progress: progress, shouldStop: stop)
                             }.value
                             // Source stability (as R3.9 for downloads): a file still being
                             // written would copy torn yet match its own streamed hash.

@@ -67,6 +67,80 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitQueueTest <log> -BlitQueueTestDest <folder on another volume>`:
+    /// exercises pause / resume / pause all / cancel / retry on real copies and
+    /// renders the HUD's queue panel next to the log.
+    static func runQueueTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitQueueTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitQueueTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        @MainActor func state(_ job: TransferJob) -> String { "\(job.title): \(job.status) \(job.filesFinished)/\(job.fileCount)" }
+        Task { @MainActor in
+            let fm = FileManager.default
+            let src = fm.temporaryDirectory.appendingPathComponent("blit-queue-src")
+            try? fm.removeItem(at: src)
+            for name in ["A", "B"] {
+                let folder = src.appendingPathComponent(name)
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                for i in 0..<3 {
+                    let file = folder.appendingPathComponent("\(name)\(i).bin")
+                    fm.createFile(atPath: file.path, contents: nil)
+                    if let handle = try? FileHandle(forWritingTo: file) {
+                        let chunk = Data((0..<(8 << 20)).map { _ in UInt8.random(in: 0...255) })
+                        for _ in 0..<64 { handle.write(chunk) }   // 512 MB
+                        try? handle.close()
+                    }
+                }
+            }
+            let dest = URL(fileURLWithPath: destPath)
+            try? fm.removeItem(at: dest)
+            try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
+            lines.append("sources ready")
+            _ = transfers.enqueue([.local(src.appendingPathComponent("A"))], to: .local(dest), destinationName: "dest")
+            _ = transfers.enqueue([.local(src.appendingPathComponent("B"))], to: .local(dest), destinationName: "dest")
+            let a = transfers.transferJobs[transfers.transferJobs.count - 2], b = transfers.transferJobs[transfers.transferJobs.count - 1]
+            @MainActor func wait(_ what: String, _ condition: () -> Bool) async {
+                for _ in 0..<600 where !condition() { try? await Task.sleep(for: .milliseconds(50)) }
+                lines.append("\(condition() ? "ok" : "TIMEOUT") \(what) · \(state(a)) · \(state(b))")
+            }
+            await wait("A running") { a.status == .running && a.transferred > 0 }
+            transfers.pause(a)
+            await wait("A paused") { a.status == .paused }
+            await wait("B running while A paused") { b.status == .running }
+            // Render the HUD with its queue panel while things are in flight.
+            let renderer = ImageRenderer(content: TransferHUD(job: b).environment(transfers).frame(width: 1100))
+            renderer.scale = 2
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: logPath.replacingOccurrences(of: ".txt", with: "-hud.png")))
+            }
+            transfers.pauseAll()
+            await wait("pause all") { b.status == .paused && transfers.queuePaused }
+            transfers.resumeAll()
+            await wait("resume all: something running") { a.isActive || b.isActive }
+            let running = a.isActive ? a : b
+            transfers.cancel(running)
+            await wait("cancelled") { running.status == .cancelled }
+            transfers.retry(running)
+            await wait("all finished") {
+                transfers.transferJobs.suffix(2).allSatisfy { $0.status == .finished }
+            }
+            let copied = ((try? fm.subpathsOfDirectory(atPath: dest.path)) ?? []).filter { $0.hasSuffix(".bin") }.sorted()
+            var identical = 0
+            for path in copied {
+                let name = (path as NSString).lastPathComponent
+                let original = src.appendingPathComponent(String(name.prefix(1))).appendingPathComponent(name)
+                if fm.contentsEqual(atPath: original.path, andPath: dest.appendingPathComponent(path).path) { identical += 1 }
+            }
+            let parts = ((try? fm.subpathsOfDirectory(atPath: dest.path)) ?? []).filter { $0.hasSuffix(".blitpart") }
+            lines.append("copied \(copied.count) files, \(identical) identical, \(parts.count) part files left")
+            lines.append("done")
+            try? fm.removeItem(at: src)
+        }
+    }
+
     static func runIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitRightClickTest") else { return }
         var lines: [String] = ["started"] {

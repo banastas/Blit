@@ -14,7 +14,13 @@ enum StreamCopy {
 
     /// Copies `source` to `destination` (created or truncated) and returns the
     /// source's SHA-256. Blocking; call from a thread that may block.
-    static func copy(from source: String, to destination: String, progress: @escaping @Sendable (Int) -> Void) throws -> String {
+    /// Stopped copies throw this (the part file is left for the caller).
+    public struct Stopped: Error, CustomStringConvertible, Sendable {
+        public var description: String { "stopped" }
+    }
+
+    static func copy(from source: String, to destination: String, progress: @escaping @Sendable (Int) -> Void,
+                     shouldStop: (@Sendable () -> Bool)? = nil) throws -> String {
         let src = Darwin.open(source, O_RDONLY | O_CLOEXEC)
         guard src >= 0 else { throw POSIXFailure("open \(source)") }
         defer { Darwin.close(src) }
@@ -48,6 +54,7 @@ enum StreamCopy {
             repeat { n = read(src, buffer.baseAddress, blockSize) } while n < 0 && errno == EINTR
             if n < 0 { pipeline.free.signal(); pipeline.drain(); throw POSIXFailure("read \(source)") }
             if n == 0 { pipeline.free.signal(); break }
+            if shouldStop?() == true { pipeline.free.signal(); pipeline.drain(); throw Stopped() }
             hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: buffer[..<n]))
             pipeline.write(buffer: block % depth, count: n, at: offset, progress: progress)
             offset += off_t(n)

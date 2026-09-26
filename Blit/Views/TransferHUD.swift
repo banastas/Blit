@@ -24,6 +24,9 @@ struct TransferHUD: View {
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
+            if transfers.transferJobs.count > 1 || transfers.queuePaused {
+                QueuePanel()
+            }
         }
         .foregroundStyle(HUDColor.bright)
         .padding(14)
@@ -77,6 +80,8 @@ struct TransferHUD: View {
         case .finished: return (job.allAlreadyPresent ? "ALREADY PRESENT · " : "DONE · ") + route
         case .failed: return "FAILED · " + route
         case .waiting: return "WAITING TO RETRY · " + route
+        case .paused: return "PAUSED · " + route
+        case .cancelled: return "CANCELLED · " + route
         }
     }
 
@@ -378,3 +383,153 @@ enum LayoutLog {
     }
 }
 #endif
+
+/// The queue (PRD R5.2): every transfer with its state, and controls to pause,
+/// resume, cancel, retry and reorder. Clicking a row shows it in the HUD.
+struct QueuePanel: View {
+    @Environment(TransferManager.self) private var transfers
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("QUEUE · \(transfers.transferJobs.count)").font(HUDFont.label()).foregroundStyle(HUDColor.dim)
+                Spacer()
+                if transfers.queuePaused {
+                    HUDButton("▶ RESUME ALL") { transfers.resumeAll() }
+                } else {
+                    HUDButton("‖ PAUSE ALL") { transfers.pauseAll() }
+                }
+            }
+            // Up to five rows sit in the panel; a longer queue scrolls.
+            if transfers.transferJobs.count <= 5 {
+                rows
+            } else {
+                ScrollView { rows }.frame(height: 5 * 26)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .overlay(Rectangle().strokeBorder(Color(white: 0.23), lineWidth: 1))
+    }
+
+    private var rows: some View {
+        VStack(spacing: 2) {
+            ForEach(transfers.transferJobs) { job in
+                QueueRow(job: job, isShown: transfers.featured === job)
+            }
+        }
+    }
+}
+
+private struct QueueRow: View {
+    @Environment(TransferManager.self) private var transfers
+    let job: TransferJob
+    let isShown: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            hudText(glyph, glyphSize: 10)
+                .frame(width: 14)
+            Text(job.title.uppercased())
+                .lineLimit(1)
+                .truncationMode(.middle)
+            hudText("→ \(job.destinationName.uppercased())", glyphSize: 10)
+                .foregroundStyle(HUDColor.dim)
+                .lineLimit(1)
+                .fixedSize()
+            Spacer(minLength: 8)
+            Text(state)
+                .foregroundStyle(stateIsFailure ? Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255) : HUDColor.dim)
+                .fixedSize()
+            controls
+        }
+        .font(HUDFont.terminal(16))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(isShown ? Color(white: 0.12) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture { transfers.pinnedJobID = job.id }
+        .help("Show in the HUD")
+    }
+
+    private var glyph: String {
+        switch job.status {
+        case .queued: "·"
+        case .preparing, .running, .waiting: "▲"
+        case .paused: "‖"
+        case .finished: job.allAlreadyPresent ? "=" : "✓"
+        case .failed, .cancelled: "✕"
+        }
+    }
+
+    private var state: String {
+        switch job.status {
+        case .queued: return "QUEUED"
+        case .preparing: return "PREPARING"
+        case .running: return job.isVerifyingOnly ? "SHA256" : "\(Int((job.progress * 100).rounded()))%"
+        case .waiting: return "RETRYING"
+        case .paused: return job.totalBytes > 0 ? "PAUSED · \(Int((job.progress * 100).rounded()))%" : "PAUSED"
+        case .finished: return job.allAlreadyPresent ? "PRESENT" : "DONE"
+        case .failed: return "FAILED"
+        case .cancelled: return "CANCELLED"
+        }
+    }
+
+    private var stateIsFailure: Bool {
+        switch job.status {
+        case .failed, .cancelled: true
+        default: false
+        }
+    }
+
+    @ViewBuilder private var controls: some View {
+        HStack(spacing: 6) {
+            switch job.status {
+            case .queued:
+                HUDButton("▲", help: "Move up") { transfers.move(job, by: -1) }
+                HUDButton("▼", help: "Move down") { transfers.move(job, by: 1) }
+                HUDButton("‖", help: "Pause") { transfers.pause(job) }
+                HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
+            case .preparing, .running, .waiting:
+                HUDButton("‖ PAUSE") { transfers.pause(job) }
+                HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
+            case .paused:
+                HUDButton("▶ RESUME") { transfers.resume(job) }
+                HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
+            case .failed, .cancelled:
+                HUDButton("RETRY") { transfers.retry(job) }
+            case .finished:
+                EmptyView()
+            }
+        }
+    }
+}
+
+/// A HUD text button: pixel label, dim until hovered.
+struct HUDButton: View {
+    let title: String
+    var help: String?
+    let action: () -> Void
+    @State private var hovered = false
+
+    init(_ title: String, help: String? = nil, action: @escaping () -> Void) {
+        self.title = title
+        self.help = help
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            hudText(title, glyphSize: 9)
+                .font(HUDFont.label())
+                .foregroundStyle(hovered ? HUDColor.bright : HUDColor.dim)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .overlay(Rectangle().strokeBorder(hovered ? HUDColor.bright : HUDColor.border, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(help ?? title)
+    }
+}

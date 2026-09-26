@@ -85,6 +85,14 @@ final class VerifiedSources: @unchecked Sendable {
     }
 }
 
+/// A thread-safe flag the copy engine checks between blocks.
+final class StopFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func set(_ on: Bool) { lock.withLock { value = on } }
+    var isSet: Bool { lock.withLock { value } }
+}
+
 struct LogLine: Identifiable {
     let id = UUID()
     let time = Date()
@@ -106,7 +114,14 @@ final class TransferJob: Identifiable {
         case queued, preparing, running, finished, failed(String)
         /// Waiting to retry after a recoverable failure (connection lost, drive unmounted).
         case waiting(until: Date, reason: String)
+        /// Held by the user (PRD R5.2); resumes where it left off.
+        case paused
+        /// Stopped by the user; partial files stay so a Retry resumes them.
+        case cancelled
     }
+
+    /// What the user asked a running job to do.
+    enum StopRequest { case pause, cancel }
 
     let id = UUID()
     let kind: Kind
@@ -208,6 +223,13 @@ final class TransferJob: Identifiable {
         if case .operation = kind { return true }
         return false
     }
+    /// Set when the user pauses or cancels this job while it runs.
+    var stopRequest: StopRequest? {
+        didSet { stopFlag.set(stopRequest != nil) }
+    }
+    /// The same, readable from the engines' threads.
+    @ObservationIgnored let stopFlag = StopFlag()
+    var isPausedOrCancelled: Bool { status == .paused || status == .cancelled }
     var isActive: Bool {
         switch status {
         case .preparing, .running, .waiting: true
@@ -262,6 +284,8 @@ final class TransferManager {
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let verifier: BlitHostKeyVerifier
     @ObservationIgnored private var running = false
+    @ObservationIgnored private var runTask: Task<Void, Never>?
+    @ObservationIgnored private weak var runningJob: TransferJob?
     /// Every job finished so far in the current batch verified its files.
     @ObservationIgnored private var batchVerified = true
     /// Connections held by the running job, closed if Blit quits mid-transfer.
@@ -324,8 +348,118 @@ final class TransferManager {
     /// The job the strip shows: the most recently started active one (so a
     /// delete shows over a long download while it runs), else the most recent.
     var featured: TransferJob? {
-        jobs.filter(\.isActive).max { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
+        if let pinnedJobID, let pinned = jobs.first(where: { $0.id == pinnedJobID }) { return pinned }
+        return jobs.filter(\.isActive).max { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
             ?? jobs.last(where: { $0.status != .queued }) ?? jobs.first
+    }
+
+    /// A job the user picked in the queue panel to show in the HUD.
+    var pinnedJobID: UUID?
+
+    /// Transfers (not file operations), in queue order, for the queue panel.
+    var transferJobs: [TransferJob] { jobs.filter { !$0.isOperation } }
+
+    // MARK: Queue control (PRD R5.2)
+
+    /// The whole queue is held: nothing new starts, and the running job pauses.
+    private(set) var queuePaused = UserDefaults.standard.bool(forKey: "queuePaused") {
+        didSet { UserDefaults.standard.set(queuePaused, forKey: "queuePaused") }
+    }
+
+    func pause(_ job: TransferJob) {
+        if job === runningJob {
+            stop(job, .pause)
+        } else if job.status == .queued {
+            job.status = .paused
+            saveQueue()
+        }
+    }
+
+    func resume(_ job: TransferJob) {
+        guard job.status == .paused else { return }
+        job.stopRequest = nil
+        job.status = .queued
+        saveQueue()
+        runNext()
+    }
+
+    func cancel(_ job: TransferJob) {
+        if job === runningJob {
+            stop(job, .cancel)
+        } else if job.status == .queued || job.status == .paused {
+            job.status = .cancelled
+            job.note("✕ CANCELLED", failure: true)
+            saveQueue()
+        }
+    }
+
+    /// Runs a failed or cancelled job again. Files already at the destination
+    /// are skipped, so only what's missing transfers; partial files resume.
+    func retry(_ job: TransferJob) {
+        guard let index = jobs.firstIndex(where: { $0 === job }) else { return }
+        switch job.status {
+        case .failed, .cancelled: requeue(job, at: index)
+        default: return
+        }
+    }
+
+    private func requeue(_ job: TransferJob, at index: Int) {
+        let fresh = TransferJob(kind: job.kind, sources: job.sources, destination: job.destination, title: job.title,
+                                destinationName: job.destinationName)
+        fresh.includeHidden = job.includeHidden
+        fresh.deleteSources = job.deleteSources
+        fresh.removedRoots = job.removedRoots
+        let verified = job.verifiedSources.snapshot()
+        fresh.verifiedSources.add(local: verified.local, remote: verified.remote)
+        fresh.note("RETRY REQUESTED")
+        jobs[index] = fresh
+        if pinnedJobID == job.id { pinnedJobID = fresh.id }
+        saveQueue()
+        runNext()
+    }
+
+    /// Moves a waiting job earlier (-1) or later (+1) among the waiting ones.
+    func move(_ job: TransferJob, by step: Int) {
+        let waiting = jobs.indices.filter { !jobs[$0].isOperation && (jobs[$0].status == .queued || jobs[$0].status == .paused) }
+        guard let position = waiting.firstIndex(where: { jobs[$0] === job }) else { return }
+        let target = position + step
+        guard waiting.indices.contains(target) else { return }
+        jobs.swapAt(waiting[position], waiting[target])
+        saveQueue()
+    }
+
+    /// Moves a waiting job to the front of the queue (it starts next).
+    func runSoon(_ job: TransferJob) {
+        for _ in jobs.indices {
+            let waiting = jobs.indices.filter { !jobs[$0].isOperation && (jobs[$0].status == .queued || jobs[$0].status == .paused) }
+            guard let position = waiting.firstIndex(where: { jobs[$0] === job }), position > 0 else { return }
+            move(job, by: -1)
+        }
+    }
+
+    func pauseAll() {
+        queuePaused = true
+        if let runningJob { stop(runningJob, .pause) }
+    }
+
+    func resumeAll() {
+        queuePaused = false
+        for job in jobs where job.status == .paused {
+            job.stopRequest = nil
+            job.status = .queued
+        }
+        saveQueue()
+        runNext()
+    }
+
+    /// Stops the running job: its connections close (downloads end at once),
+    /// the copy engine stops at its next block, and a retry wait is cut short.
+    private func stop(_ job: TransferJob, _ request: TransferJob.StopRequest) {
+        job.stopRequest = request
+        let connections = liveConnections
+        liveConnections.removeAll()
+        for connection in connections { Task { await connection.close() } }
+        runTask?.cancel()
     }
 
     #if DEBUG
@@ -400,7 +534,8 @@ final class TransferManager {
     var queuedCount: Int { jobs.filter { $0.status == .queued }.count }
 
     func dismissFinished() {
-        jobs.removeAll { !$0.isActive && $0.status != .queued }
+        jobs.removeAll { !$0.isActive && $0.status != .queued && $0.status != .paused }
+        if let pinnedJobID, !jobs.contains(where: { $0.id == pinnedJobID }) { self.pinnedJobID = nil }
         if jobs.isEmpty { isExpanded = false }
     }
 
@@ -452,6 +587,7 @@ final class TransferManager {
         var verifiedLocal: [VerifiedSources.Local]?
         var verifiedRemote: [VerifiedSources.Remote]?
         var removedRoots: [String]?
+        var paused: Bool?
     }
 
     private static var queueURL: URL {
@@ -462,7 +598,7 @@ final class TransferManager {
     private func saveQueue() {
         // While quitting, the running job fails as its connections close; keep it saved.
         guard !isQuitting else { return }
-        let pending = jobs.filter { $0.persistent && !$0.isOperation && ($0.status == .queued || $0.isActive) }.map { job -> SavedJob in
+        let pending = jobs.filter { $0.persistent && !$0.isOperation && ($0.status == .queued || $0.status == .paused || $0.isActive) }.map { job -> SavedJob in
             var serverID: UUID?
             if case .download(let server) = job.kind { serverID = server.id }
             let verified = job.verifiedSources.snapshot()
@@ -471,7 +607,8 @@ final class TransferManager {
                             deleteSources: job.deleteSources,
                             verifiedLocal: verified.local.isEmpty ? nil : verified.local,
                             verifiedRemote: verified.remote.isEmpty ? nil : verified.remote,
-                            removedRoots: job.removedRoots.isEmpty ? nil : Array(job.removedRoots))
+                            removedRoots: job.removedRoots.isEmpty ? nil : Array(job.removedRoots),
+                            paused: job.status == .paused ? true : nil)
         }
         let url = Self.queueURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -506,6 +643,7 @@ final class TransferManager {
             job.deleteSources = s.deleteSources ?? false
             job.verifiedSources.add(local: s.verifiedLocal ?? [], remote: s.verifiedRemote ?? [])
             job.removedRoots = Set(s.removedRoots ?? [])
+            if s.paused == true { job.status = .paused }
             job.restored = true
             job.note("RESTORED FROM LAST SESSION · RESUMING")
             jobs.append(job)
@@ -553,12 +691,20 @@ final class TransferManager {
     }
 
     private func runNext() {
-        guard !running, let job = jobs.first(where: { $0.status == .queued }) else { return }
+        guard !running, !queuePaused, let job = jobs.first(where: { $0.status == .queued }) else { return }
         running = true
-        Task {
+        runningJob = job
+        runTask = Task {
             await run(job)
             running = false
+            runningJob = nil
+            runTask = nil
             saveQueue()
+            if job.isPausedOrCancelled {
+                // Held or stopped by the user: no notification, no batch verdict.
+                runNext()
+                return
+            }
             let jobVerified = job.status == .finished && job.failures.isEmpty && job.sizeOnlyCount == 0
                 && (job.filesVerified > 0 || job.fileCount == 0)
             batchVerified = batchVerified && jobVerified
@@ -624,6 +770,10 @@ final class TransferManager {
             } catch {
                 fatal = "\(error)"
             }
+            if let request = job.stopRequest {
+                finishStop(job, request)
+                break
+            }
             if isQuitting { break }
             if fatal == nil, job.failures.isEmpty {
                 job.status = .finished
@@ -655,6 +805,10 @@ final class TransferManager {
             try? await Task.sleep(for: .seconds(delay))
             await waitForNetwork(job)
             await waitForVolumes(job)
+            if let request = job.stopRequest {
+                finishStop(job, request)
+                break
+            }
             if isQuitting { break }
             job.attempt += 1
             job.failures = []
@@ -664,6 +818,21 @@ final class TransferManager {
         }
         job.finishedAt = Date()
         job.rate = 0
+    }
+
+    private func finishStop(_ job: TransferJob, _ request: TransferJob.StopRequest) {
+        job.failures = []
+        job.verifying = [:]
+        job.rate = 0
+        job.connectionRates = []
+        switch request {
+        case .pause:
+            job.status = .paused
+            job.note("‖ PAUSED · RESUMES WHERE IT LEFT OFF")
+        case .cancel:
+            job.status = .cancelled
+            job.note("✕ CANCELLED · PARTIAL FILES KEPT FOR A RETRY", failure: true)
+        }
     }
 
     /// "disconnected: no data from the server for 60 s" → "NO DATA FROM THE SERVER FOR 60 S"
@@ -683,14 +852,23 @@ final class TransferManager {
         }
         let monitor = NWPathMonitor()
         let once = Once()
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            monitor.pathUpdateHandler = { path in
-                if path.status == .satisfied, once.claim() { continuation.resume() }
+        final class Box: @unchecked Sendable { var continuation: CheckedContinuation<Void, Never>? }
+        let box = Box()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                box.continuation = continuation
+                monitor.pathUpdateHandler = { path in
+                    if path.status == .satisfied, once.claim() { continuation.resume() }
+                }
+                monitor.start(queue: .global(qos: .utility))
+                DispatchQueue.global().asyncAfter(deadline: .now() + 600) {
+                    if once.claim() { continuation.resume() }
+                }
+                if Task.isCancelled, once.claim() { continuation.resume() }
             }
-            monitor.start(queue: .global(qos: .utility))
-            DispatchQueue.global().asyncAfter(deadline: .now() + 600) {
-                if once.claim() { continuation.resume() }
-            }
+        } onCancel: {
+            // Paused or cancelled while waiting: stop waiting.
+            if once.claim() { box.continuation?.resume() }
         }
         monitor.cancel()
     }
@@ -717,7 +895,7 @@ final class TransferManager {
         var noted = Set<String>()
         for _ in 0..<720 {
             let missing = missingVolumes(job)
-            if missing.isEmpty || isQuitting { return }
+            if missing.isEmpty || isQuitting || Task.isCancelled { return }
             for name in missing where noted.insert(name).inserted {
                 job.note("WAITING FOR \(name.uppercased()) TO COME BACK", failure: true)
             }
@@ -1004,6 +1182,8 @@ final class TransferManager {
         job.status = .running
         var options = CopyOptions()
         options.skipExistingSameSize = true
+        let stopFlag = job.stopFlag
+        options.shouldStop = { stopFlag.isSet }
         job.connectionCounters = (0..<options.concurrentFiles).map { _ in ByteCounter() }
         if job.deleteSources { job.note("MOVE · SOURCES ARE REMOVED ONCE VERIFIED BY SHA256") }
         let ledger = job.verifiedSources
@@ -1031,6 +1211,8 @@ extension TransferJob {
     }
 
     func handle(_ event: TransferEvent) {
+        // Files cut off by a pause or cancel aren't failures.
+        if stopRequest != nil, case .fileFailed = event { return }
         if case .fileFinished(let f, _) = event, completedPaths.contains(f.relativePath) { return }
         if case .fileHashProgress(let f, let bytes) = event {
             // Late progress for a file that's already done is dropped.
@@ -1092,6 +1274,7 @@ extension TransferJob {
     }
 
     func handle(_ event: CopyEvent) {
+        if stopRequest != nil, case .fileFailed = event { return }
         if case .fileFinished(let f, _) = event, completedPaths.contains(f.relativePath) { return }
         if case .fileFinished(let f, let v) = event {
             let (hash, method): (String?, String) = switch v {
