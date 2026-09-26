@@ -33,6 +33,16 @@
 			<dict/>
 		</dict>
 	</array>
+	<!-- Automatic updates (Sparkle): the feed the release script publishes, and the
+	     public half of the update-signing key (the private half is in the Keychain). -->
+	<key>SUFeedURL</key>
+	<string>https://blit.banast.as/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>/4WEfxb0faJLR2dnRoeQ2z3ym2syLxUzmOZSffgOkI4=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

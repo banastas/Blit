@@ -11,6 +11,11 @@
 #   scripts/release.sh                 # build, notarize, staple → build/release/
 #   INSTALL=1 scripts/release.sh       # …then replace /Applications/Blit.app
 #   SKIP_NOTARIZE=1 scripts/release.sh # sign and export only
+#   PUBLISH=1 INSTALL=1 NOTES="What changed" scripts/release.sh
+#                                      # …then publish it as an update: sign the zip for
+#                                      # Sparkle, put it on the site (site/downloads/),
+#                                      # write site/appcast.xml, commit and push (Cloudflare
+#                                      # Pages deploys it to blit.banast.as)
 #
 # Environment: NOTARY_PROFILE (default blit-notary), OUT (default build/release)
 
@@ -64,6 +69,46 @@ fi
 ZIP="$OUT/Blit-$VERSION-$BUILD.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
 echo "==> $ZIP"
+
+if [[ "${PUBLISH:-0}" == 1 ]]; then
+  [[ "${SKIP_NOTARIZE:-0}" == 1 ]] && { echo "PUBLISH needs a notarized build"; exit 1; }
+  echo "==> Publishing $VERSION ($BUILD) as an update"
+  # Sparkle's tools come with the Sparkle package Xcode resolved for this project.
+  SPARKLE_BIN=$(ls -d "$HOME"/Library/Developer/Xcode/DerivedData/Blit-*/SourcePackages/artifacts/sparkle/Sparkle/bin 2>/dev/null | head -1)
+  [[ -x "$SPARKLE_BIN/sign_update" ]] || { echo "Sparkle's sign_update not found (build the project in Xcode once)"; exit 1; }
+  # EdDSA signature and length, signed with the private key in the Keychain.
+  SIGNATURE=$("$SPARKLE_BIN/sign_update" "$ZIP")
+  MIN_OS=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist" 2>/dev/null || echo "27.0")
+  mkdir -p site/downloads
+  rm -f site/downloads/Blit-*.zip            # the site keeps the current release only
+  cp "$ZIP" "site/downloads/Blit-$VERSION.zip"
+  cp "$ZIP" site/downloads/Blit.zip          # stable name for the Download button
+  NOTES_HTML=$(printf '%s' "${NOTES:-Bug fixes and improvements.}" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+  cat > site/appcast.xml <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Blit</title>
+    <link>https://blit.banast.as/appcast.xml</link>
+    <description>Updates for Blit</description>
+    <language>en</language>
+    <item>
+      <title>Blit $VERSION</title>
+      <pubDate>$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")</pubDate>
+      <sparkle:version>$BUILD</sparkle:version>
+      <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>$MIN_OS</sparkle:minimumSystemVersion>
+      <description><![CDATA[<p>$NOTES_HTML</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-$VERSION.zip" type="application/octet-stream" $SIGNATURE />
+    </item>
+  </channel>
+</rss>
+XML
+  git add site/downloads site/appcast.xml
+  git commit -q -m "Publish Blit $VERSION ($BUILD)" -- site/downloads site/appcast.xml
+  git push -q
+  echo "==> Published: https://blit.banast.as/downloads/Blit-$VERSION.zip (deploys in about a minute)"
+fi
 
 if [[ "${INSTALL:-0}" == 1 ]]; then
   echo "==> Installing to /Applications"

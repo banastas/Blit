@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // follows the window's active pane, so no second window or tabs.
         NSWindow.allowsAutomaticWindowTabbing = false
         BrowserModel.cleanUpPreviewDownloads()
+        _ = Updates.shared   // starts the daily update check (release builds)
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
         #if DEBUG
@@ -313,6 +314,8 @@ struct AboutCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About Blit") { openWindow(id: "about") }
+            Button("Check for Updates…") { Updates.shared.checkNow() }
+                .disabled(!Updates.shared.isAvailable)
             Divider()
             Button("Buy Blit…") { LicenseManager.shared.openBuyPage() }
             Button("Enter License…") { openSettings() }

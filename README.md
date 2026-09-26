@@ -493,6 +493,11 @@ The setup Blit is tuned against:
     - Reasons: Blit isn't sandboxed and relies on things the sandbox makes hard (`~/.ssh` keys and `known_hosts`, any mounted volume, Finder Services), same-day notarized releases, and better margins.
     - Still to build: merchant-of-record checkout (it handles sales tax and VAT), license keys with the trial, automatic updates (Sparkle), a first-run flow, a privacy policy, a EULA and a support address. Also a trademark check on the name, and possibly a lower minimum macOS to widen the audience.
     - When the trial ends, starting new transfers is locked. Transfers already queued or running still finish, and browsing, the log and files stay available.
+    - **Automatic updates (Sparkle 2.10):**
+      - Release builds check `https://blit.banast.as/appcast.xml` daily and install updates signed with the EdDSA key. The public key is in `Support/Info.plist`; the private key is in the release Mac's login Keychain, so back it up with Sparkle's `generate_keys -x`.
+      - Blit › Check for Updates… checks now; Settings › Updates turns the daily check off. Debug builds don't run the updater.
+      - `PUBLISH=1 scripts/release.sh` signs the zip, puts it in `site/downloads/`, writes the appcast and pushes; Cloudflare Pages serves it.
+      - The site's Download buttons fetch `downloads/Blit.zip` once the site is `LIVE`.
     - **Built (app side):**
       - The trial runs 7 days from first launch; its start is kept in the Keychain, so a reinstall doesn't restart it.
       - Settings › License shows the trial or license status, takes a key (Activate), frees this Mac (Deactivate This Mac), and links to Buy. The Blit menu has Buy Blit… and Enter License….

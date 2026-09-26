@@ -207,6 +207,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             LicenseSection()
+            UpdatesSection()
             Section("General") {
                 Toggle("Show Blit in the menu bar", isOn: $showMenuBarExtra)
                 Text("Shows transfer speed while Blit is working, and keeps the transfer HUD one click away when the window is closed.")
@@ -234,6 +235,33 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 440)
     }
+}
+
+/// Settings › Updates: the daily check (Sparkle) and Check Now.
+private struct UpdatesSection: View {
+    @State private var updates = Updates.shared
+    @State private var automatic = Updates.shared.checksAutomatically
+
+    var body: some View {
+        Section("Updates") {
+            Toggle("Check for updates automatically", isOn: $automatic)
+                .onChange(of: automatic) { _, on in updates.checksAutomatically = on }
+                .disabled(!updates.isAvailable)
+            HStack {
+                Text(updates.isAvailable
+                     ? "Blit \(Bundle.main.shortVersion). Updates come from blit.banast.as and are signed."
+                     : "Updates run in released copies of Blit.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Check Now") { updates.checkNow() }
+                    .disabled(!updates.canCheck)
+            }
+        }
+    }
+}
+
+extension Bundle {
+    var shortVersion: String { object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?" }
 }
 
 /// Settings › License: trial or license status, enter a key, deactivate, buy.

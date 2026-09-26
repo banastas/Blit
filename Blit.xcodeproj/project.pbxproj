@@ -10,6 +10,7 @@
 		0070D78B9CBF86CD05DA5E92 /* BlitLocal in Frameworks */ = {isa = PBXBuildFile; productRef = 9E73C8E9DF9E24D437044B45 /* BlitLocal */; };
 		5E8C258AD25D807D639691B8 /* BlitSFTP in Frameworks */ = {isa = PBXBuildFile; productRef = F2F8900B77EC139D492B726B /* BlitSFTP */; };
 		BFAD78460733F91A0F9EF512 /* BlitRemote in Frameworks */ = {isa = PBXBuildFile; productRef = DC9DF049EAC40AE148D40519 /* BlitRemote */; };
+		5A11C0DE0000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5A11C0DE0000000000000002 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +33,7 @@
 				0070D78B9CBF86CD05DA5E92 /* BlitLocal in Frameworks */,
 				BFAD78460733F91A0F9EF512 /* BlitRemote in Frameworks */,
 				5E8C258AD25D807D639691B8 /* BlitSFTP in Frameworks */,
+				5A11C0DE0000000000000001 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -77,6 +79,7 @@
 				DC9DF049EAC40AE148D40519 /* BlitRemote */,
 				9E73C8E9DF9E24D437044B45 /* BlitLocal */,
 				F2F8900B77EC139D492B726B /* BlitSFTP */,
+				5A11C0DE0000000000000002 /* Sparkle */,
 			);
 			productName = Blit;
 			productReference = C15DFBBA5FE238E142821665 /* Blit.app */;
@@ -108,6 +111,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				283220D5994FC5E10989B263 /* XCLocalSwiftPackageReference "BlitKit" */,
+				5A11C0DE0000000000000003 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A3546F213762D9E9E60449AB /* Products */;
@@ -263,6 +267,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		5A11C0DE0000000000000003 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.6.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		9E73C8E9DF9E24D437044B45 /* BlitLocal */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -275,6 +290,11 @@
 		F2F8900B77EC139D492B726B /* BlitSFTP */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BlitSFTP;
+		};
+		5A11C0DE0000000000000002 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5A11C0DE0000000000000003 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
