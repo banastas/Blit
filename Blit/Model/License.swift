@@ -15,8 +15,9 @@ enum LicenseConfig {
     /// are refused once these are set (nil: not checked yet).
     static let storeID: Int? = nil
     static let productID: Int? = nil
-    /// Where Buy Blit… goes (the checkout link, once the product exists).
-    static let buyURL = URL(string: "https://blit.banast.as/#buy")!
+    /// Where Buy Blit… goes: the product's Lemon Squeezy checkout. (Test mode
+    /// for now; the live product gets its own link when the store goes live.)
+    static let buyURL = URL(string: "https://blit.lemonsqueezy.com/checkout/buy/1eb9b37f-ef04-4947-a7ab-ee13a6af1fc6")!
     static let trialDays = 7
     static let revalidateEvery: TimeInterval = 7 * 86_400
     static let offlineGrace: TimeInterval = 30 * 86_400
