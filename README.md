@@ -151,6 +151,8 @@ A failure adds a compact red `✕ N warning` tag in the top line (in place of th
 - **NAS verification shield:** a pixel shield with a check knocked out.
 - **About Blit:** the pixel-terminal style, with version and build.
 
+**Results that need attention:** a finished transfer with files that were only size-checked reads `= … · N SIZE ONLY, NOT HASH-VERIFIED` in muted red (not a ✓), and its notification says so. When the queue drains, the Dock icon keeps a pixel ✓ (all verified) or a muted-red ✕ (problems) until you're back in Blit. Settings › Notifications: each transfer (default), or only when the queue finishes (a summary: transfers, size, problems) plus problems, size-only results and disk-space waits, which always notify. ETAs read "5:12:03" past an hour and "~2 d 4 h" past a day; the menu bar panel shows how many more are queued.
+
 **Sidebar status:** each server's browsing connection shows as 7×7 pixel signal bars: all lit when connected, filling left to right in a loop while connecting, dim when not connected, and a pixel ✕ in muted red on failure (hover for the reason).
 
 **Expanded:** the full HUD described below. It opens by itself when a transfer starts (Settings; collapsing it keeps it collapsed until that batch finishes). File operations (delete, move…) only use the condensed strip. Switching between the two, or the HUD appearing and leaving, animates like a CRT: a bright line sweeps out, then opens vertically.

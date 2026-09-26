@@ -319,6 +319,15 @@ final class TransferManager {
     @ObservationIgnored private var activeRuns = 0
     /// Every job finished so far in the current batch verified its files.
     @ObservationIgnored private var batchVerified = true
+    /// Totals for the current batch (until the queue drains), for its summary.
+    struct Batch { var jobs = 0; var bytes: Int64 = 0; var failed = 0; var sizeOnly = 0 }
+    @ObservationIgnored private var batch = Batch()
+
+    /// Settings: a notification per transfer (default), or only when the queue
+    /// finishes and when something needs attention.
+    private var notifyEachTransfer: Bool {
+        UserDefaults.standard.object(forKey: "notifyEachTransfer") as? Bool ?? true
+    }
 
     @ObservationIgnored private var isQuitting = false
     @ObservationIgnored private var notificationProblemReported = false
@@ -710,7 +719,13 @@ final class TransferManager {
         }
         let content = UNMutableNotificationContent()
         let size = job.totalBytes.formatted(.byteCount(style: .file))
-        if job.failures.isEmpty {
+        if job.failures.isEmpty, job.sizeOnlyCount > 0 {
+            // Finished, but not everything was hash-verified: say so plainly.
+            content.title = "Not fully verified: \(job.title)"
+            content.body = "\(job.sizeOnlyCount) of \(job.fileCount) files were only checked by size (the server couldn't hash them). \(job.filesVerified) verified by SHA-256 · \(size)"
+            content.sound = .default
+        } else if job.failures.isEmpty {
+            guard notifyEachTransfer else { return }
             content.title = "\(job.title) → \(job.destinationName)"
             var body = "\(job.filesVerified) of \(job.fileCount) files verified · \(size)"
             if job.allAlreadyPresent { body = "All \(job.fileCount) already there · \(size)" }
@@ -722,6 +737,25 @@ final class TransferManager {
             content.sound = .default
         }
         try? await center.add(UNNotificationRequest(identifier: job.id.uuidString, content: content, trigger: nil))
+    }
+
+    /// When the queue drains: one summary, if it held more than one transfer
+    /// (or if per-transfer notifications are off).
+    private func notifyBatch(_ batch: Batch) async {
+        guard !isQuitting, batch.jobs > 0, batch.jobs > 1 || !notifyEachTransfer else { return }
+        let center = UNUserNotificationCenter.current()
+        guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
+        let content = UNMutableNotificationContent()
+        let size = batch.bytes.formatted(.byteCount(style: .file))
+        if batch.failed > 0 {
+            content.title = "Queue finished with problems"
+            content.body = "\(batch.jobs) transfers · \(size) · \(batch.failed) with problems. Open Blit for details."
+            content.sound = .default
+        } else {
+            content.title = "All transfers finished"
+            content.body = "\(batch.jobs) transfers · \(size)" + (batch.sizeOnly > 0 ? " · \(batch.sizeOnly) files only size-checked" : " · all verified")
+        }
+        try? await center.add(UNNotificationRequest(identifier: "batch-\(UUID().uuidString)", content: content, trigger: nil))
     }
 
     private static func title(_ names: [String]) -> String {
@@ -765,13 +799,20 @@ final class TransferManager {
             }
             let jobVerified = job.status == .finished && job.failures.isEmpty && job.sizeOnlyCount == 0
                 && (job.filesVerified > 0 || job.fileCount == 0)
+            let jobFailed = job.status != .finished || !job.failures.isEmpty
             batchVerified = batchVerified && jobVerified
-            if !isQuitting, !jobs.contains(where: { !$0.isOperation && ($0.status == .queued || $0.isActive) }) {
-                DockProgress.shared.finish(verified: batchVerified)
-                batchVerified = true
-            }
+            batch.jobs += 1
+            batch.bytes += job.totalBytes
+            if jobFailed { batch.failed += 1 }
+            batch.sizeOnly += job.sizeOnlyCount
             onFinished?(job)
             await notify(job)
+            if !isQuitting, !jobs.contains(where: { !$0.isOperation && ($0.status == .queued || $0.isActive) }) {
+                DockProgress.shared.finish(batch.failed > 0 ? .failed : batchVerified ? .verified : .plain)
+                await notifyBatch(batch)
+                batchVerified = true
+                batch = Batch()
+            }
             runNext()
         }
     }
@@ -1571,6 +1612,14 @@ extension TransferJob {
         }
         failures.append(text)
         note("✕ \(text.uppercased())", failure: true)
+    }
+
+    /// A duration for ETAs: "04:12", "5:12:03", or "~2 d 4 h" beyond a day.
+    static func duration(_ seconds: Int) -> String {
+        let s = max(0, seconds)
+        if s >= 86_400 { return "~\(s / 86_400) d \(s % 86_400 / 3600) h" }
+        if s >= 3600 { return String(format: "%d:%02d:%02d", s / 3600, s % 3600 / 60, s % 60) }
+        return String(format: "%02d:%02d", s / 60, s % 60)
     }
 
     static func bytes(_ n: Int64) -> String {

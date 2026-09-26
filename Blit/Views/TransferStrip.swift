@@ -166,7 +166,7 @@ struct TransferStrip: View {
 
     private var countLabel: String {
         let arrow = job.status == .paused ? "‖"
-            : job.isActive ? "▲" : (job.status == .finished ? (job.allAlreadyPresent ? "=" : "✓") : "✕")
+            : job.isActive ? "▲" : (job.status == .finished ? (job.allAlreadyPresent || job.sizeOnlyCount > 0 ? "=" : "✓") : "✕")
         guard job.fileCount > 0 else { return "\(arrow) --/--" }
         let width = max(2, String(job.fileCount).count)
         let done = String(job.filesFinished).leftPadded(width)
@@ -236,7 +236,8 @@ struct TransferStrip: View {
         } else if !job.isActive, job.status != .queued {
             let queued = transfers.queuedCount
             hudText(summary + (queued > 0 ? " · \(queued) QUEUED" : ""))
-                .foregroundStyle(job.failures.isEmpty ? HUDColor.bright : Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
+                .foregroundStyle(job.failures.isEmpty && job.sizeOnlyCount == 0
+                                 ? HUDColor.bright : Color(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255))
         } else if isVerifyingOnly, let (name, since) = job.verifying.min(by: { $0.value < $1.value }) {
             // Verification can take minutes on big files; show it's alive (elapsed time).
             TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -255,7 +256,7 @@ struct TransferStrip: View {
     static func verifyDetail(_ job: TransferJob) -> String {
         guard let fraction = job.verifyProgress else { return "" }
         var text = " · \(Int((fraction * 100).rounded()))%"
-        if let left = job.verifySecondsLeft { text += " · ~\(left / 60):\(String(format: "%02d", left % 60)) LEFT" }
+        if let left = job.verifySecondsLeft { text += " · \(TransferJob.duration(left)) LEFT" }
         return text
     }
 
@@ -271,7 +272,9 @@ struct TransferStrip: View {
         if job.allAlreadyPresent, job.failures.isEmpty {
             return "= \(job.fileCount)/\(job.fileCount) ALREADY PRESENT · \(size) → \(job.destinationName.uppercased())"
         }
-        return "\(job.failures.isEmpty ? "✓" : "✕") \(verified) · \(size) → \(job.destinationName.uppercased())"
+        let mark = !job.failures.isEmpty ? "✕" : job.sizeOnlyCount > 0 ? "=" : "✓"
+        return "\(mark) \(verified) · \(size) → \(job.destinationName.uppercased())"
+            + (job.sizeOnlyCount > 0 ? " · \(job.sizeOnlyCount) SIZE ONLY, NOT HASH-VERIFIED" : "")
             + (job.filesAlreadyPresent > 0 ? " · \(job.filesAlreadyPresent) ALREADY THERE" : "")
             + (job.failures.isEmpty ? "" : " · \(job.failures.count) FAILED")
     }

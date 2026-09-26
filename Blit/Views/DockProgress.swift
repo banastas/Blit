@@ -1,6 +1,7 @@
 // Dock icon progress (PRD Visual language): while transferring, the icon gets
-// a strip of pixel progress cells like the HUD's; a pixel ✓ shows briefly
-// when a batch finishes verified.
+// a strip of pixel progress cells like the HUD's. When the queue finishes, a
+// pixel ✓ (all verified) or a muted-red ✕ (problems) stays on the icon until
+// you come back to Blit, so it's there when you return to the Mac.
 
 import AppKit
 
@@ -9,26 +10,53 @@ final class DockProgress {
     static let shared = DockProgress()
     private let view = DockTileView()
     private var clearTask: Task<Void, Never>?
+    private var activeObserver: NSObjectProtocol?
+
+    enum Outcome { case verified, failed, plain }
+
+    init() {
+        activeObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                                object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.acknowledge() }
+        }
+    }
+
+    /// Back in Blit: the result has been seen; clear it shortly.
+    private func acknowledge() {
+        guard view.badge != nil, view.progress == nil else { return }
+        clearTask?.cancel()
+        clearTask = Task {
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            clear()
+        }
+    }
 
     /// Shows `fraction` (0…1) of the current transfer.
     func update(_ fraction: Double) {
         clearTask?.cancel()
         view.progress = max(0, min(1, fraction))
-        view.done = false
+        view.badge = nil
         show()
     }
 
-    /// The batch ended: a ✓ for a few seconds if it all verified, else back to the plain icon.
-    func finish(verified: Bool) {
+    /// The queue drained. ✓ or ✕ stays until you're back in Blit (a few
+    /// seconds if you already are); otherwise back to the plain icon.
+    func finish(_ outcome: Outcome) {
         clearTask?.cancel()
-        guard verified else { return clear() }
         view.progress = nil
-        view.done = true
+        switch outcome {
+        case .plain: return clear()
+        case .verified: view.badge = .check
+        case .failed: view.badge = .cross
+        }
         show()
-        clearTask = Task {
-            try? await Task.sleep(for: .seconds(5))
-            guard !Task.isCancelled else { return }
-            clear()
+        if NSApp.isActive {
+            clearTask = Task {
+                try? await Task.sleep(for: .seconds(outcome == .failed ? 15 : 5))
+                guard !Task.isCancelled else { return }
+                clear()
+            }
         }
     }
 
@@ -44,7 +72,7 @@ final class DockProgress {
 
     private func clear() {
         view.progress = nil
-        view.done = false
+        view.badge = nil
         NSApp.dockTile.contentView = nil
         NSApp.dockTile.display()
     }
@@ -52,7 +80,7 @@ final class DockProgress {
 
 private final class DockTileView: NSView {
     var progress: Double?
-    var done = false
+    var badge: PixelGlyph?
 
     override func draw(_ dirtyRect: NSRect) {
         NSApp.applicationIconImage?.draw(in: bounds)
@@ -73,13 +101,15 @@ private final class DockTileView: NSView {
                        width: cell, height: cell).fill()
             }
         }
-        if done {
+        if let badge {
             let box = NSRect(x: bounds.width - 46 * unit, y: 6 * unit, width: 40 * unit, height: 40 * unit)
-            NSColor(white: 0.04, alpha: 0.95).setFill()
+            (badge == .cross ? NSColor(red: 0xB3 / 255, green: 0x5C / 255, blue: 0x5C / 255, alpha: 1)
+                             : NSColor(white: 0.04, alpha: 0.95)).setFill()
             NSBezierPath(roundedRect: box, xRadius: 6 * unit, yRadius: 6 * unit).fill()
-            let rows = PixelGlyph.check.rows
+            let rows = badge.rows
             let px = (4 * unit).rounded(.down)
-            NSColor(white: 0.94, alpha: 1).setFill()
+            (badge == .cross ? NSColor(red: 0x1C / 255, green: 0x0E / 255, blue: 0x0E / 255, alpha: 1)
+                             : NSColor(white: 0.94, alpha: 1)).setFill()
             for (y, row) in rows.enumerated() {
                 for (x, ch) in row.enumerated() where ch == "#" {
                     NSRect(x: box.minX + 6 * unit + CGFloat(x) * px,

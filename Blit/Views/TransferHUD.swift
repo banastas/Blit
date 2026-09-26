@@ -251,13 +251,11 @@ struct TransferHUD: View {
     private var eta: String {
         if job.isVerifyingOnly {
             guard let seconds = job.verifySecondsLeft else { return "VERIFY --:--" }
-            return String(format: "VERIFY %02d:%02d", seconds / 60, seconds % 60)
+            return "VERIFY \(TransferJob.duration(seconds))"
         }
         guard job.isActive, job.rate > 0.1 else { return "ETA --:--" }
         let seconds = Int(Double(job.totalBytes - job.transferred) / (job.rate * 1e6))
-        return seconds >= 3600
-            ? String(format: "ETA %d:%02d:%02d", seconds / 3600, seconds % 3600 / 60, seconds % 60)
-            : String(format: "ETA %02d:%02d", seconds / 60, seconds % 60)
+        return "ETA \(TransferJob.duration(seconds))"
     }
 
     private var elapsed: String {

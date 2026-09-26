@@ -61,11 +61,17 @@ enum UITestHarness {
                     .write(to: URL(fileURLWithPath: path.replacingOccurrences(of: ".png", with: "-dock.png")))
             }
         }
-        DockProgress.shared.finish(verified: true)
+        DockProgress.shared.finish(.verified)
         if let view = NSApp.dockTile.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: rep)
             try? rep.representation(using: .png, properties: [:])?
                 .write(to: URL(fileURLWithPath: path.replacingOccurrences(of: ".png", with: "-dock-done.png")))
+        }
+        DockProgress.shared.finish(.failed)
+        if let view = NSApp.dockTile.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: path.replacingOccurrences(of: ".png", with: "-dock-failed.png")))
         }
     }
 

@@ -46,6 +46,12 @@ struct MenuBarPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             if let job = transfers.featured {
                 MenuBarTransfer(job: job)
+                let others = transfers.transferJobs.filter { $0 !== job && ($0.isActive || $0.status == .queued || $0.status == .paused) }
+                if !others.isEmpty {
+                    Text("+ \(others.count) more in the queue" + (others.contains(where: \.isActive) ? " · 1 running" : ""))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Text("No transfers").foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,13 +154,13 @@ struct MenuBarTransfer: View {
 
     private var detail: String {
         if job.isVerifyingOnly {
-            return job.verifySecondsLeft.map { String(format: "~%d:%02d LEFT", $0 / 60, $0 % 60) } ?? "VERIFYING"
+            return job.verifySecondsLeft.map { "\(TransferJob.duration($0)) LEFT" } ?? "VERIFYING"
         }
         guard job.isActive, !job.isOperation, job.rate > 0.1 else {
             return job.isOperation ? "" : TransferJob.bytes(job.totalBytes)
         }
         let seconds = Int(Double(job.totalBytes - job.transferred) / (job.rate * 1e6))
-        return String(format: "ETA %d:%02d", seconds / 60, seconds % 60)
+        return "ETA \(TransferJob.duration(seconds))"
     }
 }
 
@@ -162,6 +168,7 @@ struct SettingsView: View {
     @AppStorage("showMenuBarExtra") private var showMenuBarExtra = true
     @AppStorage("expandHUDOnTransfer") private var expandHUDOnTransfer = true
     @AppStorage("existsRule") private var existsRule: ExistsRule = .skipIfSameSize
+    @AppStorage("notifyEachTransfer") private var notifyEachTransfer = true
 
     var body: some View {
         Form {
@@ -171,6 +178,13 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             Toggle("Open the full transfer HUD when a transfer starts", isOn: $expandHUDOnTransfer)
             Text("Collapse it and it stays collapsed until those transfers finish.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("Notifications", selection: $notifyEachTransfer) {
+                Text("When each transfer finishes").tag(true)
+                Text("When the queue finishes, and on problems").tag(false)
+            }
+            Text("Problems, files that were only size-checked, and waiting for disk space always notify.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Picker("When a file already exists", selection: $existsRule) {
