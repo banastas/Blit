@@ -8,14 +8,16 @@ struct BatchRenameView: View {
     let browser: BrowserModel
     let items: [FileItem]
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("lastRenameRule") private var lastRuleData = Data()
-    @State private var rule = RenameRule()
+    @AppStorage("lastRenameSteps") private var lastStepsData = Data()
+    /// The rule is a list of steps run in order (a preset like Movies uses two).
+    @State private var steps = [RenameRule()]
+    @State private var selectedStep = 0
     @State private var presets = RenamePresets.all()
     @State private var savingPreset = false
     @State private var presetName = ""
 
     private var rows: [RenamePlanRow] {
-        RenamePlan.rows(items, rule: rule) { parent in
+        RenamePlan.rows(items, steps: steps) { parent in
             (parent == browser.current ? browser.items : browser.children[parent] ?? []).map(\.name)
         }
     }
@@ -27,14 +29,19 @@ struct BatchRenameView: View {
         VStack(spacing: 0) {
             Form {
                 Section {
-                    Picker("Rename", selection: $rule.mode) {
+                    stepBar
+                    Picker("Rename", selection: rule.mode) {
                         Text("Replace Text").tag(RenameRule.Mode.replace)
                         Text("Add Text").tag(RenameRule.Mode.add)
                         Text("Format").tag(RenameRule.Mode.format)
                     }
                     .pickerStyle(.segmented)
                     fields
-                    Toggle("Include the extension", isOn: $rule.includeExtension)
+                    Toggle("Include the extension", isOn: rule.includeExtension)
+                    if selectedStep > 0 {
+                        Toggle("Only if the step above changed the name", isOn: rule.onlyIfPreviousChanged)
+                            .help("So a preset for one kind of name (movies, episodes) leaves other names alone")
+                    }
                 } header: {
                     HStack {
                         Text("Rename \(items.count) Items")
@@ -73,7 +80,7 @@ struct BatchRenameView: View {
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(changing.isEmpty ? "Rename" : "Rename \(changing.count)") {
-                    lastRuleData = (try? JSONEncoder().encode(rule)) ?? Data()
+                    lastStepsData = (try? JSONEncoder().encode(steps)) ?? Data()
                     browser.commitBatchRename(changing)
                     dismiss()
                 }
@@ -84,39 +91,68 @@ struct BatchRenameView: View {
         }
         .frame(width: 520)
         .onAppear {
-            if let last = try? JSONDecoder().decode(RenameRule.self, from: lastRuleData) { rule = last }
+            if let last = try? JSONDecoder().decode([RenameRule].self, from: lastStepsData), !last.isEmpty { steps = last }
+        }
+    }
+
+    /// The selected step, for the fields.
+    private var rule: Binding<RenameRule> {
+        Binding(get: { steps[min(selectedStep, steps.count - 1)] },
+                set: { steps[min(selectedStep, steps.count - 1)] = $0 })
+    }
+
+    /// Step 1 · Step 2 · + / −
+    private var stepBar: some View {
+        HStack {
+            Picker("Step", selection: $selectedStep) {
+                ForEach(steps.indices, id: \.self) { Text("Step \($0 + 1)").tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            Spacer()
+            Button {
+                steps.append(RenameRule())
+                selectedStep = steps.count - 1
+            } label: { Image(systemName: "plus") }
+            .help("Add a step that runs after the others")
+            Button {
+                steps.remove(at: selectedStep)
+                selectedStep = max(0, selectedStep - 1)
+            } label: { Image(systemName: "minus") }
+            .disabled(steps.count == 1)
+            .help("Remove this step")
         }
     }
 
     @ViewBuilder private var fields: some View {
-        switch rule.mode {
+        switch rule.wrappedValue.mode {
         case .replace:
-            TextField("Find", text: $rule.find)
-            TextField("Replace with", text: $rule.replacement)
+            TextField("Find", text: rule.find)
+            TextField("Replace with", text: rule.replacement)
             HStack {
-                Toggle("Match case", isOn: $rule.matchCase)
-                Toggle("Regular expression", isOn: $rule.regularExpression)
+                Toggle("Match case", isOn: rule.matchCase)
+                Toggle("Regular expression", isOn: rule.regularExpression)
                     .help("Replace with can use $1, $2… for captured groups")
             }
         case .add:
-            TextField("Text", text: $rule.addText)
-            Picker("Where", selection: $rule.addBefore) {
+            TextField("Text", text: rule.addText)
+            Picker("Where", selection: rule.addBefore) {
                 Text("after name").tag(false)
                 Text("before name").tag(true)
             }
         case .format:
-            Picker("Name format", selection: $rule.format) {
+            Picker("Name format", selection: rule.format) {
                 Text("Name and Index").tag(RenameRule.Format.index)
                 Text("Name and Counter").tag(RenameRule.Format.counter)
                 Text("Name and Date Modified").tag(RenameRule.Format.date)
             }
-            TextField("Custom format", text: $rule.customName, prompt: Text("File"))
-            Picker("Where", selection: $rule.numberBefore) {
+            TextField("Custom format", text: rule.customName, prompt: Text("File"))
+            Picker("Where", selection: rule.numberBefore) {
                 Text("after name").tag(false)
                 Text("before name").tag(true)
             }
-            if rule.format != .date {
-                TextField("Start numbers at", value: $rule.startAt, format: .number.grouping(.never))
+            if rule.wrappedValue.format != .date {
+                TextField("Start numbers at", value: rule.startAt, format: .number.grouping(.never))
             }
         }
     }
@@ -124,14 +160,17 @@ struct BatchRenameView: View {
     private var presetMenu: some View {
         Menu("Presets") {
             ForEach(presets) { preset in
-                Button(preset.name) { rule = preset.rule }
+                Button(preset.name) {
+                    steps = preset.steps.isEmpty ? [RenameRule()] : preset.steps
+                    selectedStep = 0
+                }
             }
             if !presets.isEmpty { Divider() }
             Button("Save as Preset…") {
                 presetName = ""
                 savingPreset = true
             }
-            .disabled(!rule.isActive)
+            .disabled(!steps.contains(where: \.isActive))
             if !presets.isEmpty {
                 Menu("Delete Preset") {
                     ForEach(presets) { preset in
@@ -152,7 +191,7 @@ struct BatchRenameView: View {
         let name = presetName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
         presets.removeAll { $0.name == name }
-        presets.append(RenamePreset(name: name, rule: rule))
+        presets.append(RenamePreset(name: name, steps: steps))
         RenamePresets.save(presets)
         savingPreset = false
     }

@@ -609,6 +609,17 @@ enum UITestHarness {
                 lines.append("\(label): \(rule.apply(to: "Some.Show.S01E02.1080p.mkv", index: 1, date: date))")
             }
             lines.append("no real extension: \(add.apply(to: "Some.Show.S01E02", index: 0, date: date))")
+            // The naming-convention presets
+            let conventions = RenamePresets.conventions
+            for name in ["The.Gentlemen.2019.UHD.BluRay.2160p.TrueHD.Atmos.7.1.HEVC.REMUX-FraMeSToR.mkv",
+                         "Toy.Story.5.2026.UHD.BluRay.2160p.TrueHD.Atmos.7.1.DV.HEVC.REMUX-FraMeSToR.mkv",
+                         "President.Curtis.S01E09.1080p.WEB.h264-EDITH.mkv",
+                         "South.Park.S29E01.1080p.WEB.h264-GRACE.mkv",
+                         "Blade.Runner.2049.2017.1080p.BluRay.mkv", "Movie.2019.mkv", "Show.S01E01E02.720p.mkv",
+                         "Some.Show.S02.COMPLETE.1080p"] {
+                let results = conventions.map { "\($0.name.prefix(6)): \(RenameRule.apply($0.steps, to: name, index: 0, date: date))" }
+                lines.append("\(name)\n    \(results.joined(separator: "\n    "))")
+            }
             // Previews
             let fm = FileManager.default
             let root = fm.temporaryDirectory.appendingPathComponent("blit-batch-rename-test")
@@ -620,10 +631,10 @@ enum UITestHarness {
             let items = (try? BrowserModel.listLocal(root, showHidden: false)) ?? []
             func item(_ n: String) -> FileItem { items.first { $0.name == n }! }
             var toTaken = RenameRule(); toTaken.find = "c"; toTaken.replacement = "taken"
-            let clash = RenamePlan.rows([item("c.txt")], rule: toTaken) { _ in items.map(\.name) }
+            let clash = RenamePlan.rows([item("c.txt")], steps: [toTaken]) { _ in items.map(\.name) }
             lines.append("preview c → taken: \(clash[0].problem ?? "ok")")
             var same = RenameRule(); same.mode = .format; same.customName = "x"; same.format = .date
-            let dupes = RenamePlan.rows([item("a.txt"), item("b.txt")], rule: same) { _ in items.map(\.name) }
+            let dupes = RenamePlan.rows([item("a.txt"), item("b.txt")], steps: [same]) { _ in items.map(\.name) }
             lines.append("preview two to one name: \(dupes.map { $0.problem ?? "ok" })")
             // Batch with a swap, then one undo
             @MainActor func state() -> String {

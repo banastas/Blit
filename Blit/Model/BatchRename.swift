@@ -26,6 +26,46 @@ struct RenameRule: Codable, Equatable, Hashable {
     var startAt = 1
     /// Apply to the whole name, extension included (off: the extension is kept as is).
     var includeExtension = false
+    /// For a step after the first: run only if the step above changed the name,
+    /// so a preset for one kind of name leaves other names alone.
+    var onlyIfPreviousChanged = true
+
+    init() {}
+
+    // Every field is optional when decoding, so rules saved before a field
+    // existed still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = RenameRule()
+        mode = try c.decodeIfPresent(Mode.self, forKey: .mode) ?? d.mode
+        find = try c.decodeIfPresent(String.self, forKey: .find) ?? d.find
+        replacement = try c.decodeIfPresent(String.self, forKey: .replacement) ?? d.replacement
+        matchCase = try c.decodeIfPresent(Bool.self, forKey: .matchCase) ?? d.matchCase
+        regularExpression = try c.decodeIfPresent(Bool.self, forKey: .regularExpression) ?? d.regularExpression
+        addText = try c.decodeIfPresent(String.self, forKey: .addText) ?? d.addText
+        addBefore = try c.decodeIfPresent(Bool.self, forKey: .addBefore) ?? d.addBefore
+        format = try c.decodeIfPresent(Format.self, forKey: .format) ?? d.format
+        customName = try c.decodeIfPresent(String.self, forKey: .customName) ?? d.customName
+        numberBefore = try c.decodeIfPresent(Bool.self, forKey: .numberBefore) ?? d.numberBefore
+        startAt = try c.decodeIfPresent(Int.self, forKey: .startAt) ?? d.startAt
+        includeExtension = try c.decodeIfPresent(Bool.self, forKey: .includeExtension) ?? d.includeExtension
+        onlyIfPreviousChanged = try c.decodeIfPresent(Bool.self, forKey: .onlyIfPreviousChanged) ?? d.onlyIfPreviousChanged
+    }
+
+    /// Runs `steps` in order. A later step marked onlyIfPreviousChanged is
+    /// skipped (and so is everything after it) when the step before it left
+    /// the name as it was.
+    static func apply(_ steps: [RenameRule], to name: String, index: Int, date: Date) -> String {
+        var current = name
+        var changedByPrevious = true
+        for (i, step) in steps.enumerated() {
+            let next = step.apply(to: current, index: index, date: date)
+            if i > 0, step.onlyIfPreviousChanged, !changedByPrevious { break }
+            changedByPrevious = next != current
+            current = next
+        }
+        return current
+    }
 
     /// The new name for `name`, the `index`-th item (0-based) of the batch.
     /// `date` is the item's modification date (Name and Date).
@@ -84,11 +124,34 @@ struct RenameRule: Codable, Equatable, Hashable {
     }()
 }
 
-/// A saved rule with a name ("Scene → Plex"), in user defaults.
+/// Saved steps with a name ("Movies"), in user defaults.
 struct RenamePreset: Codable, Identifiable, Hashable {
     var id = UUID()
     var name: String
-    var rule: RenameRule
+    var steps: [RenameRule]
+
+    init(name: String, steps: [RenameRule]) {
+        self.name = name
+        self.steps = steps
+    }
+
+    enum CodingKeys: String, CodingKey { case id, name, steps, rule }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        // Presets saved with a single rule.
+        steps = try c.decodeIfPresent([RenameRule].self, forKey: .steps)
+            ?? [c.decode(RenameRule.self, forKey: .rule)]
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(steps, forKey: .steps)
+    }
 }
 
 @MainActor
@@ -96,8 +159,41 @@ enum RenamePresets {
     private static let key = "renamePresets"
 
     static func all() -> [RenamePreset] {
+        seedIfNeeded()
         guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
         return (try? JSONDecoder().decode([RenamePreset].self, from: data)) ?? []
+    }
+
+    /// The user's naming conventions, added once (they can be edited or deleted):
+    /// Movies "The.Gentlemen.2019.UHD…mkv" → "The Gentlemen 2019.mkv";
+    /// TV "South.Park.S29E01.1080p…mkv" → "South-Park_S29E01.mkv".
+    static var conventions: [RenamePreset] {
+        var movieTitle = RenameRule()
+        movieTitle.find = #"^(.+)\.((?:19|20)\d{2})(?:\..*)?$"#   // the last year in the name
+        movieTitle.replacement = "$1 $2"
+        movieTitle.regularExpression = true
+        var movieSpaces = RenameRule()
+        movieSpaces.find = "."
+        movieSpaces.replacement = " "
+        var episode = RenameRule()
+        episode.find = #"^(.+?)\.(S\d{2,}E\d{2,}(?:-?E\d{2,})*)(?:\..*)?$"#
+        episode.replacement = "$1_$2"
+        episode.regularExpression = true
+        var showHyphens = RenameRule()
+        showHyphens.find = "."
+        showHyphens.replacement = "-"
+        return [RenamePreset(name: "Movies (Title Year)", steps: [movieTitle, movieSpaces]),
+                RenamePreset(name: "TV Shows (Show-Name_S01E01)", steps: [episode, showHyphens])]
+    }
+
+    private static func seedIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: "renamePresetsSeeded") else { return }
+        UserDefaults.standard.set(true, forKey: "renamePresetsSeeded")
+        var existing: [RenamePreset] = []
+        if let data = UserDefaults.standard.data(forKey: key) {
+            existing = (try? JSONDecoder().decode([RenamePreset].self, from: data)) ?? []
+        }
+        save(existing + conventions.filter { preset in !existing.contains { $0.name == preset.name } })
     }
 
     static func save(_ presets: [RenamePreset]) {
@@ -118,9 +214,10 @@ enum RenamePlan {
     /// New names for `items` under `rule`, with problems: an invalid name, two
     /// items given the same name, or a name another item in the folder has.
     /// `siblings` gives the other names in each item's folder.
-    static func rows(_ items: [FileItem], rule: RenameRule, siblings: (BrowseLocation) -> [String]) -> [RenamePlanRow] {
+    static func rows(_ items: [FileItem], steps: [RenameRule], siblings: (BrowseLocation) -> [String]) -> [RenamePlanRow] {
         var rows = items.enumerated().map { index, item in
-            RenamePlanRow(item: item, newName: rule.apply(to: item.name, index: index, date: item.modified).trimmingCharacters(in: .whitespaces))
+            RenamePlanRow(item: item, newName: RenameRule.apply(steps, to: item.name, index: index, date: item.modified)
+                .trimmingCharacters(in: .whitespaces))
         }
         let batch = Set(items.map(\.location))
         for i in rows.indices where rows[i].changes {

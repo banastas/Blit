@@ -235,7 +235,10 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
     - Rules: Replace Text (match case, or a regular expression with `$1` groups), Add Text (before or after the name), or Format (name and index, counter, or date modified; custom text; start number).
     - The extension is kept unless "Include the extension" is on. A dot in a scene-style name isn't mistaken for one.
     - Names that are invalid, collide with another item in the folder, or would be given to two items are flagged, and Rename stays disabled until they're fixed.
-    - Rules can be saved as presets for naming conventions. The last rule used comes back next time.
+    - A rule can have several steps, run in order. A later step can be set to run only if the step above changed the name, so a preset for one kind of name leaves others alone.
+    - Rules are saved as presets for naming conventions. The last rule used comes back next time. Two presets ship with the app:
+      - **Movies (Title Year):** regex `^(.+)\.((?:19|20)\d{2})(?:\..*)?$` → `$1 $2`, then `.` → space. `The.Gentlemen.2019.UHD.BluRay.2160p….mkv` becomes `The Gentlemen 2019.mkv`. It uses the last year in the name, so `Blade.Runner.2049.2017…` becomes `Blade Runner 2049 2017`.
+      - **TV Shows (Show-Name_S01E01):** regex `^(.+?)\.(S\d{2,}E\d{2,}(?:-?E\d{2,})*)(?:\..*)?$` → `$1_$2`, then `.` → `-`. `South.Park.S29E01.1080p.WEB.h264-GRACE.mkv` becomes `South-Park_S29E01.mkv`. Season packs without an episode are left alone.
     - Swaps (a ↔ b) go through a temporary name. It runs in the strip, and one ⌘Z puts every name back. It works on drives, NAS shares and servers.
   - **Copy To ▸ / Move To ▸** (right-click) archive reviewed items without dragging.
     - Destinations: favorite folders (NAS first), then mounted NAS shares, then Other Folder….
