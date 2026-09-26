@@ -342,6 +342,19 @@ struct ContentView: View {
         if showSecondPane { openSecondPaneIfNeeded() }
         BrowserModel.active = active
         BrowserModel.onInteraction = { model in activate(model) }
+        // Copy To ▸ / Move To ▸: favorite folders (NAS first), then NAS shares.
+        BrowserModel.destinations = { [sidebar] in
+            let favorites = sidebar.favorites.filter { sidebar.isAvailable($0) }.compactMap(\.location.localURL)
+            let ordered = favorites.filter(VolumeKinds.isNetwork) + favorites.filter { !VolumeKinds.isNetwork($0) }
+            var places = ordered.map { url in
+                (name: url.lastPathComponent, detail: sidebar.volumeName(for: url).flatMap { $0 == url.lastPathComponent ? nil : $0 },
+                 location: BrowseLocation.local(url))
+            }
+            for share in sidebar.networkShares where !favorites.contains(where: { $0.standardizedFileURL == share.url.standardizedFileURL }) {
+                places.append((name: share.name, detail: share.host, location: .local(share.url)))
+            }
+            return places
+        }
         operations.undoManager = undoManager
         operations.onUndoProblem = { message in transfers.notice(message, action: "UNDO") }
         transfers.restoreQueue()
@@ -353,6 +366,7 @@ struct ContentView: View {
         UITestHarness.runNoticeTestIfRequested(transfers: transfers)
         UITestHarness.runStatusTestIfRequested(transfers: transfers)
         UITestHarness.runRetryNowTestIfRequested(transfers: transfers)
+        UITestHarness.runBatchRenameTestIfRequested(transfers: transfers)
         UITestHarness.runDiskBoundTestIfRequested(transfers: transfers)
         UITestHarness.runSpaceTestIfRequested(transfers: transfers)
         UITestHarness.runExistsTestIfRequested(transfers: transfers)

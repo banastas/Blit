@@ -255,8 +255,10 @@ struct FileCommands: Commands {
             Button("Get Info") { onFiles { $0.infoItem = $0.selectedItems.first } }
                 .keyboardShortcut("i")
                 .disabled(browser?.selection.count != 1)
-            Button("Rename") { onFiles { b in b.selectedItems.first.map(b.beginRename) } }
-                .disabled(browser?.selection.count != 1)
+            Button((browser?.selection.count ?? 0) > 1 ? "Rename \(browser?.selection.count ?? 0) Items…" : "Rename") {
+                onFiles { $0.beginRename($0.selectedItems) }
+            }
+            .disabled(browser?.selection.isEmpty ?? true)
             Button("Duplicate") { onFiles { $0.duplicate($0.selectedItems) } }
                 .disabled(browser.map { $0.selection.isEmpty || $0.current?.localURL == nil } ?? true)
             Button(browser.map { $0.deleteTitle(for: $0.selectedItems) } ?? "Move to Trash") {

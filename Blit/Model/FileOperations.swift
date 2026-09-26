@@ -44,13 +44,15 @@ final class FileOperations {
     @ObservationIgnored weak var undoManager: UndoManager?
     /// True while an undo runs, so it doesn't register another undo.
     @ObservationIgnored private var undoing = false
+    /// True during a batch rename, which registers one undo for the whole batch.
+    @ObservationIgnored private var batching = false
 
     // MARK: Undo
 
     /// Registers an undo step for Edit › Undo. The step runs asynchronously;
     /// there's no redo (AppKit only records one when the undo completes at once).
     private func registerUndo(_ name: String, _ undo: @escaping @MainActor (FileOperations) async -> String?) {
-        guard !undoing, let undoManager else { return }
+        guard !undoing, !batching, let undoManager else { return }
         undoManager.registerUndo(withTarget: self) { operations in
             MainActor.assumeIsolated {
                 Task { @MainActor in
@@ -370,6 +372,67 @@ final class FileOperations {
             }
         }
         return renamed
+    }
+
+    /// Renames several items (File › Rename N Items…). Names that swap within
+    /// the batch go through a temporary name, so the order doesn't matter. One
+    /// undo step puts them all back. Returns problems not already in the strip.
+    func renameMany(_ plan: [(item: BrowseLocation, name: String)]) async -> String? {
+        struct Step { var from: BrowseLocation; var name: String }
+        func key(_ location: BrowseLocation, _ name: String) -> String {
+            "\(location.parent.map { "\($0)" } ?? "")|\(name.lowercased())"
+        }
+        // Order the renames so none lands on a name another pending item still has.
+        var pending = plan.filter { Array($0.name.utf8) != Array($0.item.lastComponent.utf8) }.map { Step(from: $0.item, name: $0.name) }
+        var occupied = Set(pending.map { key($0.from, $0.from.lastComponent) })
+        var steps: [Step] = []
+        while !pending.isEmpty {
+            if let i = pending.firstIndex(where: { step in
+                let target = key(step.from, step.name)
+                return !occupied.contains(target) || target == key(step.from, step.from.lastComponent)
+            }) {
+                let step = pending.remove(at: i)
+                occupied.remove(key(step.from, step.from.lastComponent))
+                occupied.insert(key(step.from, step.name))
+                steps.append(step)
+            } else {
+                // A cycle (a ↔ b): move one aside first.
+                let step = pending[0]
+                let temporary = step.from.lastComponent + ".blit-rename"
+                guard let parent = step.from.parent else { break }
+                steps.append(Step(from: step.from, name: temporary))
+                occupied.remove(key(step.from, step.from.lastComponent))
+                occupied.insert(key(step.from, temporary))
+                pending[0].from = Self.child(of: parent, named: temporary)
+            }
+        }
+        guard !steps.isEmpty else { return nil }
+        var origin: [BrowseLocation: BrowseLocation] = [:]   // current location → where it started
+        var index = 0
+        batching = true
+        let folder = steps[0].from.parent?.lastComponent ?? ""
+        let problems = await track("RENAME", done: "RENAMED", steps.map(\.from), to: folder) { _ in
+            let step = steps[index]
+            index += 1
+            let renamed = try await self.rename(step.from, to: step.name)
+            origin[renamed] = origin.removeValue(forKey: step.from) ?? step.from
+        }
+        batching = false
+        let back = origin.filter { $0.key != $0.value }.map { (item: $0.key, name: $0.value.lastComponent) }
+        if !back.isEmpty {
+            registerUndo(back.count == 1 ? "Rename" : "Rename \(back.count) Items") { operations in
+                await operations.renameMany(back)
+            }
+        }
+        return report(problems)
+    }
+
+    /// `name` inside `folder`.
+    static func child(of folder: BrowseLocation, named name: String) -> BrowseLocation {
+        switch folder {
+        case .local(let url): .local(url.appendingPathComponent(name))
+        case .remote(let id, let bytes): .remote(id, RemotePath(bytes: bytes).appending(RemotePath(name)))
+        }
     }
 
     /// Copies local items next to themselves as “name copy”, like Finder's Duplicate.

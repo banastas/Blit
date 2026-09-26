@@ -48,6 +48,44 @@ extension BrowserModel {
         renaming = item.location
     }
 
+    /// One item renames in place; several open Rename N Items (as in Finder).
+    func beginRename(_ items: [FileItem]) {
+        if items.count == 1 { beginRename(items[0]) } else if items.count > 1 { batchRenameItems = items }
+    }
+
+    func commitBatchRename(_ rows: [RenamePlanRow]) {
+        let plan = rows.map { (item: $0.item.location, name: $0.newName) }
+        Task {
+            if let message = await operations.renameMany(plan) { report(message, action: "RENAME") }
+            let renamed = plan.compactMap { entry in entry.item.parent.map { FileOperations.child(of: $0, named: entry.name) } }
+            selection = Set(renamed)
+        }
+    }
+
+    // MARK: Copy To / Move To
+
+    /// Folders offered by Copy To ▸ and Move To ▸: set by the window from the
+    /// sidebar's favorites (NAS folders first).
+    @MainActor static var destinations: () -> [(name: String, detail: String?, location: BrowseLocation)] = { [] }
+
+    /// Verified copy (or move: each source removed once its copy is verified)
+    /// into `folder`, as a drop there would.
+    func send(_ items: [FileItem], to folder: BrowseLocation, name: String, move: Bool) {
+        drop(items.map(\.location), into: folder, name: name, copy: !move)
+    }
+
+    /// Copy To / Move To › Other Folder…: pick any local folder.
+    func sendToChosenFolder(_ items: [FileItem], move: Bool) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = move ? "Move Here" : "Copy Here"
+        panel.message = move ? "Each file is removed from here once its copy is verified by SHA-256." : "Copies are verified by SHA-256."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        send(items, to: .local(url), name: url.lastPathComponent, move: move)
+    }
+
     func cancelRename() { renaming = nil }
 
     /// Keeps a file's type on rename: if the old name had a real extension

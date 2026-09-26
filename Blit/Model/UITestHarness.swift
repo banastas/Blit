@@ -589,6 +589,71 @@ enum UITestHarness {
         try? (lines + ["done"]).joined(separator: "\n").write(toFile: logPath, atomically: true, encoding: .utf8)
     }
 
+    /// `-BlitBatchRenameTest <log>`: rename rules and previews, a batch with a
+    /// swap (a ↔ b) undone in one step, and Copy To.
+    static func runBatchRenameTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitBatchRenameTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active, let undo = browser.operations.undoManager else { return lines.append("no browser/undo") }
+            // Rules
+            let date = ISO8601DateFormatter().date(from: "2026-09-26T10:03:04Z")!
+            var replace = RenameRule(); replace.find = "."; replace.replacement = " "
+            var regex = RenameRule(); regex.find = #"^(.+?)\.S(\d+)E(\d+).*$"#; regex.replacement = "$1 - s$2e$3"; regex.regularExpression = true
+            var add = RenameRule(); add.mode = .add; add.addText = " [reviewed]"
+            var format = RenameRule(); format.mode = .format; format.customName = "Clip "; format.startAt = 7
+            for (label, rule) in [("replace", replace), ("regex", regex), ("add", add), ("format", format)] {
+                lines.append("\(label): \(rule.apply(to: "Some.Show.S01E02.1080p.mkv", index: 1, date: date))")
+            }
+            lines.append("no real extension: \(add.apply(to: "Some.Show.S01E02", index: 0, date: date))")
+            // Previews
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-batch-rename-test")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            for (name, body) in [("a.txt", "A"), ("b.txt", "B"), ("c.txt", "C"), ("taken.txt", "T")] {
+                fm.createFile(atPath: root.appendingPathComponent(name).path, contents: Data(body.utf8))
+            }
+            let items = (try? BrowserModel.listLocal(root, showHidden: false)) ?? []
+            func item(_ n: String) -> FileItem { items.first { $0.name == n }! }
+            var toTaken = RenameRule(); toTaken.find = "c"; toTaken.replacement = "taken"
+            let clash = RenamePlan.rows([item("c.txt")], rule: toTaken) { _ in items.map(\.name) }
+            lines.append("preview c → taken: \(clash[0].problem ?? "ok")")
+            var same = RenameRule(); same.mode = .format; same.customName = "x"; same.format = .date
+            let dupes = RenamePlan.rows([item("a.txt"), item("b.txt")], rule: same) { _ in items.map(\.name) }
+            lines.append("preview two to one name: \(dupes.map { $0.problem ?? "ok" })")
+            // Batch with a swap, then one undo
+            @MainActor func state() -> String {
+                ((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).sorted().map { name in
+                    "\(name)=\((try? String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)) ?? "?")"
+                }.joined(separator: " ")
+            }
+            let message = await browser.operations.renameMany([
+                (item: .local(root.appendingPathComponent("a.txt")), name: "b.txt"),
+                (item: .local(root.appendingPathComponent("b.txt")), name: "a.txt"),
+                (item: .local(root.appendingPathComponent("c.txt")), name: "d.txt"),
+            ])
+            lines.append("after batch: \(state()) · problems: \(message ?? "none") · undo: \(undo.undoActionName)")
+            undo.undo()
+            try? await Task.sleep(for: .seconds(1.5))
+            lines.append("after one undo: \(state())")
+            // Copy To
+            let target = root.appendingPathComponent("Archive")
+            try? fm.createDirectory(at: target, withIntermediateDirectories: true)
+            browser.send([item("taken.txt")], to: .local(target), name: "Archive", move: false)
+            for _ in 0..<40 where !fm.fileExists(atPath: target.appendingPathComponent("taken.txt").path) { try? await Task.sleep(for: .milliseconds(250)) }
+            try? await Task.sleep(for: .seconds(1))
+            lines.append("copy to Archive: copied \(fm.fileExists(atPath: target.appendingPathComponent("taken.txt").path)), original kept \(fm.fileExists(atPath: root.appendingPathComponent("taken.txt").path))")
+            lines.append("destinations: \(BrowserModel.destinations().count) offered")
+            transfers.dismissFinished()
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

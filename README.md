@@ -231,6 +231,15 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
   - File operations that take more than a moment (deletes, moves, duplicates, trashing) show in the condensed transfer strip, with an item count, progress cells and the current item. A clean one leaves the strip after a few seconds; one with problems stays until dismissed.
   - Deleting on a server treats anything already gone as deleted (another client or the torrent client may have moved it), and removes a folder only after its listing is closed.
   - Uploads, and copies within or between servers, aren't supported yet. Blit says so rather than failing silently.
+  - **Rename N Items…** (select several, then File › Rename or right-click), as in Finder, with a live preview of every new name.
+    - Rules: Replace Text (match case, or a regular expression with `$1` groups), Add Text (before or after the name), or Format (name and index, counter, or date modified; custom text; start number).
+    - The extension is kept unless "Include the extension" is on. A dot in a scene-style name isn't mistaken for one.
+    - Names that are invalid, collide with another item in the folder, or would be given to two items are flagged, and Rename stays disabled until they're fixed.
+    - Rules can be saved as presets for naming conventions. The last rule used comes back next time.
+    - Swaps (a ↔ b) go through a temporary name. It runs in the strip, and one ⌘Z puts every name back. It works on drives, NAS shares and servers.
+  - **Copy To ▸ / Move To ▸** (right-click) archive reviewed items without dragging.
+    - Destinations: favorite folders (NAS first), then mounted NAS shares, then Other Folder….
+    - Copy is a verified copy. Move removes each file here only once its copy is verified by SHA-256, as a cross-device move always does.
   - **Problems appear in the strip, not in alerts.** A failed new folder, rename, paste, drop, duplicate, trash, Quick Look, undo or resume shows as a ✕ line in the condensed strip: what was tried, then the reason. The full text is in its tooltip and the HUD's WARNING panel, and VoiceOver announces it. It stays until dismissed.
     - A failed operation always reaches the strip, even one that fails before its progress would have shown.
     - A problem the operation already shows there isn't reported a second time.

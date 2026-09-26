@@ -39,7 +39,33 @@ struct FileListView: View {
                  : "This can't be undone.")
         }
         .sheet(item: $browser.infoItem) { item in InfoView(item: item, browser: browser) }
+        .sheet(isPresented: batchRenameShown) {
+            if let items = browser.batchRenameItems { BatchRenameView(browser: browser, items: items) }
+        }
         .sheet(isPresented: $browser.showGoToFolder) { GoToFolderView(browser: browser) }
+    }
+
+    private var batchRenameShown: Binding<Bool> {
+        Binding(get: { browser.batchRenameItems != nil }, set: { if !$0 { browser.batchRenameItems = nil } })
+    }
+
+    /// Copy To ▸ and Move To ▸: the sidebar's favorites (NAS folders first) and
+    /// Other Folder…, for archiving reviewed items without dragging.
+    @ViewBuilder private func sendMenus(_ items: [FileItem]) -> some View {
+        let parents = Set(items.compactMap(\.location.parent))
+        let places = BrowserModel.destinations().filter { !parents.contains($0.location) }
+        ForEach([false, true], id: \.self) { move in
+            Menu(move ? "Move To" : "Copy To") {
+                ForEach(places, id: \.location) { place in
+                    Button(place.detail.map { "\(place.name) — \($0)" } ?? place.name) {
+                        browser.send(items, to: place.location, name: place.name, move: move)
+                    }
+                }
+                if !places.isEmpty { Divider() }
+                Button("Other Folder…") { browser.sendToChosenFolder(items, move: move) }
+            }
+            .help(move ? "Each file is removed from here once its copy is verified by SHA-256" : "A verified copy")
+        }
     }
 
     private var deleteShown: Binding<Bool> {
@@ -231,9 +257,8 @@ struct FileListView: View {
             }
             Divider()
             Button("New Folder") { browser.newFolder() }
-            if items.count == 1 {
-                Button("Rename") { browser.beginRename(items[0]) }
-            }
+            Button(items.count == 1 ? "Rename" : "Rename \(items.count) Items…") { browser.beginRename(items) }
+            sendMenus(items)
             if urls.count == items.count {
                 Button("Duplicate") { browser.duplicate(items) }
             }
