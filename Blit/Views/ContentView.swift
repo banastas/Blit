@@ -7,6 +7,7 @@ struct ContentView: View {
     @Environment(ConnectionManager.self) private var connections
     @Environment(TransferManager.self) private var transfers
     @Environment(FileOperations.self) private var operations
+    @Environment(\.undoManager) private var undoManager
     @State private var browser: BrowserModel?
     /// The optional second pane (R2.8) and which pane sidebar picks, ⌘K and
     /// the toolbar act on (the one last clicked).
@@ -94,11 +95,9 @@ struct ContentView: View {
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)
         }
-        .onChange(of: secondActive) { BrowserModel.active = active }
-        .onChange(of: browser?.previewURL) { _, url in if url != nil { secondBrowser?.previewURL = nil } }
-        .onChange(of: secondBrowser?.previewURL) { _, url in if url != nil { browser?.previewURL = nil } }
-        .onChange(of: showSecondPane) { BrowserModel.active = active }
-        .focusedSceneValue(\.browser, active)
+        .modifier(PaneCoordination(browser: browser, secondBrowser: secondBrowser, active: active,
+                                   secondActive: secondActive, showSecondPane: showSecondPane,
+                                   undoManager: undoManager, operations: operations))
         .sheet(item: $editing) { item in
             ServerEditor(server: item.server, isNew: item.isNew) { server, password in
                 servers.save(server, password: password)
@@ -342,6 +341,8 @@ struct ContentView: View {
         if showSecondPane { openSecondPaneIfNeeded() }
         BrowserModel.active = active
         BrowserModel.onInteraction = { model in activate(model) }
+        operations.undoManager = undoManager
+        operations.onUndoProblem = { message in transferError = message }
         transfers.restoreQueue()
         #if DEBUG
         transfers.startFakeTransferIfRequested()
@@ -378,5 +379,27 @@ struct WindowReader: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async { onWindow(view.window) }
+    }
+}
+
+/// Window-level bookkeeping for the panes: which one keys and Space go to,
+/// one Quick Look at a time, and the undo manager for file operations.
+private struct PaneCoordination: ViewModifier {
+    let browser: BrowserModel?
+    let secondBrowser: BrowserModel?
+    let active: BrowserModel?
+    let secondActive: Bool
+    let showSecondPane: Bool
+    let undoManager: UndoManager?
+    let operations: FileOperations
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: secondActive) { BrowserModel.active = active }
+            .onChange(of: showSecondPane) { BrowserModel.active = active }
+            .onChange(of: undoManager) { _, manager in operations.undoManager = manager }
+            .onChange(of: browser?.previewURL) { _, url in if url != nil { secondBrowser?.previewURL = nil } }
+            .onChange(of: secondBrowser?.previewURL) { _, url in if url != nil { browser?.previewURL = nil } }
+            .focusedSceneValue(\.browser, active)
     }
 }

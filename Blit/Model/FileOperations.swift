@@ -40,6 +40,58 @@ final class FileOperations {
     @ObservationIgnored var onChanged: (([BrowseLocation]) -> Void)?
     /// The pasteboard change count when Blit last put a Cut on it.
     @ObservationIgnored private var cutChangeCount: Int?
+    /// The window's undo manager (Edit › Undo, ⌘Z).
+    @ObservationIgnored weak var undoManager: UndoManager?
+    /// True while an undo runs, so it doesn't register another undo.
+    @ObservationIgnored private var undoing = false
+
+    // MARK: Undo
+
+    /// Registers an undo step for Edit › Undo. The step runs asynchronously;
+    /// there's no redo (AppKit only records one when the undo completes at once).
+    private func registerUndo(_ name: String, _ undo: @escaping @MainActor (FileOperations) async -> String?) {
+        guard !undoing, let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { operations in
+            MainActor.assumeIsolated {
+                Task { @MainActor in
+                    operations.undoing = true
+                    let problem = await undo(operations)
+                    operations.undoing = false
+                    if let problem { operations.onUndoProblem?("Couldn't undo \(name.lowercased()): \(problem)") }
+                }
+            }
+        }
+        undoManager.setActionName(name)
+    }
+
+    /// Shows a problem from an undo (set by the window).
+    @ObservationIgnored var onUndoProblem: ((String) -> Void)?
+
+    /// Moves local items back: each (from, to) pair moves `to` back to `from`.
+    nonisolated private static func moveBack(_ pairs: [(from: URL, to: URL)]) -> [String] {
+        let fm = FileManager.default
+        return pairs.compactMap { pair in
+            if fm.fileExists(atPath: pair.from.path) { return "“\(pair.from.lastPathComponent)” is back in its old place already" }
+            do {
+                try fm.moveItem(at: pair.to, to: pair.from)
+                return nil
+            } catch {
+                return "\(pair.to.lastPathComponent): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Moves created items (a new folder, duplicates) to the Trash.
+    nonisolated private static func trash(_ urls: [URL]) -> [String] {
+        urls.compactMap { url in
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                return nil
+            } catch {
+                return "\(url.lastPathComponent): \(error.localizedDescription)"
+            }
+        }
+    }
 
     init(servers: ServerStore, connections: ConnectionManager, transfers: TransferManager) {
         self.servers = servers
@@ -154,12 +206,25 @@ final class FileOperations {
             }
             local.removeAll { url in sameVolume.contains(url) }
             if !sameVolume.isEmpty {
+                var moved: [(from: URL, to: URL)] = []
                 problems += await track("MOVE", done: "MOVED", sameVolume.map { .local($0) }, to: folder.lastPathComponent) { item in
                     guard let url = item.localURL else { return }
                     try await Task.detached { try Self.moveLocal(url, into: folder) }.value
-                    VerifiedIndex.shared.moved(from: url, to: folder.appendingPathComponent(url.lastPathComponent))
+                    let target = folder.appendingPathComponent(url.lastPathComponent)
+                    VerifiedIndex.shared.moved(from: url, to: target)
+                    moved.append((url, target))
                 }
-                onChanged?([here] + sameVolume.map { .local($0.deletingLastPathComponent()) })
+                let changed = [here] + sameVolume.map { BrowseLocation.local($0.deletingLastPathComponent()) }
+                onChanged?(changed)
+                if !moved.isEmpty {
+                    let pairs = moved
+                    registerUndo("Move") { operations in
+                        let problems = await Task.detached { Self.moveBack(pairs) }.value
+                        for pair in pairs { VerifiedIndex.shared.moved(from: pair.to, to: pair.from) }
+                        operations.onChanged?(changed)
+                        return Self.summary(problems)
+                    }
+                }
             }
         }
 
@@ -180,6 +245,7 @@ final class FileOperations {
         guard !sources.isEmpty, let server = servers.server(destination.serverID),
               let folder = destination.remotePath else { return nil }
         var problems: [String] = []
+        var moved: [(from: RemotePath, to: RemotePath)] = []
         do {
             let client = try await connections.browseClient(for: server)
             problems = await track("MOVE", done: "MOVED", sources, to: destination.lastComponent) { source in
@@ -190,11 +256,34 @@ final class FileOperations {
                 }
                 try await Self.ensureMissing(target, on: client, in: destination.lastComponent)
                 try await client.rename(path, to: target)
+                moved.append((path, target))
             }
         } catch {
             problems.append(Self.describe(error))
         }
-        onChanged?([destination] + sources.compactMap(\.parent))
+        let changed = [destination] + sources.compactMap(\.parent)
+        onChanged?(changed)
+        if !moved.isEmpty {
+            let pairs = moved
+            registerUndo("Move") { operations in
+                var problems: [String] = []
+                do {
+                    let client = try await operations.connections.browseClient(for: server)
+                    for pair in pairs {
+                        do {
+                            try await Self.ensureMissing(pair.from, on: client, in: "its old folder")
+                            try await client.rename(pair.to, to: pair.from)
+                        } catch {
+                            problems.append(Self.describe(error))
+                        }
+                    }
+                } catch {
+                    problems.append(Self.describe(error))
+                }
+                operations.onChanged?(changed)
+                return Self.summary(problems)
+            }
+        }
         return Self.summary(problems)
     }
 
@@ -217,6 +306,26 @@ final class FileOperations {
             created = .remote(id, target)
         }
         onChanged?([folder])
+        registerUndo("New Folder") { operations in
+            switch created {
+            case .local(let url):
+                let problems = await Task.detached { Self.trash([url]) }.value
+                operations.onChanged?([folder])
+                return Self.summary(problems)
+            case .remote(let id, let bytes):
+                guard let server = operations.servers.server(id) else { return "That server no longer exists." }
+                do {
+                    // Only if it's still empty.
+                    let client = try await operations.connections.browseClient(for: server)
+                    if try await !client.list(RemotePath(bytes: bytes)).isEmpty { return "it isn't empty any more" }
+                    try await client.removeDirectory(RemotePath(bytes: bytes))
+                    operations.onChanged?([folder])
+                    return nil
+                } catch {
+                    return Self.describe(error)
+                }
+            }
+        }
         return created
     }
 
@@ -251,6 +360,15 @@ final class FileOperations {
             renamed = .remote(id, target)
         }
         onChanged?([parent])
+        let oldName = item.lastComponent
+        registerUndo("Rename") { operations in
+            do {
+                _ = try await operations.rename(renamed, to: oldName)
+                return nil
+            } catch {
+                return Self.describe(error)
+            }
+        }
         return renamed
     }
 
@@ -277,18 +395,32 @@ final class FileOperations {
     }
 
     func moveToTrash(_ items: [BrowseLocation]) async -> String? {
+        var trashed: [(from: URL, to: URL)] = []
         let problems = await track("TRASH", done: "MOVED TO TRASH", items, to: "Trash") { item in
             guard let url = item.localURL else { return }
-            try await Task.detached {
+            let inTrash = try await Task.detached { () -> URL? in
                 do {
-                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                    var result: NSURL?
+                    try FileManager.default.trashItem(at: url, resultingItemURL: &result)
+                    return result as URL?
                 } catch CocoaError.fileNoSuchFile {
-                    // Already gone: nothing to trash.
+                    return nil   // already gone: nothing to trash
                 }
             }.value
             VerifiedIndex.shared.removed(url)
+            if let inTrash { trashed.append((url, inTrash)) }
         }
-        onChanged?(items.compactMap(\.parent))
+        let changed = items.compactMap(\.parent)
+        onChanged?(changed)
+        if !trashed.isEmpty {
+            // Undo puts them back, as Finder does.
+            let pairs = trashed
+            registerUndo("Move to Trash") { operations in
+                let problems = await Task.detached { Self.moveBack(pairs) }.value
+                operations.onChanged?(changed)
+                return Self.summary(problems)
+            }
+        }
         return Self.summary(problems)
     }
 
@@ -450,11 +582,22 @@ final class FileOperations {
     }
 
     private func duplicateTracked(_ urls: [URL]) async -> [String] {
-        await track("DUPLICATE", done: "DUPLICATED", urls.map { .local($0) },
-                    to: urls.first?.deletingLastPathComponent().lastPathComponent ?? "") { item in
+        var copies: [URL] = []
+        let problems = await track("DUPLICATE", done: "DUPLICATED", urls.map { .local($0) },
+                                   to: urls.first?.deletingLastPathComponent().lastPathComponent ?? "") { item in
             guard let url = item.localURL else { return }
-            try await Task.detached { try Self.duplicateLocal(url) }.value
+            copies.append(try await Task.detached { try Self.duplicateLocal(url) }.value)
         }
+        if !copies.isEmpty {
+            let made = copies
+            let changed = made.map { BrowseLocation.local($0.deletingLastPathComponent()) }
+            registerUndo("Duplicate") { operations in
+                let problems = await Task.detached { Self.trash(made) }.value
+                operations.onChanged?(changed)
+                return Self.summary(problems)
+            }
+        }
+        return problems
     }
 
     /// "SFTP", "SMB" or "LOCAL", for the strip's link label.
@@ -487,7 +630,8 @@ final class FileOperations {
         }
     }
 
-    nonisolated private static func duplicateLocal(_ url: URL) throws {
+    @discardableResult
+    nonisolated private static func duplicateLocal(_ url: URL) throws -> URL {
         let fm = FileManager.default
         // Packages (.fcpbundle, .app, .photoslibrary) are named like files:
         // "Wedding copy.fcpbundle", keeping their type.
@@ -496,5 +640,6 @@ final class FileOperations {
         let target = duplicateURL(for: url, isDirectory: isFolder) { fm.fileExists(atPath: $0) }
         // copyItem clones on APFS, so this is instant on the same SSD.
         try fm.copyItem(at: url, to: target)
+        return target
     }
 }

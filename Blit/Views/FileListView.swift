@@ -35,6 +35,8 @@ struct FileListView: View {
                  ? "This can't be undone. Folders are deleted with everything in them."
                  : "This can't be undone.")
         }
+        .sheet(item: $browser.infoItem) { item in InfoView(item: item, browser: browser) }
+        .sheet(isPresented: $browser.showGoToFolder) { GoToFolderView(browser: browser) }
         .alert("Can't Complete", isPresented: errorShown) {
             Button("OK") {}
         } message: {
@@ -203,6 +205,9 @@ struct FileListView: View {
             }
             if !urls.isEmpty {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            }
+            if items.count == 1 {
+                Button("Get Info") { browser.infoItem = items[0] }
             }
             Divider()
             Button("New Folder") { browser.newFolder() }

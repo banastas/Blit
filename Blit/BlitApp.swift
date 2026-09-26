@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         UITestHarness.runIfRequested()
         UITestHarness.renderStatusIconsIfRequested()
+        UITestHarness.runUndoTestIfRequested()
+        UITestHarness.renderInfoIfRequested()
         #endif
         // Quick Look keys, as in Finder (PRD R2.17): Space opens and closes the
         // panel; while it's open, ↑/↓ preview the previous or next file. Left
@@ -122,6 +124,7 @@ struct BlitApp: App {
         .commands {
             BrowserCommands()
             FileCommands()
+            GoCommands()
             AboutCommands()
             CommandGroup(after: .importExport) {
                 Button("Export Transfer Log…") { TransferLog.export() }
@@ -199,6 +202,9 @@ struct FileCommands: Commands {
             Button("Open") { onFiles { $0.openSelection() } }
                 .keyboardShortcut(.downArrow)
                 .disabled(browser?.selection.count != 1)
+            Button("Get Info") { onFiles { $0.infoItem = $0.selectedItems.first } }
+                .keyboardShortcut("i")
+                .disabled(browser?.selection.count != 1)
             Button("Rename") { onFiles { b in b.selectedItems.first.map(b.beginRename) } }
                 .disabled(browser?.selection.count != 1)
             Button("Duplicate") { onFiles { $0.duplicate($0.selectedItems) } }
@@ -253,6 +259,19 @@ struct AboutCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About Blit") { openWindow(id: "about") }
+        }
+    }
+}
+
+/// Go › Go to Folder (⇧⌘G), as in Finder.
+struct GoCommands: Commands {
+    @FocusedValue(\.browser) private var browser
+
+    var body: some Commands {
+        CommandMenu("Go") {
+            Button("Go to Folder…") { browser?.showGoToFolder = true }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(browser == nil)
         }
     }
 }

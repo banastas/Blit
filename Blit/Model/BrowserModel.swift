@@ -48,6 +48,10 @@ final class BrowserModel {
     private(set) var loadingChildren = Set<BrowseLocation>()
     /// The item whose name is being edited in place, if any.
     var renaming: BrowseLocation?
+    /// The item shown in Get Info (⌘I).
+    var infoItem: FileItem?
+    /// Go to Folder (⇧⌘G) is asking for a path.
+    var showGoToFolder = false
     /// Items waiting for the user to confirm a permanent delete.
     var deleteRequest: [FileItem]?
     var operationError: String?

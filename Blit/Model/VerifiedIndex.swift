@@ -12,18 +12,24 @@ final class VerifiedIndex {
 
     struct Entry: Equatable {
         let size: UInt64
-        /// "server-sha256", "nas-sha256" or "read-back".
+        /// "server-sha256", "nas-sha256", "read-back" or "present-sha256".
         let method: String
         let time: Date
+        var sha256: String? = nil
+        /// Where it was copied from ("user@host:path" or a local path).
+        var source: String? = nil
 
-        var summary: String {
+        var summary: String { "Verified by Blit · \(howAndWhen)" }
+
+        /// "SHA-256 matched the server's · Sep 25, 2026 at 13:18".
+        var howAndWhen: String {
             let how = switch method {
             case "server-sha256": "SHA-256 matched the server's"
             case "nas-sha256": "SHA-256 matched the NAS's"
             case "present-sha256": "already here; SHA-256 matched the source's"
             default: "SHA-256 matched on read-back"
             }
-            return "Verified by Blit · \(how) · \(time.formatted(date: .abbreviated, time: .shortened))"
+            return "\(how) · \(time.formatted(date: .abbreviated, time: .shortened))"
         }
     }
 
@@ -48,7 +54,7 @@ final class VerifiedIndex {
         let key = URL(fileURLWithPath: record.destination).standardizedFileURL.path
         switch (record.result, record.verification) {
         case ("ok", let method) where Self.strongMethods.contains(method):
-            entries[key] = Entry(size: record.size, method: method, time: record.time)
+            entries[key] = Entry(size: record.size, method: method, time: record.time, sha256: record.sha256, source: record.source)
         case ("ok", "already-present"), ("ok", "cloned"):
             break   // the same bytes as before: keep whatever was known
         default:

@@ -289,6 +289,75 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitUndoTest <log>`: rename, move and trash in a temporary folder,
+    /// each followed by Edit › Undo, checking the disk after each step.
+    static func runUndoTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let operations = BrowserModel.active?.operations, let undo = operations.undoManager else {
+                lines.append("no operations/undo manager")
+                return
+            }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-undo-test")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root.appendingPathComponent("sub"), withIntermediateDirectories: true)
+            let file = root.appendingPathComponent("a.txt")
+            try? Data("a".utf8).write(to: file)
+            func listing() -> String { ((try? fm.subpathsOfDirectory(atPath: root.path)) ?? []).sorted().joined(separator: " ") }
+            func settle() async { try? await Task.sleep(for: .milliseconds(800)) }
+
+            _ = try? await operations.rename(.local(file), to: "b.txt")
+            lines.append("after rename: \(listing()) · undo: \(undo.undoActionName)")
+            undo.undo(); await settle()
+            lines.append("after undo:   \(listing())")
+
+            _ = await operations.place([.local(file)], into: .local(root.appendingPathComponent("sub")), destinationName: "sub", mode: .move)
+            lines.append("after move:   \(listing()) · undo: \(undo.undoActionName)")
+            undo.undo(); await settle()
+            lines.append("after undo:   \(listing())")
+
+            _ = await operations.moveToTrash([.local(file)])
+            lines.append("after trash:  \(listing()) · undo: \(undo.undoActionName)")
+            undo.undo(); await settle()
+            lines.append("after undo:   \(listing())")
+            lines.append("done")
+            try? fm.removeItem(at: root)
+        }
+    }
+
+    /// `-BlitRenderInfo out.png`: renders Get Info for a sample verified file,
+    /// and Go to Folder, for checking their look.
+    static func renderInfoIfRequested() {
+        guard let path = UserDefaults.standard.string(forKey: "BlitRenderInfo") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active else { return }
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("Sample.Release.2160p.mkv")
+            try? Data(repeating: 7, count: 123_456).write(to: file)
+            VerifiedIndex.shared.record(TransferRecord(time: Date(), source: "user@seedbox.example:files/downloads/Sample.Release.2160p.mkv",
+                                                       destination: file.path, size: 123_456,
+                                                       sha256: "cdcce6b6b6e94f6f3b0f2d6f8a1c1e0b7a2e7c9d3f1a4b5c6d7e8f9a0b1c2d3e",
+                                                       verification: "server-sha256", result: "ok", detail: nil))
+            let item = FileItem(location: .local(file), name: file.lastPathComponent, isDirectory: false, modified: Date(),
+                                size: 123_456, kind: "Matroska Video")
+            for (suffix, view) in [("-info", AnyView(InfoView(item: item, browser: browser))),
+                                   ("-goto", AnyView(GoToFolderView(browser: browser)))] {
+                let renderer = ImageRenderer(content: view.background(Color(nsColor: .windowBackgroundColor)))
+                renderer.scale = 2
+                if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: path.replacingOccurrences(of: ".png", with: "\(suffix).png")))
+                }
+            }
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
     static func runIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitRightClickTest") else { return }
         var lines: [String] = ["started"] {
