@@ -558,6 +558,19 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitLinkTest <log>`: the round trip and route measured for servers the
+    /// app connects to at launch (warm-up), as the sidebar hover shows them.
+    static func runLinkTestIfRequested(connections: ConnectionManager, servers: ServerStore) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitLinkTest") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(12))
+            let lines = servers.browsable.map { server in
+                "\(server.displayName): \(connections.state(server)) · \(connections.links[server.id]?.summary ?? "not measured")"
+            }
+            try? (lines + ["done"]).joined(separator: "\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

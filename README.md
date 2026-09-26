@@ -174,7 +174,7 @@ A failure adds a compact red `✕ N warning` tag in the top line (in place of th
 **Menu bar panel:** the condensed HUD stacked into a 320-pt column: count and item, destination, progress, big rate or SHA256 with ETA, and a warning tag. Clicking the tag opens Blit with the full HUD. It uses the strip's own count label (same glyphs, zero-padded) and hour-aware ETA. The count glyphs are ‖ paused, ▲ active, ✓ verified, = nothing transferred or size-only, and ✕ for failed, cancelled, or finished with failures.
 
 - **Type:** pixel uppercase for labels (Silkscreen) and large terminal numerals for readouts (VT323). Both are SIL Open Font License, so they can be bundled with the app. The file browser keeps the system font and SF Mono.
-- **Panels:** boxed readouts with 1-pixel borders: *Item* (name, route, segmented progress, per-connection chunk rows), *Throughput · 60 s* (big rate plus a pixel-column histogram, peak, ETA), *Link data* (connections, cipher, window, receive buffer, read size and depth, RTT, verification method), and *Log*.
+- **Panels:** boxed readouts with 1-pixel borders: *Item* (name, route, segmented progress, per-connection chunk rows), *Throughput · 60 s* (big rate plus a pixel-column histogram, peak, ETA), *Link data* (connections, link with read size × depth and interface, RTT measured at connect and every 30 s under load, window and receive buffer, verification method, exists rule; the cipher isn't exposed by SwiftNIO SSH yet), and *Log*.
 - **Progress** is drawn as discrete cells, never a smooth bar. Crisp edges, no anti-aliased gradients.
 - **Failures** appear as a Nostromo-style WARNING panel: muted red fill (#b35c5c) with black text, stating what failed, what was kept and what happens next (for example *SHA-256 mismatch · kept .blitpart · retry queued*).
 - **Icons:** a pixel icon set for statuses and sidebar items, drawn on a strict grid, is an M4 polish task.
@@ -196,7 +196,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 - **R1.4** Local and external volumes appear automatically. Blit notices when a drive is ejected mid-transfer and recovers when it reconnects.
 - **R1.5** NAS shares mounted through macOS SMB are used as normal filesystem paths. Blit can save and remount favorite shares.
 - **R1.6** A NAS entry can have an SSH endpoint, used to compute checksums on the NAS (R4.2). This requires SSH enabled in DSM and an account in the administrators group. The entry maps the Mac's mount point to the share's path on the NAS (for example `/Volumes/Media` ↔ `/volume1/Media`).
-- **R1.7** Warn when a NAS (or server) is reached over Wi-Fi while a wired interface is up, and name the cause (which interface macOS routes through, and why). This silently halved SSD → NAS throughput in the reference setup.
+- **R1.7** Warn when a NAS (or server) is reached over Wi-Fi while a wired interface is up, and name the cause (which interface macOS routes through, and why). This silently halved SSD → NAS throughput in the reference setup. Checked for SMB copies, seedbox downloads (the interface joins the link label, e.g. `3× · 255K×32 · EN7`) and browse sessions. The sidebar signal's hover shows the route and round trip ("Connected · 195 ms · en7"), refreshed by the 2-minute keep-alive.
 
 ### Browser
 

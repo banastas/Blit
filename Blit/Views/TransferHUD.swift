@@ -174,6 +174,10 @@ struct TransferHUD: View {
         HUDPanel("Link data") {
             HUDRow("CONN", "\(job.connections)")
             HUDRow("LINK", job.link.isEmpty ? "—" : job.link)
+            if case .download = job.kind {
+                HUDRow("RTT", job.rttMilliseconds.map { "\(Int($0.rounded())) MS" } ?? "—")
+                HUDRow("WINDOW", "\(SSHTuning().maximumPacketSize * 64 >> 20) MB · RCVBUF \(SSHTuning().receiveBufferBytes >> 20) MB")
+            }
             HUDRow("VERIFY", job.verificationMethod)
             HUDRow("EXISTS", job.existsRule.hudLabel)
             HUDRow("RESUMED", job.resumedBytes > 0 ? TransferJob.bytes(job.resumedBytes) : "—")

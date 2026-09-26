@@ -5,6 +5,7 @@
 // (PRD R3.2).
 
 import AppKit
+import BlitLocal
 import BlitRemote
 import BlitSFTP
 import Foundation
@@ -25,6 +26,22 @@ enum ConnectionError: Error, LocalizedError {
 @Observable
 final class ConnectionManager {
     private(set) var states: [UUID: ConnectionState] = [:]
+    /// Round trip and route per connected server, for the sidebar's hover.
+    private(set) var links: [UUID: LinkInfo] = [:]
+
+    struct LinkInfo: Equatable {
+        var rttMilliseconds: Double?
+        var interface: String?
+        var wifiDespiteWired = false
+
+        /// "148 ms · EN7", or a warning when Wi-Fi carries it while wired is up.
+        var summary: String {
+            var parts: [String] = []
+            if let rttMilliseconds { parts.append("\(Int(rttMilliseconds.rounded())) ms") }
+            if let interface { parts.append(wifiDespiteWired ? "over Wi-Fi (\(interface)) while a wired link is up" : interface) }
+            return parts.joined(separator: " · ")
+        }
+    }
     @ObservationIgnored private var browseClients: [UUID: SFTPClient] = [:]
     @ObservationIgnored private var inFlight: [UUID: Task<SFTPClient, Error>] = [:]
     @ObservationIgnored private var keepAlive: [UUID: Task<Void, Never>] = [:]
@@ -81,7 +98,11 @@ final class ConnectionManager {
                 try? await Task.sleep(for: Self.keepAliveInterval)
                 guard !Task.isCancelled else { return }
                 var alive = client.connection.isActive
-                if alive { alive = (try? await client.stat(RemotePath("."))) != nil }
+                if alive {
+                    let rtt = await TransferManager.roundTrip(client)
+                    alive = rtt != nil
+                    if let rtt { self?.links[server.id]?.rttMilliseconds = rtt }
+                }
                 if !alive {
                     // It stopped answering; drop it so the next use reconnects.
                     await client.connection.close()
@@ -123,12 +144,24 @@ final class ConnectionManager {
             browseClients[server.id] = client
             states[server.id] = .connected
             startKeepAlive(client, for: server)
+            measureLink(client, for: server)
             return client
         } catch is CancellationError {
             throw CancellationError()
         } catch {
             if inFlight[server.id] == task { states[server.id] = .failed("\(error)") }
             throw error
+        }
+    }
+
+    /// Samples the round trip and route once a session opens.
+    private func measureLink(_ client: SFTPClient, for server: ServerConfig) {
+        let host = server.host, port = UInt16(clamping: server.port)
+        Task {
+            let rtt = await TransferManager.roundTrip(client)
+            let path = await Task.detached { NetworkPath.to(host: host, port: port) }.value
+            links[server.id] = LinkInfo(rttMilliseconds: rtt, interface: path?.interface,
+                                        wifiDespiteWired: path?.wifiDespiteWired ?? false)
         }
     }
 

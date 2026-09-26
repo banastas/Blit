@@ -359,6 +359,9 @@ struct ContentView: View {
         UITestHarness.runLaneTestIfRequested(transfers: transfers)
         #endif
         connections.warmUp(servers.browsable)
+        #if DEBUG
+        UITestHarness.runLinkTestIfRequested(connections: connections, servers: servers)
+        #endif
         wireRefresh(browser, secondBrowser)
         if selection == nil {
             selection = sidebar.favorites.first(where: sidebar.isAvailable)?.location

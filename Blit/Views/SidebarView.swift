@@ -51,7 +51,7 @@ struct SidebarView: View {
                     HStack {
                         Label(server.displayName, systemImage: "server.rack")
                         Spacer(minLength: 4)
-                        StatusDot(state: connections.state(server))
+                        StatusDot(state: connections.state(server), link: connections.links[server.id]?.summary)
                     }
                     .transferTarget(server.startLocation, name: server.displayName, onTransfer: onTransfer)
                     .tag(server.startLocation)
@@ -246,12 +246,15 @@ private struct FavoriteRow: View {
 /// connecting, dim when not connected, a pixel ✕ in muted red on failure.
 private struct StatusDot: View {
     let state: ConnectionState
+    /// "148 ms · en7" once measured.
+    var link: String?
 
     var body: some View {
         switch state {
         case .connected:
-            PixelSignal(lit: 4).help("Connected")
-                .accessibilityLabel("Connected")
+            let detail = link.map { $0.isEmpty ? "" : " · \($0)" } ?? ""
+            PixelSignal(lit: 4).help("Connected" + detail)
+                .accessibilityLabel("Connected" + detail)
         case .connecting:
             TimelineView(.periodic(from: .now, by: 0.18)) { context in
                 PixelSignal(lit: Int(context.date.timeIntervalSinceReferenceDate / 0.18) % 5)

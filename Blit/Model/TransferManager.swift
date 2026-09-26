@@ -289,6 +289,9 @@ final class TransferJob: Identifiable {
     var persistent = true
     /// A problem shown in the strip instead of an alert (see notice(_:action:place:)).
     var notice: String?
+    /// Round trip to the server (an SFTP stat), measured at connect and every
+    /// 30 s during a download, for the Link data panel.
+    var rttMilliseconds: Double?
     /// Retry Now: ends the backoff wait (and waits for the network or a drive) early.
     @ObservationIgnored var retryNowRequested = false
     /// What to do with files already at the destination (PRD R5.3), chosen in
@@ -597,6 +600,16 @@ final class TransferManager {
         }
     }
     var queuedCount: Int { jobs.filter { $0.status == .queued }.count }
+
+    /// One SFTP round trip in milliseconds (a stat of the home folder), or nil
+    /// if it failed. During a download it includes queueing behind reads, which
+    /// is the latency the transfer actually sees.
+    nonisolated static func roundTrip(_ client: SFTPClient) async -> Double? {
+        let start = ContinuousClock.now
+        guard (try? await client.stat(RemotePath("."))) != nil else { return nil }
+        let elapsed = ContinuousClock.now - start
+        return Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
+    }
 
     /// Ends a waiting job's backoff and tries again at once (the cause was fixed).
     func retryNow(_ job: TransferJob) {
@@ -1245,6 +1258,24 @@ final class TransferManager {
         let strategy = clients[0].strategy
         job.connections = clients.count
         job.link = "\(clients.count)× · \(strategy.readSize / 1024)K×\(strategy.maxInFlight)"
+        // The route (PRD R1.7): Wi-Fi while a wired link is up halves throughput.
+        let host = server.host, port = UInt16(clamping: server.port)
+        if let path = await Task.detached(operation: { NetworkPath.to(host: host, port: port) }).value {
+            job.link += " · \(path.interface.uppercased())"
+            if path.wifiDespiteWired {
+                job.note("✕ ROUTE IS WI-FI (\(path.interface)) WHILE WIRED IS UP · SEE PRD R1.7", failure: true)
+            }
+        }
+        let probe = clients[0]
+        job.rttMilliseconds = await Self.roundTrip(probe)
+        let rttSampler = Task { [weak job] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let job, let rtt = await Self.roundTrip(probe) else { continue }
+                job.rttMilliseconds = rtt
+            }
+        }
+        defer { rttSampler.cancel() }
 
         var files: [RemoteFile] = []
         var directories: [String] = []
