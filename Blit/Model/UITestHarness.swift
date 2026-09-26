@@ -365,6 +365,41 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRenderStrip out.png`: the condensed strip and the menu bar panel
+    /// for a running job with one idle connection, and one with warnings.
+    static func renderStripIfRequested(transfers: TransferManager) {
+        guard let path = UserDefaults.standard.string(forKey: "BlitRenderStrip") else { return }
+        func job(_ failures: [String]) -> TransferJob {
+            let job = TransferJob(kind: .copy, sources: [.local(URL(fileURLWithPath: "/tmp/a.mkv"))],
+                                  destination: URL(fileURLWithPath: "/tmp"), title: "SOME.PACK.2160P", destinationName: "Incoming")
+            job.persistent = false
+            job.status = failures.isEmpty ? .running : .finished
+            job.fileCount = 26
+            job.filesFinished = 7
+            job.totalBytes = 1
+            job.connections = 3
+            job.link = "SFTP"
+            job.connectionRates = [9, 0, 7]
+            job.failures = failures
+            return job
+        }
+        let running = job([]), failed = job(["a.mkv: SHA-256 mismatch"])
+        let content = VStack(spacing: 8) {
+            TransferStrip(job: running).frame(width: 900)
+            TransferStrip(job: failed).frame(width: 900)
+            MenuBarTransfer(job: failed).frame(width: 296)
+        }
+        .padding(10)
+        .background(Color(white: 0.2))
+        .environment(transfers)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = 2
+        if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

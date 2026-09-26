@@ -145,7 +145,7 @@ remote SFTP server ──(parallel SFTP, verified)──▶ external SSD ──(
 The transfer strip expands into a 1-bit, pixel-terminal HUD (references: 1-bit pixel art, pixel icon sets, the *Alien* Nostromo interface).
 
 **Condensed (default), two lines:**
-1. `▲ 02/05` transfer count (click to expand) · item `→` destination · 24-cell segmented progress · percent · mini 30-second throughput histogram · large rate · one square per active connection (or file stream), with a short link summary (`3× · 148MS` for SFTP, `SMB · EN7` for copies).
+1. `▲ 02/05` transfer count (click to expand) · item `→` destination · 24-cell segmented progress · percent · mini 30-second throughput histogram · large rate · one square per connection (or file stream), bright while it moved data in the last second and dim when idle or stalled, with a short link summary (`3× · 148MS` for SFTP, `SMB · EN7` for copies).
 2. The latest log line: verification results, resumes, ETA.
 
 A failure adds a compact red `✕ N warning` tag in the top line (in place of the histogram) and turns the log line muted red; clicking it opens the full HUD at the WARNING panel.
@@ -169,7 +169,7 @@ A failure adds a compact red `✕ N warning` tag in the top line (in place of th
 
 **Verification progress:** the seedbox starts hashing each file when its first range is handed out, so the hash reads the file alongside the download instead of re-reading it cold afterwards. Where the server's `dd` supports `status=progress` (GNU coreutils), it reports bytes hashed about once a second. The HUD shows a *Server SHA256* row per file, the hash rate, and a verify ETA. Once only checksums remain, the strip's progress cells, percent and log line switch to verification progress, and the histogram shows the hash rate.
 
-**Menu bar panel:** the condensed HUD stacked into a 320-pt column: count and item, destination, progress, big rate or SHA256 with ETA, and a warning tag.
+**Menu bar panel:** the condensed HUD stacked into a 320-pt column: count and item, destination, progress, big rate or SHA256 with ETA, and a warning tag. Clicking the tag opens Blit with the full HUD. It uses the strip's own count label (same glyphs, zero-padded) and hour-aware ETA. The count glyphs are ‖ paused, ▲ active, ✓ verified, = nothing transferred or size-only, and ✕ for failed, cancelled, or finished with failures.
 
 - **Type:** pixel uppercase for labels (Silkscreen) and large terminal numerals for readouts (VT323). Both are SIL Open Font License, so they can be bundled with the app. The file browser keeps the system font and SF Mono.
 - **Panels:** boxed readouts with 1-pixel borders: *Item* (name, route, segmented progress, per-connection chunk rows), *Throughput · 60 s* (big rate plus a pixel-column histogram, peak, ETA), *Link data* (connections, cipher, window, receive buffer, read size and depth, RTT, verification method), and *Log*.

@@ -79,6 +79,8 @@ struct MenuBarPanel: View {
 /// The menu bar panel's transfer view: the condensed HUD stacked into a
 /// narrow column, so nothing truncates at menu bar width.
 struct MenuBarTransfer: View {
+    @Environment(TransferManager.self) private var transfers
+    @Environment(\.openWindow) private var openWindow
     let job: TransferJob
 
     var body: some View {
@@ -115,12 +117,22 @@ struct MenuBarTransfer: View {
                 Text(detail).font(HUDFont.terminal(15)).foregroundStyle(HUDColor.dim)
             }
             if !job.failures.isEmpty {
-                hudText("✕ \(job.failures.count) WARNING\(job.failures.count == 1 ? "" : "S")", glyphSize: 9)
-                    .font(HUDFont.label())
-                    .foregroundStyle(HUDColor.onFailure)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(HUDColor.failure)
+                // Opens the window with the full HUD, where the WARNING panel is.
+                Button {
+                    openWindow(id: "main")
+                    NSApp.activate()
+                    transfers.isExpanded = true
+                } label: {
+                    hudText("✕ \(job.failures.count) WARNING\(job.failures.count == 1 ? "" : "S")", glyphSize: 9)
+                        .font(HUDFont.label())
+                        .foregroundStyle(HUDColor.onFailure)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(HUDColor.failure)
+                }
+                .buttonStyle(.plain)
+                .help(job.failures.joined(separator: "\n") + "\n\nClick to show the details in Blit")
+                .accessibilityLabel("\(job.failures.count) warning\(job.failures.count == 1 ? "" : "s"), show details")
             }
         }
         .foregroundStyle(HUDColor.bright)
@@ -130,10 +142,7 @@ struct MenuBarTransfer: View {
         .environment(\.colorScheme, .dark)
     }
 
-    private var countLabel: String {
-        let arrow = job.isActive ? "▲" : (job.status == .finished ? (job.allAlreadyPresent ? "=" : "✓") : "✕")
-        return job.fileCount > 0 ? "\(arrow) \(job.filesFinished)/\(job.fileCount)" : arrow
-    }
+    private var countLabel: String { job.countLabel }
 
     private var headline: String {
         if case .operation(let verb, _) = job.kind { return verb }
@@ -143,7 +152,10 @@ struct MenuBarTransfer: View {
         if job.isVerifyingOnly { return "SHA256" }
         if job.status == .preparing { return "…" }
         if case .waiting = job.status { return "RETRY" }
-        if !job.isActive { return job.status == .finished ? (job.allAlreadyPresent ? "PRESENT" : "DONE") : "FAILED" }
+        if !job.isActive {
+            guard job.status == .finished else { return "FAILED" }
+            return job.allAlreadyPresent ? "PRESENT" : job.failures.isEmpty ? "DONE" : "\(job.failures.count) FAILED"
+        }
         return String(format: "%.1f", job.rate)
     }
 

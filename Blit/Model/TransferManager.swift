@@ -539,7 +539,9 @@ final class TransferManager {
                     job.peakRate = max(job.peakRate, job.rate)
                     job.history.append(job.rate)
                     if job.history.count > 60 { job.history.removeFirst() }
-                    job.connectionRates = (0..<3).map { _ in Double.random(in: 5...12) }
+                    // The third connection stalls every other 5 s (its strip square dims).
+                    let stalled = (tick / 20) % 2 == 1
+                    job.connectionRates = (0..<3).map { $0 == 2 && stalled ? 0 : Double.random(in: 5...12) }
                 }
             }
         }

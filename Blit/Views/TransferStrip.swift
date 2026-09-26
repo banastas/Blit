@@ -104,14 +104,15 @@ struct TransferStrip: View {
                 separator
                 VStack(alignment: .trailing, spacing: 2) {
                     HStack(spacing: 3) {
-                        ForEach(0..<max(job.connections, 0), id: \.self) { _ in
-                            Rectangle().fill(job.isActive ? HUDColor.bright : HUDColor.dim).frame(width: 5, height: 5)
+                        ForEach(0..<max(job.connections, 0), id: \.self) { index in
+                            Rectangle().fill(job.isConnectionMoving(index) ? HUDColor.bright : HUDColor.dim).frame(width: 5, height: 5)
                         }
                     }
                     Text(job.link).font(HUDFont.label()).foregroundStyle(HUDColor.dim).fixedSize()
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(job.connections) connection\(job.connections == 1 ? "" : "s") over \(job.link)")
+                .accessibilityLabel("\(job.movingConnections) of \(job.connections) connection\(job.connections == 1 ? "" : "s") active over \(job.link)")
+                .help("\(job.movingConnections) of \(job.connections) connections moving data")
                 if !job.isActive {
                     Button {
                         transfers.dismissFinished()
@@ -175,14 +176,7 @@ struct TransferStrip: View {
         Rectangle().fill(HUDColor.border).frame(width: 1, height: 18)
     }
 
-    private var countLabel: String {
-        let arrow = job.status == .paused ? "‖"
-            : job.isActive ? "▲" : (job.status == .finished ? (job.allAlreadyPresent || job.sizeOnlyCount > 0 ? "=" : "✓") : "✕")
-        guard job.fileCount > 0 else { return "\(arrow) --/--" }
-        let width = max(2, String(job.fileCount).count)
-        let done = String(job.filesFinished).leftPadded(width)
-        return "\(arrow) \(done)/\(String(job.fileCount).leftPadded(width))"
-    }
+    private var countLabel: String { job.countLabel }
 
     private var isVerifyingOnly: Bool { job.isVerifyingOnly }
 
@@ -337,6 +331,31 @@ extension String {
 }
 
 extension TransferJob {
+    /// "▲ 07/26": the status glyph and files done, shared by the strip and the
+    /// menu bar. ‖ paused, ▲ active, ✓ verified, = nothing transferred or only
+    /// size-checked, ✕ failed, cancelled or finished with failures.
+    /// Zero-padded so digits don't jump.
+    var countLabel: String {
+        let arrow = status == .paused ? "‖"
+            : isActive ? "▲"
+            : status != .finished || !failures.isEmpty ? "✕"
+            : allAlreadyPresent || sizeOnlyCount > 0 ? "=" : "✓"
+        guard fileCount > 0 else { return "\(arrow) --/--" }
+        let width = max(2, String(fileCount).count)
+        return "\(arrow) \(String(filesFinished).leftPadded(width))/\(String(fileCount).leftPadded(width))"
+    }
+
+    /// Whether connection `index` moved data in the last second (PRD: one
+    /// square per connection). Without per-connection rates (local copies),
+    /// every square follows the job.
+    func isConnectionMoving(_ index: Int) -> Bool {
+        guard isActive, status == .running else { return false }
+        guard !connectionRates.isEmpty else { return true }
+        return index < connectionRates.count && connectionRates[index] > 0.1
+    }
+
+    var movingConnections: Int { (0..<max(connections, 0)).filter(isConnectionMoving).count }
+
     /// The strip in one sentence for VoiceOver ("Movies to Incoming, 64 percent,
     /// 74 megabytes per second, 7 of 26 files").
     var spokenSummary: String {

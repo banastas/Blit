@@ -347,6 +347,7 @@ struct ContentView: View {
         #if DEBUG
         transfers.startFakeTransferIfRequested()
         UITestHarness.runQueueTestIfRequested(transfers: transfers)
+        UITestHarness.renderStripIfRequested(transfers: transfers)
         UITestHarness.runSpaceTestIfRequested(transfers: transfers)
         UITestHarness.runExistsTestIfRequested(transfers: transfers)
         UITestHarness.runStructureTestIfRequested(transfers: transfers)
