@@ -291,7 +291,9 @@ final class SFTPChannelHandler: ChannelInboundHandler {
     }
 
     private func checkForStall() {
-        let waiting = !pending.isEmpty || !jobsByRead.isEmpty
+        // Also while waiting for the server's VERSION: a server that authenticates
+        // but whose sftp subsystem never answers would otherwise hang forever.
+        let waiting = !pending.isEmpty || !jobsByRead.isEmpty || !versionReceived
         guard waiting, closedError == nil, NIODeadline.now() - lastActivity > Self.stallTimeout else { return }
         shutDown(SSHError.disconnected("no data from the server for \(Self.stallTimeout.nanoseconds / 1_000_000_000) s"))
     }

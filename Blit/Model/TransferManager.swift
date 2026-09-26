@@ -33,8 +33,13 @@ struct TransferPayload: Codable, Transferable {
 final class VerifiedSources: @unchecked Sendable {
     /// A verified source with its size and modification time when it was
     /// verified; removal re-checks them, so a file rewritten since is kept.
-    struct Remote: Hashable, Sendable { let path: RemotePath; let size: UInt64; let modificationTime: UInt32? }
-    struct Local: Hashable, Sendable { let path: String; let size: UInt64; let modificationTime: Date? }
+    struct Remote: Hashable, Sendable, Codable {
+        let pathBytes: [UInt8]
+        let size: UInt64
+        let modificationTime: UInt32?
+        var path: RemotePath { RemotePath(bytes: pathBytes) }
+    }
+    struct Local: Hashable, Sendable, Codable { let path: String; let size: UInt64; let modificationTime: Date? }
 
     private let lock = NSLock()
     private var local: [Local] = []
@@ -42,7 +47,7 @@ final class VerifiedSources: @unchecked Sendable {
 
     func record(_ event: TransferEvent) {
         guard case .fileFinished(let file, .sha256) = event else { return }
-        lock.withLock { remote.append(Remote(path: file.path, size: file.size, modificationTime: file.modificationTime)) }
+        lock.withLock { remote.append(Remote(pathBytes: file.path.bytes, size: file.size, modificationTime: file.modificationTime)) }
     }
 
     func record(_ event: CopyEvent) {
@@ -56,6 +61,16 @@ final class VerifiedSources: @unchecked Sendable {
     /// Takes the recorded sources (each once), leaving the ledger empty.
     func takeLocal() -> [Local] { lock.withLock { defer { local = [] }; return local.uniqued() } }
     func takeRemote() -> [Remote] { lock.withLock { defer { remote = [] }; return remote.uniqued() } }
+
+    /// For saving with the queue: verified sources not yet removed survive a
+    /// quit and are removed (after re-checking) when the job runs again.
+    func snapshot() -> (local: [Local], remote: [Remote]) { lock.withLock { (local.uniqued(), remote.uniqued()) } }
+    func add(local: [Local] = [], remote: [Remote] = []) {
+        lock.withLock {
+            self.local += local
+            self.remote += remote
+        }
+    }
 }
 
 struct LogLine: Identifiable {
@@ -209,6 +224,9 @@ final class TransferJob: Identifiable {
     var persistent = true
     @ObservationIgnored let verifiedSources = VerifiedSources()
     var removedSources = 0
+    /// Source roots (as dropped) that a move has removed entirely, so a retry
+    /// doesn't list them again (a remote "no such file" is otherwise permanent).
+    var removedRoots = Set<String>()
 
     func note(_ text: String, failure: Bool = false) {
         log.append(LogLine(text: text, isFailure: failure))
@@ -413,6 +431,9 @@ final class TransferManager {
         var destinationName: String
         var includeHidden: Bool
         var deleteSources: Bool?
+        var verifiedLocal: [VerifiedSources.Local]?
+        var verifiedRemote: [VerifiedSources.Remote]?
+        var removedRoots: [String]?
     }
 
     private static var queueURL: URL {
@@ -426,9 +447,13 @@ final class TransferManager {
         let pending = jobs.filter { $0.persistent && !$0.isOperation && ($0.status == .queued || $0.isActive) }.map { job -> SavedJob in
             var serverID: UUID?
             if case .download(let server) = job.kind { serverID = server.id }
+            let verified = job.verifiedSources.snapshot()
             return SavedJob(serverID: serverID, sources: job.sources, destination: job.destination, title: job.title,
                             destinationName: job.destinationName, includeHidden: job.includeHidden,
-                            deleteSources: job.deleteSources)
+                            deleteSources: job.deleteSources,
+                            verifiedLocal: verified.local.isEmpty ? nil : verified.local,
+                            verifiedRemote: verified.remote.isEmpty ? nil : verified.remote,
+                            removedRoots: job.removedRoots.isEmpty ? nil : Array(job.removedRoots))
         }
         let url = Self.queueURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -443,7 +468,16 @@ final class TransferManager {
         for s in saved {
             let kind: TransferJob.Kind
             if let id = s.serverID {
-                guard let server = servers.server(id) else { continue }
+                guard let server = servers.server(id) else {
+                    // Keep it visible rather than silently dropping it (PRD R5.1).
+                    let lost = TransferJob(kind: .copy, sources: s.sources, destination: s.destination, title: s.title,
+                                           destinationName: s.destinationName)
+                    lost.status = .failed("its server no longer exists")
+                    lost.note("✕ NOT RESTORED · ITS SERVER NO LONGER EXISTS", failure: true)
+                    lost.failures.append("Not restored: the server for this transfer was removed.")
+                    jobs.append(lost)
+                    continue
+                }
                 kind = .download(server)
             } else {
                 kind = .copy
@@ -452,6 +486,8 @@ final class TransferManager {
                                   destinationName: s.destinationName)
             job.includeHidden = s.includeHidden
             job.deleteSources = s.deleteSources ?? false
+            job.verifiedSources.add(local: s.verifiedLocal ?? [], remote: s.verifiedRemote ?? [])
+            job.removedRoots = Set(s.removedRoots ?? [])
             job.restored = true
             job.note("RESTORED FROM LAST SESSION · RESUMING")
             jobs.append(job)
@@ -530,6 +566,14 @@ final class TransferManager {
         return !permanentMarkers.contains { r.contains($0) }
     }
 
+    /// How a source root is recorded in `removedRoots`.
+    nonisolated static func rootKey(_ location: BrowseLocation) -> String {
+        switch location {
+        case .local(let url): url.standardizedFileURL.path
+        case .remote(_, let bytes): String(decoding: bytes, as: UTF8.self)
+        }
+    }
+
     /// Delay before retry n (0-based); attempts that made progress reset n.
     private static let backoff: [Int] = [10, 30, 60, 120, 300]
     private static let maxAttemptsWithoutProgress = 5
@@ -587,6 +631,8 @@ final class TransferManager {
                 ? Self.shortReason(reasons.first(where: Self.isRetryable) ?? "error")
                 : "\(missing.joined(separator: ", ")) is unavailable"
             job.note("RETRY IN \(delay) S · \(reason)".uppercased(), failure: true)
+            job.rate = 0
+            job.connectionRates = []
             job.status = .waiting(until: Date().addingTimeInterval(TimeInterval(delay)), reason: reason)
             try? await Task.sleep(for: .seconds(delay))
             await waitForNetwork(job)
@@ -608,7 +654,9 @@ final class TransferManager {
         return String(trimmed.trimmingCharacters(in: .whitespaces).prefix(80))
     }
 
-    /// Waits until macOS reports a usable network path.
+    /// Waits until macOS reports a usable network path, for at most 10 minutes
+    /// (a local copy on an offline Mac mustn't wait forever); the retry then
+    /// runs regardless and fails or succeeds on its own.
     private func waitForNetwork(_ job: TransferJob) async {
         final class Once: @unchecked Sendable {
             private let lock = NSLock()
@@ -622,6 +670,9 @@ final class TransferManager {
                 if path.status == .satisfied, once.claim() { continuation.resume() }
             }
             monitor.start(queue: .global(qos: .utility))
+            DispatchQueue.global().asyncAfter(deadline: .now() + 600) {
+                if once.claim() { continuation.resume() }
+            }
         }
         monitor.cancel()
     }
@@ -632,9 +683,13 @@ final class TransferManager {
         let fm = FileManager.default
         var missing: [String] = []
         if !fm.fileExists(atPath: job.destination.path) { missing.append(job.destinationName) }
-        for url in job.sources.compactMap(\.localURL) where !fm.fileExists(atPath: url.path) {
-            let volume = url.pathComponents.count > 2 && url.pathComponents[1] == "Volumes" ? url.pathComponents[2] : url.lastPathComponent
-            if !missing.contains(volume) { missing.append(volume) }
+        // A source a move already removed isn't "missing", and a missing file on
+        // a mounted drive isn't a missing drive: only an unmounted volume counts.
+        for source in job.sources where !job.removedRoots.contains(Self.rootKey(source)) {
+            guard let url = source.localURL, !fm.fileExists(atPath: url.path) else { continue }
+            let parts = url.standardizedFileURL.pathComponents
+            guard parts.count > 2, parts[1] == "Volumes", !fm.fileExists(atPath: "/Volumes/" + parts[2]) else { continue }
+            if !missing.contains(parts[2]) { missing.append(parts[2]) }
         }
         return missing
     }
@@ -699,8 +754,22 @@ final class TransferManager {
                     return (i, try await SFTPClient.open(on: connection))
                 }
             }
+            // If one connection fails, close the ones that opened: leaked sessions
+            // would eat into the server's limits and make every retry likelier to fail.
             var opened: [(Int, SFTPClient)] = []
-            for try await c in group { opened.append(c) }
+            var firstError: Error?
+            while let result = await group.nextResult() {
+                switch result {
+                case .success(let client): opened.append(client)
+                case .failure(let error):
+                    if firstError == nil { firstError = error }
+                    group.cancelAll()
+                }
+            }
+            if let firstError {
+                for (_, client) in opened { await client.connection.close() }
+                throw firstError
+            }
             return opened.sorted { $0.0 < $1.0 }.map(\.1)
         }
         liveConnections = clients.map(\.connection)
@@ -713,7 +782,7 @@ final class TransferManager {
         job.link = "\(clients.count)× · \(strategy.readSize / 1024)K×\(strategy.maxInFlight)"
 
         var files: [RemoteFile] = []
-        for source in job.sources {
+        for source in job.sources where !job.removedRoots.contains(Self.rootKey(source)) {
             if let path = source.remotePath {
                 files += try await remoteFiles(at: path, using: clients[0], includeHidden: job.includeHidden)
             }
@@ -735,7 +804,8 @@ final class TransferManager {
             ledger.record(event)
             Task { @MainActor in job.handle(event) }
         }
-        if job.deleteSources { await removeVerifiedSources(job, using: clients[0]) }
+        // Quitting: keep the ledger (saved with the queue) for the next launch.
+        if job.deleteSources, !isQuitting { await removeVerifiedSources(job, using: clients[0]) }
     }
 
     /// For a move from a server: deletes the source files verified so far, then
@@ -744,8 +814,13 @@ final class TransferManager {
         let roots = job.sources.compactMap(\.remotePath)
         var folders = Set<RemotePath>()
         var removed = 0
+        var interrupted: [VerifiedSources.Remote] = []
         for source in job.verifiedSources.takeRemote() {
             let path = source.path
+            guard client.connection.isActive else {
+                interrupted.append(source)
+                continue
+            }
             do {
                 // Only if it's still the file that was verified (PRD R2.12).
                 let now = try await client.stat(path)
@@ -754,14 +829,30 @@ final class TransferManager {
                 }
                 try await client.removeFile(path)
                 removed += 1
+                if roots.contains(path) { job.removedRoots.insert(String(decoding: path.bytes, as: UTF8.self)) }
                 folders.formUnion(Self.folders(of: path.bytes, under: roots.map(\.bytes)).map { RemotePath(bytes: $0) })
+            } catch SFTPError.status(let code, _) where code == SFTPStatusCode.noSuchFile.rawValue {
+                // Already gone (removed by someone else): nothing to keep.
+                removed += 1
             } catch {
-                job.failures.append("source kept: \(path.description): \(error)")
-                job.note("✕ SOURCE KEPT \(path.description) · \(error)".uppercased(), failure: true)
+                if !client.connection.isActive {
+                    interrupted.append(source)
+                } else {
+                    job.failures.append("source kept: \(path.description): \(error)")
+                    job.note("✕ SOURCE KEPT \(path.description) · \(error)".uppercased(), failure: true)
+                }
             }
         }
+        if !interrupted.isEmpty {
+            // Connection lost: keep them in the ledger; the retry removes them.
+            job.verifiedSources.add(remote: interrupted)
+            job.failures.append("removing \(interrupted.count) verified source file(s) was interrupted; will retry")
+        }
         for folder in folders.sorted(by: { $0.bytes.count > $1.bytes.count }) {
-            try? await client.removeDirectory(folder)    // fails, harmlessly, if anything is left in it
+            // Fails, harmlessly, if anything is left in it.
+            if (try? await client.removeDirectory(folder)) != nil, roots.contains(folder) {
+                job.removedRoots.insert(String(decoding: folder.bytes, as: UTF8.self))
+            }
         }
         job.removedSources += removed
         noteMoveResult(job, removedNow: removed)
@@ -772,13 +863,18 @@ final class TransferManager {
     private func removeVerifiedSources(_ job: TransferJob) async {
         let roots = job.sources.compactMap { $0.localURL?.standardizedFileURL.path }
         let sources = job.verifiedSources.takeLocal()
-        let result = await Task.detached { () -> (removed: Int, failed: [String]) in
+        let result = await Task.detached { () -> (removed: Int, failed: [String], gone: [String]) in
             let fm = FileManager.default
             var folders = Set<String>()
             var removed = 0
             var failed: [String] = []
+            var gone: [String] = []
             for source in sources {
                 let path = source.path
+                guard fm.fileExists(atPath: path) else {
+                    removed += 1   // already gone
+                    continue
+                }
                 do {
                     // Only if it's still the regular file that was verified: a file
                     // rewritten since (or replaced by a folder) is kept.
@@ -791,6 +887,7 @@ final class TransferManager {
                     }
                     try fm.removeItem(atPath: path)
                     removed += 1
+                    if roots.contains(path) { gone.append(path) }
                     for folder in Self.folders(of: Array(path.utf8), under: roots.map { Array($0.utf8) }) {
                         folders.insert(String(decoding: folder, as: UTF8.self))
                     }
@@ -801,10 +898,11 @@ final class TransferManager {
             for folder in folders.sorted(by: { $0.utf8.count > $1.utf8.count }) {
                 guard let contents = try? fm.contentsOfDirectory(atPath: folder),
                       contents.allSatisfy({ $0 == ".DS_Store" }) else { continue }
-                try? fm.removeItem(atPath: folder)
+                if (try? fm.removeItem(atPath: folder)) != nil, roots.contains(folder) { gone.append(folder) }
             }
-            return (removed, failed)
+            return (removed, failed, gone)
         }.value
+        job.removedRoots.formUnion(result.gone)
         for failure in result.failed {
             job.failures.append("source kept: \(failure)")
             job.note("✕ SOURCE KEPT \(failure)".uppercased(), failure: true)
@@ -837,8 +935,10 @@ final class TransferManager {
 
     private func copy(_ job: TransferJob) async throws {
         var files: [LocalFile] = []
-        for source in job.sources {
-            if let url = source.localURL { files += try localFiles(at: url.path) }
+        for source in job.sources where !job.removedRoots.contains(Self.rootKey(source)) {
+            guard let url = source.localURL else { continue }
+            // Off the main actor: walking a big tree over SMB would beachball the app.
+            files += try await Task.detached { try localFiles(at: url.path) }.value
         }
         job.fileCount = files.count
         job.totalBytes = Int64(files.reduce(0) { $0 + $1.size })
@@ -894,7 +994,7 @@ final class TransferManager {
             ledger.record(event)
             Task { @MainActor in job.handle(event) }
         }
-        if job.deleteSources { await removeVerifiedSources(job) }
+        if job.deleteSources, !isQuitting { await removeVerifiedSources(job) }
     }
 }
 

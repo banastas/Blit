@@ -298,13 +298,31 @@ struct ContentView: View {
 
     private func openSecondPaneIfNeeded() {
         if secondBrowser == nil {
-            secondBrowser = BrowserModel(servers: servers, connections: connections, operations: operations)
+            let second = BrowserModel(servers: servers, connections: connections, operations: operations)
+            secondBrowser = second
+            wireRefresh(browser, second)
         }
         guard let secondBrowser, secondBrowser.current == nil else { return }
         let start = sidebar.favorites.dropFirst().first(where: sidebar.isAvailable)?.location
             ?? sidebar.networkShares.first.map { .local($0.url) }
             ?? .local(FileManager.default.homeDirectoryForCurrentUser)
         secondBrowser.open(start)
+    }
+
+    /// Refresh whichever panes show a folder that changed: a transfer's
+    /// destination (and a move's sources), or a file operation's folders.
+    /// Re-wired when the second pane is created, since the closure holds the
+    /// panes that existed when it was made.
+    private func wireRefresh(_ first: BrowserModel?, _ second: BrowserModel?) {
+        let refresh: ([BrowseLocation]) -> Void = { [weak first, weak second] folders in
+            for model in [first, second].compactMap({ $0 }) {
+                if folders.contains(where: model.shows) { model.reload() }
+            }
+        }
+        operations.onChanged = refresh
+        transfers.onFinished = { job in
+            refresh([.local(job.destination)] + (job.deleteSources ? job.sources.compactMap(\.parent) : []))
+        }
     }
 
     private func start() {
@@ -316,17 +334,7 @@ struct ContentView: View {
         transfers.startFakeTransferIfRequested()
         #endif
         connections.warmUp(servers.browsable)
-        // Refresh whichever panes show a folder that changed: a transfer's
-        // destination (and a move's sources), or a file operation's folders.
-        let refresh: ([BrowseLocation]) -> Void = { [weak browser, weak secondBrowser] folders in
-            for model in [browser, secondBrowser].compactMap({ $0 }) {
-                if folders.contains(where: model.shows) { model.reload() }
-            }
-        }
-        operations.onChanged = refresh
-        transfers.onFinished = { job in
-            refresh([.local(job.destination)] + (job.deleteSources ? job.sources.compactMap(\.parent) : []))
-        }
+        wireRefresh(browser, secondBrowser)
         if selection == nil {
             selection = sidebar.favorites.first(where: sidebar.isAvailable)?.location
                 ?? sidebar.drives.first(where: { !$0.isInternal }).map { .local($0.url) }

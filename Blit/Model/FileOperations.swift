@@ -301,7 +301,10 @@ final class FileOperations {
         }
         let remote = Dictionary(grouping: items.filter { $0.serverID != nil }, by: { $0.serverID! })
         for (id, locations) in remote {
-            guard let server = servers.server(id) else { continue }
+            guard let server = servers.server(id) else {
+                problems.append("That server no longer exists, so nothing was deleted from it.")
+                continue
+            }
             do {
                 let client = try await connections.browseClient(for: server)
                 problems += await track("DELETE", done: "DELETED", locations, to: server.displayName) { location, job in

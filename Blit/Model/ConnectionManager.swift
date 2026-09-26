@@ -53,12 +53,21 @@ final class ConnectionManager {
 
     /// Sessions rarely survive sleep, and a dead one can take a minute to
     /// notice; reopen the ones that were open, in the background.
+    /// The network is often not back for the first seconds after waking, so
+    /// each reconnect is retried a few times with growing delays.
     private func reconnectAfterWake() {
         for (id, client) in browseClients {
             keepAlive.removeValue(forKey: id)?.cancel()
             browseClients[id] = nil
             Task { await client.connection.close() }
-            if let server = servers[id] { Task { _ = try? await browseClient(for: server) } }
+            guard let server = servers[id] else { continue }
+            Task {
+                for delay in [2, 5, 15, 30] {
+                    try? await Task.sleep(for: .seconds(delay))
+                    guard self.servers[id] != nil, self.browseClients[id] == nil else { return }
+                    if (try? await browseClient(for: server)) != nil { return }
+                }
+            }
         }
     }
 
@@ -70,8 +79,10 @@ final class ConnectionManager {
         keepAlive[server.id] = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.keepAliveInterval)
-                guard !Task.isCancelled, client.connection.isActive else { return }
-                if (try? await client.stat(RemotePath("."))) == nil {
+                guard !Task.isCancelled else { return }
+                var alive = client.connection.isActive
+                if alive { alive = (try? await client.stat(RemotePath("."))) != nil }
+                if !alive {
                     // It stopped answering; drop it so the next use reconnects.
                     await client.connection.close()
                     guard let self, self.browseClients[server.id] === client else { return }
@@ -100,20 +111,30 @@ final class ConnectionManager {
             return try await SFTPClient.open(on: connection)
         }
         inFlight[server.id] = task
-        defer { inFlight[server.id] = nil }
+        defer { if inFlight[server.id] == task { inFlight[server.id] = nil } }
         do {
             let client = try await task.value
+            // Disconnected, edited or removed while connecting: this session is
+            // for the old configuration, so don't install it.
+            guard inFlight[server.id] == task else {
+                await client.connection.close()
+                throw CancellationError()
+            }
             browseClients[server.id] = client
             states[server.id] = .connected
             startKeepAlive(client, for: server)
             return client
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
-            states[server.id] = .failed("\(error)")
+            if inFlight[server.id] == task { states[server.id] = .failed("\(error)") }
             throw error
         }
     }
 
     func disconnect(_ server: ServerConfig) {
+        // An attempt still connecting is abandoned (its result is closed on arrival).
+        inFlight.removeValue(forKey: server.id)?.cancel()
         keepAlive.removeValue(forKey: server.id)?.cancel()
         listings = listings.filter { $0.key.serverID != server.id }
         if let client = browseClients.removeValue(forKey: server.id) {

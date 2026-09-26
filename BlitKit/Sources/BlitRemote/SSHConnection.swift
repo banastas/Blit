@@ -118,7 +118,15 @@ public final class SSHConnection: Sendable {
                     }
                 }
             }
-        let channel = try await bootstrap.connect(host: endpoint.host, port: endpoint.port).get()
+        let channel: Channel
+        do {
+            channel = try await bootstrap.connect(host: endpoint.host, port: endpoint.port).get()
+        } catch {
+            // No channel was made (DNS failure, refused): complete `ready` so the
+            // promise isn't leaked (a debug-build crash in NIO).
+            ready.fail(error)
+            throw error
+        }
         do {
             try await ready.futureResult.get()
         } catch {
@@ -282,6 +290,17 @@ final class ExecHandler: ChannelInboundHandler {
     private var result = SSHConnection.CommandResult(stdout: [], stderr: [], exitStatus: nil)
     private var completed = false
     private let onStderr: (@Sendable ([UInt8]) -> Void)?
+    private var started = false
+    private var sawProgress = false
+    private let created = NIODeadline.now()
+    private var lastActivity = NIODeadline.now()
+    private var watchdog: RepeatedTask?
+
+    /// The server must start the command within this long.
+    static let startTimeout: TimeAmount = .seconds(60)
+    /// Once the command has reported progress (dd status=progress, about once a
+    /// second), this much silence means it's stuck (e.g. a hung mount).
+    static let progressTimeout: TimeAmount = .seconds(120)
 
     init(command: String, stdin: [UInt8], done: EventLoopPromise<SSHConnection.CommandResult>,
          onStderr: (@Sendable ([UInt8]) -> Void)? = nil) {
@@ -289,6 +308,28 @@ final class ExecHandler: ChannelInboundHandler {
         self.stdin = stdin
         self.done = done
         self.onStderr = onStderr
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        let bound = NIOLoopBound((self, context), eventLoop: context.eventLoop)
+        watchdog = context.eventLoop.scheduleRepeatedTask(initialDelay: .seconds(10), delay: .seconds(10)) { _ in
+            let (handler, context) = bound.value
+            handler.checkForStall(context)
+        }
+    }
+
+    func handlerRemoved(context: ChannelHandlerContext) {
+        watchdog?.cancel()
+        watchdog = nil
+    }
+
+    private func checkForStall(_ context: ChannelHandlerContext) {
+        let now = NIODeadline.now()
+        if !started, now - created > Self.startTimeout {
+            finish(context, .failure(SSHError.disconnected("the server didn't start the command")))
+        } else if sawProgress, now - lastActivity > Self.progressTimeout {
+            finish(context, .failure(SSHError.disconnected("no progress from the server for \(Self.progressTimeout.nanoseconds / 1_000_000_000) s")))
+        }
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -299,6 +340,8 @@ final class ExecHandler: ChannelInboundHandler {
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         switch event {
         case is ChannelSuccessEvent:
+            started = true
+            lastActivity = .now()
             if !stdin.isEmpty {
                 let buffer = context.channel.allocator.buffer(bytes: stdin)
                 context.write(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(buffer))), promise: nil)
@@ -310,7 +353,14 @@ final class ExecHandler: ChannelInboundHandler {
         case let status as SSHChannelRequestEvent.ExitStatus:
             result.exitStatus = status.exitStatus
         case ChannelEvent.inputClosed:
-            finish(context, .success(result))
+            // EOF can arrive before the exit status (RFC 4254 doesn't fix the
+            // order). Finish when the channel closes; if a server never closes
+            // it, finish shortly after EOF anyway.
+            let bound = NIOLoopBound((self, context), eventLoop: context.eventLoop)
+            context.eventLoop.scheduleTask(in: .seconds(2)) {
+                let (handler, context) = bound.value
+                handler.finish(context, .success(handler.result))
+            }
         default:
             context.fireUserInboundEventTriggered(event)
         }
@@ -319,6 +369,8 @@ final class ExecHandler: ChannelInboundHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let message = unwrapInboundIn(data)
         guard case .byteBuffer(let buffer) = message.data else { return }
+        lastActivity = .now()
+        if message.type != .channel, onStderr != nil { sawProgress = true }
         if message.type == .channel {
             result.stdout.append(contentsOf: buffer.readableBytesView)
         } else if let onStderr {
@@ -339,6 +391,8 @@ final class ExecHandler: ChannelInboundHandler {
     private func finish(_ context: ChannelHandlerContext, _ outcome: Result<SSHConnection.CommandResult, Error>) {
         guard !completed else { return }
         completed = true
+        watchdog?.cancel()
+        watchdog = nil
         done.completeWith(outcome)
         context.close(promise: nil)
     }
