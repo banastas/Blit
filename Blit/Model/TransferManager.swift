@@ -241,6 +241,18 @@ final class TransferJob: Identifiable {
     /// Downloads and local copies run in separate lanes, one of each at a time:
     /// they use different links (internet vs. the home network).
     enum Lane: Hashable { case download, copy }
+    /// Whether data is leaving this Mac: a copy onto a network share. The
+    /// menu bar arrow and the ▲/▼ glyphs point up for these, and down for
+    /// downloads and copies between drives on this Mac.
+    var isOutgoing: Bool {
+        if case .copy = kind { return VolumeKinds.isNetwork(destination) }
+        return false
+    }
+    /// ▲ out to a share, ▼ into this Mac; ▲ for file operations (no direction).
+    var directionGlyph: String {
+        if case .operation = kind { return "▲" }
+        return isOutgoing ? "▲" : "▼"
+    }
     var lane: Lane {
         if case .download = kind { return .download }
         return .copy

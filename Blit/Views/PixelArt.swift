@@ -42,24 +42,24 @@ enum PixelArt {
         "....#....",
     ]
 
-    /// Menu bar arrow into a tray. While transferring, the stem's dashes
-    /// march down (`frame` 0…2); idle, the stem is solid.
-    static func menuBarArrow(frame: Int?) -> [String] {
-        var rows: [String] = []
-        for row in 0..<5 {
-            let lit = frame.map { (row - $0 + 3) % 3 != 2 } ?? true
-            rows.append(lit ? "...###..." : ".........")
-        }
-        rows += [
+    /// Menu bar arrow into a tray, or (`up`: data leaving this Mac for a
+    /// share) out of it. While transferring, the stem's dashes march the way
+    /// the data goes (`frame` 0…2); idle, the stem is solid.
+    static func menuBarArrow(frame: Int?, up: Bool = false) -> [String] {
+        let head = [
             "#########",
             ".#######.",
             "..#####..",
             "...###...",
             "....#....",
-            ".........",
-            "#########",
         ]
-        return rows
+        var stem: [String] = []
+        for row in 0..<5 {
+            let lit = frame.map { up ? (row + $0) % 3 != 2 : (row - $0 + 3) % 3 != 2 } ?? true
+            stem.append(lit ? "...###..." : ".........")
+        }
+        let arrow = up ? head.reversed() + stem : stem + head
+        return arrow + [".........", "#########"]
     }
 }
 

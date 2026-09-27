@@ -352,13 +352,13 @@ extension String {
 
 extension TransferJob {
     /// "▲ 07/26": the status glyph and files done, shared by the strip and the
-    /// menu bar. ‖ paused, ▲ active, ✓ verified, = nothing transferred or only
+    /// menu bar. ‖ paused, ▲/▼ active (see directionGlyph), ✓ verified, = nothing transferred or only
     /// size-checked, ✕ failed, cancelled or finished with failures.
     /// Zero-padded so digits don't jump.
     var countLabel: String {
         if notice != nil { return "✕" }
         let arrow = status == .paused ? "‖"
-            : isActive ? "▲"
+            : isActive ? directionGlyph
             : status != .finished || !failures.isEmpty ? "✕"
             : allAlreadyPresent || sizeOnlyCount > 0 || unverifiedCount > 0 ? "=" : "✓"
         guard fileCount > 0 else { return "\(arrow) --/--" }

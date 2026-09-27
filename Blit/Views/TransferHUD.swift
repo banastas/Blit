@@ -550,7 +550,7 @@ private struct QueueRow: View {
     private var glyph: String {
         switch job.status {
         case .queued: "·"
-        case .preparing, .running, .waiting, .waitingForSpace: "▲"
+        case .preparing, .running, .waiting, .waitingForSpace: job.directionGlyph
         case .paused: "‖"
         case .finished: job.allAlreadyPresent ? "=" : "✓"
         case .failed, .cancelled: "✕"

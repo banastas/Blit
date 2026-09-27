@@ -31,6 +31,7 @@ enum UITestHarness {
                 Image(nsImage: PixelArt.image(PixelArt.shield, cell: 1)).foregroundStyle(.secondary)   // as in the sidebar
                 Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: nil), cell: 1.5))
                 ForEach(0..<3) { Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: $0), cell: 1.5)) }
+                ForEach(0..<3) { Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: $0, up: true), cell: 1.5)) }
                 Text("name.mkv").font(.system(size: 11))
                 Image(nsImage: PixelGlyph.check.image(size: 9)).foregroundStyle(.secondary)
                 PixelMarchingAnts(cell: 1.5).frame(width: 40, height: 16)

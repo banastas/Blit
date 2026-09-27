@@ -16,7 +16,7 @@ struct MenuBarLabel: View {
     @ViewBuilder private var label: some View {
         if let job = transfers.featured, job.isActive, !job.isOperation {
             HStack(spacing: 4) {
-                Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: frame), cell: 1.5))
+                Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: frame, up: job.isOutgoing), cell: 1.5))
                 Text(rateText(job)).monospacedDigit()
             }
             .task {

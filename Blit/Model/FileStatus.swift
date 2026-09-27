@@ -8,7 +8,7 @@ import Foundation
 
 struct FileStatus: Equatable {
     var text: String
-    /// Drawn as a pixel glyph before the text (✓ ✕ ▲ ‖); nil for none, "=" as text.
+    /// Drawn as a pixel glyph before the text (✓ ✕ ▲ ▼ ‖); nil for none, "=" as text.
     var glyph: Character?
     var isFailure = false
     var help: String
@@ -81,7 +81,7 @@ extension TransferJob {
                               glyph: nil, help: "All bytes are in; checking the SHA-256")
         }
         if inFlight.contains(relative) {
-            return FileStatus(text: "transferring", glyph: "▲", help: "Being transferred now")
+            return FileStatus(text: "transferring", glyph: Character(directionGlyph), help: "Being transferred now")
         }
         if status == .paused { return FileStatus(text: "paused", glyph: "‖", help: "The transfer is paused") }
         if isActive || isWaiting { return FileStatus(text: "queued", glyph: nil, help: "Waiting its turn in “\(title)”") }
@@ -97,11 +97,11 @@ extension TransferJob {
         if status == .paused { return FileStatus(text: "paused", glyph: "‖", help: "The transfer is paused") }
         if isActive, status == .running {
             if isWholeJob {
-                return FileStatus(text: "\(Int((progress * 100).rounded(.down)))%", glyph: "▲",
+                return FileStatus(text: "\(Int((progress * 100).rounded(.down)))%", glyph: Character(directionGlyph),
                                   help: "\(filesFinished) of \(fileCount) files done")
             }
             let busy = inFlight.contains { $0.hasPrefix(prefix) } || verifying.keys.contains { $0.hasPrefix(prefix) }
-            if busy || done > 0 { return FileStatus(text: "\(done) done", glyph: "▲", help: "\(done) files done so far") }
+            if busy || done > 0 { return FileStatus(text: "\(done) done", glyph: Character(directionGlyph), help: "\(done) files done so far") }
             return FileStatus(text: "queued", glyph: nil, help: "Waiting its turn in “\(title)”")
         }
         if isWaiting { return FileStatus(text: "queued", glyph: nil, help: "Waiting its turn in “\(title)”") }
