@@ -8,6 +8,7 @@ struct SidebarView: View {
     @Environment(SidebarModel.self) private var sidebar
     @Environment(ServerStore.self) private var servers
     @Environment(ConnectionManager.self) private var connections
+    @Environment(TransferManager.self) private var transfers
     @Binding var selection: BrowseLocation?
     @State private var favoritesTargeted = false
     @State private var collapsedDevices = Set<String>()
@@ -150,6 +151,13 @@ struct SidebarView: View {
                 Divider()
             }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            // A drive's own Trash keeps deleted files' space until it's emptied.
+            // (Never asks a network share: a dropped one would hang the menu.)
+            if !VolumeKinds.isNetwork(url), TrashService.volumeTrash(containing: url) != nil {
+                Button("Empty Trash on “\(url.lastPathComponent)”…") {
+                    Task { await transfers.emptyTrash(onDriveContaining: url) }
+                }
+            }
             // Drives and shares can be favorites too (their top level).
             Button("Add to Favorites") { sidebar.addFavorite(location) }
                 .disabled(sidebar.isFavorite(location))

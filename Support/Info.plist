@@ -2,17 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Merged with the generated Info.plist (GENERATE_INFOPLIST_FILE = YES). -->
-	<!-- Local Network privacy: SSH/SFTP to NAS devices and Bonjour device models for sidebar icons. -->
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Blit connects to NAS devices and servers on your network to transfer and verify files, and reads device names and models to show them in the sidebar.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Blit asks Finder to empty the Trash when you choose Blit › Empty Trash….</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_device-info._tcp</string>
 		<string>_smb._tcp</string>
 		<string>_ssh._tcp</string>
 	</array>
-	<!-- Finder › right-click › Services › Send to Blit… (PRD R6.1) -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Blit connects to NAS devices and servers on your network to transfer and verify files, and reads device names and models to show them in the sidebar.</string>
 	<key>NSServices</key>
 	<array>
 		<dict>
@@ -25,35 +24,33 @@
 			<string>sendToBlit</string>
 			<key>NSPortName</key>
 			<string>Blit</string>
+			<key>NSRequiredContext</key>
+			<dict/>
 			<key>NSSendFileTypes</key>
 			<array>
 				<string>public.item</string>
 			</array>
-			<key>NSRequiredContext</key>
-			<dict/>
 		</dict>
 	</array>
-	<!-- Automatic updates (Sparkle): the feed the release script publishes, and the
-	     public half of the update-signing key (the private half is in the Keychain). -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 	<key>SUFeedURL</key>
 	<string>https://blit.banast.as/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>/4WEfxb0faJLR2dnRoeQ2z3ym2syLxUzmOZSffgOkI4=</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>com.banastas.blit.locations</string>
-			<key>UTTypeDescription</key>
-			<string>Blit Locations</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.data</string>
 			</array>
+			<key>UTTypeDescription</key>
+			<string>Blit Locations</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.banastas.blit.locations</string>
 		</dict>
 	</array>
 </dict>

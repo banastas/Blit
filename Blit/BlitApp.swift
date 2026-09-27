@@ -150,6 +150,11 @@ struct BlitApp: App {
             FileCommands()
             GoCommands()
             AboutCommands()
+            CommandGroup(after: .appSettings) {
+                // As in Finder: deleted files keep their space until the Trash is emptied.
+                Button("Empty Trash…") { Task { await transfers.emptyAllTrash() } }
+                    .keyboardShortcut(.delete, modifiers: [.command, .shift])
+            }
             CommandGroup(after: .importExport) {
                 Button("Export Transfer Log…") { TransferLog.export() }
             }

@@ -161,6 +161,13 @@ struct TransferStrip: View {
                 Button("Pause") { transfers.pause(job) }
                 Button("Cancel") { transfers.cancel(job) }
             case .queued, .preparing, .running, .waitingForSpace:
+                if job.destinationTrashBytes > 0 {
+                    Button("Empty Trash on Destination (\(job.destinationTrashBytes.formatted(.byteCount(style: .file))))…") {
+                        let destination = job.destination
+                        Task { await transfers.emptyTrash(onDriveContaining: destination) }
+                    }
+                    Divider()
+                }
                 Button("Pause") { transfers.pause(job) }
                 Button("Cancel") { transfers.cancel(job) }
             case .paused:
@@ -239,8 +246,21 @@ struct TransferStrip: View {
 
     @ViewBuilder private var logLine: some View {
         if case .waitingForSpace(let reason) = job.status {
-            Text("WAITING FOR SPACE · \(reason.uppercased()) · FREE SOME UP OR PAUSE")
-                .foregroundStyle(HUDColor.failureText)
+            HStack(spacing: 8) {
+                Text("WAITING FOR SPACE · \(reason.uppercased()) · FREE SOME UP OR PAUSE")
+                    .foregroundStyle(HUDColor.failureText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if job.destinationTrashBytes > 0 {
+                    Spacer(minLength: 4)
+                    // Deleted files on that drive still hold their space until the Trash is emptied.
+                    HUDButton("EMPTY TRASH · \(TransferJob.bytes(job.destinationTrashBytes))",
+                              help: "Permanently erase the Trash on the destination drive to free its space (asks first)") {
+                        let destination = job.destination
+                        Task { await transfers.emptyTrash(onDriveContaining: destination) }
+                    }
+                }
+            }
         } else if case .waiting(let until, let reason) = job.status {
             HStack(spacing: 8) {
                 TimelineView(.periodic(from: .now, by: 1)) { context in

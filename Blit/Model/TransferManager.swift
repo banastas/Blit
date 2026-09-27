@@ -322,6 +322,9 @@ final class TransferJob: Identifiable {
     /// file is removed once its copy is verified by SHA-256. Anything not
     /// verified that way stays where it was.
     var deleteSources = false
+    /// While waiting for space: bytes in the Trash on the destination drive,
+    /// which emptying would free (the strip offers it).
+    var destinationTrashBytes: Int64 = 0
     /// Saved to the durable queue (false only for debug simulations).
     var persistent = true
     /// A problem shown in the strip instead of an alert (see notice(_:action:place:)).
@@ -1191,6 +1194,7 @@ final class TransferManager {
             if job.stopRequest != nil || isQuitting || Task.isCancelled { return false }
             let free = await Task.detached { Self.freeSpace(at: destination) }.value ?? .max
             if free >= needed + reserve {
+                job.destinationTrashBytes = 0
                 if waited { job.note("SPACE AVAILABLE ON \(volume.uppercased()) · CONTINUING") }
                 return true
             }
@@ -1198,6 +1202,9 @@ final class TransferManager {
             let reason = "\(volume) needs \(TransferJob.bytes(Int64(short))) more"
             job.status = .waitingForSpace(reason)
             job.rate = 0
+            if let trash = TrashService.volumeTrash(containing: destination) {
+                job.destinationTrashBytes = await TrashService.contents(of: trash).bytes
+            }
             if !waited {
                 waited = true
                 job.note("✕ WAITING FOR SPACE · \(reason.uppercased())", failure: true)

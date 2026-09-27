@@ -1431,6 +1431,70 @@ enum UITestHarness {
         try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
     }
 
+    /// `-BlitTrashTest <log> -BlitTrashTestDest <mount of a scratch disk image>`:
+    /// fills the image, moves the filler to its Trash (the space stays used),
+    /// then queues a copy that has to wait for space. Checks the strip's offer,
+    /// that Cancel erases nothing, and that confirming empties that drive's
+    /// Trash only and lets the copy finish.
+    static func runTrashTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTrashTest"),
+              let mount = UserDefaults.standard.string(forKey: "BlitTrashTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let fm = FileManager.default
+            let volume = URL(fileURLWithPath: mount)
+            func write(_ url: URL, megabytes: Int) {
+                fm.createFile(atPath: url.path, contents: nil)
+                guard let handle = try? FileHandle(forWritingTo: url) else { return }
+                let chunk = Data((0..<(1 << 20)).map { _ in UInt8.random(in: 0...255) })
+                for _ in 0..<megabytes { handle.write(chunk) }
+                try? handle.close()
+            }
+            lines.append("startup disk has its own drive trash: \(TrashService.volumeTrash(containing: fm.temporaryDirectory) != nil)")
+            guard let trash = TrashService.volumeTrash(containing: volume) else { lines.append("no trash for the image"); lines.append("done"); return }
+            lines.append("image trash: …/\(trash.pathComponents.suffix(2).joined(separator: "/"))")
+            let src = fm.temporaryDirectory.appendingPathComponent("blit-trash-src")
+            try? fm.removeItem(at: src)
+            try? fm.createDirectory(at: src, withIntermediateDirectories: true)
+            write(src.appendingPathComponent("big.bin"), megabytes: 400)
+            let filler = volume.appendingPathComponent("filler.bin")
+            let free = TransferManager.freeSpace(at: volume) ?? 0
+            write(filler, megabytes: max(0, Int(free >> 20) - 150))
+            try? fm.trashItem(at: filler, resultingItemURL: nil)
+            let before = await TrashService.contents(of: trash)
+            lines.append("trashed filler: \(before.items) item, \(before.bytes >> 20) MB · free \(TransferManager.freeSpace(at: volume).map { $0 >> 20 } ?? 0) MB")
+            let dest = volume.appendingPathComponent("dest")
+            try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
+            _ = transfers.enqueue([.local(src.appendingPathComponent("big.bin"))], to: .local(dest), destinationName: "dest")
+            guard let job = transfers.transferJobs.last else { return }
+            for _ in 0..<300 {
+                if case .waitingForSpace = job.status, job.destinationTrashBytes > 0 { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            lines.append("waiting: \(job.status) · offer \(job.destinationTrashBytes >> 20) MB")
+            TrashService.testAnswer = false
+            lines.append("cancel: \(await transfers.emptyTrash(onDriveContaining: dest))")
+            lines.append("after Cancel: \(await TrashService.contents(of: trash).items) item(s) still in the trash")
+            TrashService.testAnswer = true
+            lines.append("confirm: \(await transfers.emptyTrash(onDriveContaining: dest))")
+            let after = await TrashService.contents(of: trash)
+            lines.append("after Empty Trash: \(after.items) item(s) · free \(TransferManager.freeSpace(at: volume).map { $0 >> 20 } ?? 0) MB")
+            for _ in 0..<400 where job.status != .finished {
+                if case .failed = job.status { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            lines.append("copy: \(job.status) · verified \(job.filesVerified)")
+            lines.append("empty again: \(await transfers.emptyTrash(onDriveContaining: dest))")
+            TrashService.testAnswer = nil
+            transfers.dismissFinished()
+            try? fm.removeItem(at: src)
+            lines.append("done")
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }
