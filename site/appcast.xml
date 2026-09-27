@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.6</title>
-      <pubDate>Sun, 27 Sep 2026 04:30:34 +0000</pubDate>
-      <sparkle:version>9</sparkle:version>
-      <sparkle:shortVersionString>0.2.6</sparkle:shortVersionString>
+      <title>Blit 0.2.7</title>
+      <pubDate>Sun, 27 Sep 2026 18:44:10 +0000</pubDate>
+      <sparkle:version>10</sparkle:version>
+      <sparkle:shortVersionString>0.2.7</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Settings are now organized in tabs: General, Transfers and Updates, so nothing needs scrolling.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.6.zip" type="application/octet-stream" sparkle:edSignature="tFeEIokjOGZkCQzBPMUC3+VgCvKMwyomaem2iGAcy+B1Z0kqRl5n/H997J8923D5SqC5uVoTM9ZnvdNVGyhvAg==" length="5389791" />
+      <description><![CDATA[<p>Blit now reconnects NAS shares that have dropped off (for a waiting transfer, an unavailable favorite, or Reconnect in the sidebar). It no longer risks freezing when a NAS share hangs. The Transfer Log labels size-only results more clearly.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.7.zip" type="application/octet-stream" sparkle:edSignature="COoNGrrS4vMRB9yTQPP/0b0VhwQKXriB9hMFbZiYB1dMBL0IFtBuaxTeVNX7RO9PQzo17w/AbF2EnxiqNWMhBQ==" length="5402338" />
     </item>
   </channel>
 </rss>
