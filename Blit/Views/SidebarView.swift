@@ -128,6 +128,15 @@ struct SidebarView: View {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                     .disabled(!sidebar.isAvailable(favorite))
             }
+            // A favorite on a NAS share that's gone away: mount it again (PRD R1.5).
+            if !sidebar.isAvailable(favorite), let url = location.localURL,
+               let share = ShareMounter.missingShare(containing: url.path) {
+                Button("Reconnect “\((share as NSString).lastPathComponent)”") {
+                    Task {
+                        if await ShareMounter.reconnect(share) == nil { onRefresh(location, false) }
+                    }
+                }
+            }
             Button("Remove from Favorites") { sidebar.removeFavorite(favorite) }
         } else if let url = location.localURL {
             Button("Refresh") { onRefresh(location, false) }

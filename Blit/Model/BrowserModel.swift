@@ -257,8 +257,20 @@ final class BrowserModel {
                 remember(location)
             } catch {
                 guard location == current else { return }
-                items = []
-                handle(error, for: location)
+                // An unavailable NAS share Blit knows: reconnect it and try again (PRD R1.5).
+                if let url = location.localURL, let share = ShareMounter.missingShare(containing: url.path) {
+                    if let problem = await ShareMounter.reconnect(share) {
+                        items = []
+                        self.error = problem
+                    } else if location == current {
+                        isLoading = false
+                        show(location)   // mounted again: list it
+                        return
+                    }
+                } else {
+                    items = []
+                    handle(error, for: location)
+                }
             }
             isLoading = false
         }

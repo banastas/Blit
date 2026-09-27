@@ -6,6 +6,7 @@
 
 #if DEBUG
 import AppKit
+import BlitLocal
 import BlitRemote
 import BlitSFTP
 import SwiftUI
@@ -950,6 +951,26 @@ enum UITestHarness {
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
             try? "fitted size \(size)".write(toFile: path + ".txt", atomically: true, encoding: .utf8)
             window.orderOut(nil)
+        }
+    }
+
+    /// `-BlitShareTest <log>` (with -BlitIsolatedQueue YES): shares are remembered
+    /// with their smb:// address, and mounting one that's already mounted goes
+    /// through NetFS without UI (EEXIST) and doesn't disturb it.
+    static func runShareTestIfRequested(sidebar: SidebarModel) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitShareTest") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            var lines: [String] = []
+            for share in sidebar.networkShares {
+                let mountPoint = share.url.standardizedFileURL.path
+                let (status, address) = await ShareMounter.debugMount(mountPoint)
+                let reconnect = await ShareMounter.reconnect(mountPoint)
+                lines.append("\(share.name): known \(ShareMounter.isKnown(mountPoint)) · \(address) · NetFS \(status)\(status == EEXIST ? " (already mounted)" : "") · reconnect: \(reconnect ?? "ok") · still mounted \(MountInfo.of(mountPoint)?.mountPoint == mountPoint) · missingShare \(ShareMounter.missingShare(containing: mountPoint + "/x") ?? "nil")")
+            }
+            lines.append("missingShare for a local drive path: \(ShareMounter.missingShare(containing: "/Users/x") ?? "nil")")
+            if sidebar.networkShares.isEmpty { lines.append("no network shares mounted") }
+            try? (lines + ["done"]).joined(separator: "\n").write(toFile: logPath, atomically: true, encoding: .utf8)
         }
     }
 

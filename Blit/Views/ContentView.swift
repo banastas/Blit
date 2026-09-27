@@ -381,6 +381,7 @@ struct ContentView: View {
         Task { await LicenseManager.shared.revalidateIfDue() }
         #if DEBUG
         UITestHarness.runLinkTestIfRequested(connections: connections, servers: servers)
+        UITestHarness.runShareTestIfRequested(sidebar: sidebar)
         #endif
         wireRefresh(browser, secondBrowser)
         if selection == nil {

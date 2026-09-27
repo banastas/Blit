@@ -107,6 +107,8 @@ final class SidebarModel {
             return s
         }.sorted { $0.name < $1.name }
         VolumeKinds.networkRoots = Set(networkShares.map { $0.url.standardizedFileURL.path })
+        // Remember how each share was mounted, to reconnect it later (PRD R1.5).
+        for share in networkShares { ShareMounter.remember(mountPoint: share.url.standardizedFileURL.path) }
         regroupDevices()
         if modelBrowser == nil, !networkShares.isEmpty { browseDeviceModels() }
     }

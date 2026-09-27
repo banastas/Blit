@@ -1228,11 +1228,25 @@ final class TransferManager {
     /// Waits (up to an hour) for missing drives or shares to come back.
     private func waitForVolumes(_ job: TransferJob) async {
         var noted = Set<String>()
-        for _ in 0..<720 {
+        for round in 0..<720 {
             let missing = missingVolumes(job)
             if missing.isEmpty || isQuitting || Task.isCancelled { return }
             for name in missing where noted.insert(name).inserted {
                 job.note("WAITING FOR \(name.uppercased()) TO COME BACK", failure: true)
+            }
+            // A NAS share Blit knows how to mount: reconnect it (PRD R1.5), now
+            // and every 30 s while it stays away.
+            if round % 6 == 0 {
+                let paths = [job.destination.path] + job.sources.compactMap { $0.localURL?.path }
+                for share in Set(paths.compactMap(ShareMounter.missingShare(containing:))) {
+                    job.note("RECONNECTING \((share as NSString).lastPathComponent.uppercased())")
+                    if let problem = await ShareMounter.reconnect(share) {
+                        if noted.insert("reconnect " + share).inserted { job.note("✕ \(problem.uppercased())", failure: true) }
+                    } else {
+                        job.note("RECONNECTED \((share as NSString).lastPathComponent.uppercased())")
+                    }
+                }
+                if missingVolumes(job).isEmpty { return }
             }
             // The countdown is over; say what it's really waiting for.
             job.status = .waiting(until: .distantPast, reason: "waiting for \(missing.joined(separator: ", ")) to come back · reconnect it")
