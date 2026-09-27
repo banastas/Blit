@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.8</title>
-      <pubDate>Sun, 27 Sep 2026 19:01:48 +0000</pubDate>
-      <sparkle:version>11</sparkle:version>
-      <sparkle:shortVersionString>0.2.8</sparkle:shortVersionString>
+      <title>Blit 0.2.9</title>
+      <pubDate>Sun, 27 Sep 2026 19:43:58 +0000</pubDate>
+      <sparkle:version>12</sparkle:version>
+      <sparkle:shortVersionString>0.2.9</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Click a selected file's name to rename it, as in Finder. Long names now stay fully visible while you move through them when renaming.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.8.zip" type="application/octet-stream" sparkle:edSignature="vAjB5CrCM6vPi+/zgOgcI57nRG6qfzBusNUH3XYgWHpreRN9RLfER25kv5Y1uBDEin58C5NQQohNqchTj2+rCg==" length="5403112" />
+      <description><![CDATA[<p>Search the current folder from the toolbar (⌘F). Moving or copying onto a file that already exists now asks: Replace, Keep Both, Skip or Stop.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.9.zip" type="application/octet-stream" sparkle:edSignature="B2foSJw73C0+aRkfyQ4HoiautDly50Z1qzsDo3S3tlKjTQnT6Y4x56OEakXWObRNuLXoTz0FhGqwViGDuCVNAg==" length="5427623" />
     </item>
   </channel>
 </rss>
