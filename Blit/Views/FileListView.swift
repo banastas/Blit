@@ -91,7 +91,10 @@ struct FileListView: View {
         // SwiftUI's Table shows no menu for right-clicks below the last row;
         // EmptySpaceMenu handles those (New Folder, Paste, Refresh).
         .background {
-            ViewAnchor { EmptySpaceMenu.register($0, browser: browser) }
+            ViewAnchor { view in
+                EmptySpaceMenu.register(view, browser: browser)
+                ClickToRename.install()
+            }
                 .allowsHitTesting(false)
         }
     }
@@ -521,47 +524,88 @@ struct ViewAnchor: NSViewRepresentable {
 
 /// Editing a name in place (PRD R2.12): the name without its extension starts
 /// selected, as in Finder. Return saves, Esc cancels, clicking away saves.
-private struct RenameField: View {
+/// The name being edited: a native text field that scrolls within its own
+/// width as the cursor moves (the SwiftUI field in a table cell didn't redraw
+/// the part of a long name scrolled into view). Return saves, Escape cancels,
+/// clicking away saves; the name without its extension starts selected.
+private struct RenameField: NSViewRepresentable {
     let browser: BrowserModel
     let item: FileItem
-    @State private var text = ""
-    @FocusState private var focused: Bool
 
-    var body: some View {
-        TextField("Name", text: $text)
-            .textFieldStyle(.roundedBorder)
-            .labelsHidden()
-            .focused($focused)
-            .onAppear {
-                text = item.name
-                DispatchQueue.main.async {
-                    focused = true
-                    // Focusing selects everything; then narrow it to the name
-                    // without its extension (the field editor is AppKit's). The
-                    // editor can take a moment to appear, so try a few times.
-                    for delay in [0.05, 0.15, 0.3, 0.5] {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { selectBaseName() }
-                    }
-                }
-            }
-            .onSubmit { browser.commitRename(item, to: text) }
-            .onExitCommand { browser.cancelRename() }
-            .onChange(of: focused) { _, isFocused in
-                if !isFocused { browser.commitRename(item, to: text) }
-            }
+    func makeCoordinator() -> Coordinator { Coordinator(browser: browser, item: item) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: item.name)
+        field.isBezeled = true
+        field.bezelStyle = .roundedBezel
+        field.usesSingleLineMode = true
+        field.lineBreakMode = .byClipping
+        field.cell?.isScrollable = true
+        field.cell?.wraps = false
+        field.maximumNumberOfLines = 1
+        field.delegate = context.coordinator
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        context.coordinator.begin(field, attempt: 0)
+        return field
     }
 
-    private func selectBaseName() {
-        let whole = (item.name as NSString).length
-        // Only while everything is still selected: never undo the user's own cursor moves.
-        // The field editor editing this name, in whichever window has it.
-        let editor = NSApp.windows.lazy.compactMap { $0.firstResponder as? NSTextView }.first { $0.string == item.name }
-        guard let editor, editor.selectedRange() == NSRange(location: 0, length: whole) else { return }
-        let ext = (item.name as NSString).pathExtension
-        let length = item.isDirectory || ext.isEmpty || ext.contains(" ")
-            ? whole
-            : whole - (ext as NSString).length - 1
-        editor.setSelectedRange(NSRange(location: 0, length: max(0, length)))
+    func updateNSView(_ field: NSTextField, context: Context) {}
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        let browser: BrowserModel
+        let item: FileItem
+        private var finished = false
+
+        init(browser: BrowserModel, item: FileItem) {
+            self.browser = browser
+            self.item = item
+        }
+
+        /// Takes the keyboard and selects the base name, once the field is in a window.
+        func begin(_ field: NSTextField, attempt: Int) {
+            Task { @MainActor [weak field] in
+                try? await Task.sleep(for: .milliseconds(attempt == 0 ? 0 : 50))
+                do {
+                    guard let field else { return }
+                    guard let window = field.window else {
+                        if attempt < 20 { self.begin(field, attempt: attempt + 1) }
+                        return
+                    }
+                    window.makeFirstResponder(field)
+                    let name = self.item.name as NSString
+                    let ext = name.pathExtension
+                    let length = self.item.isDirectory || ext.isEmpty || ext.contains(" ")
+                        ? name.length : name.length - (ext as NSString).length - 1
+                    field.currentEditor()?.selectedRange = NSRange(location: 0, length: max(0, length))
+                }
+            }
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            if selector == #selector(NSResponder.cancelOperation(_:)) {
+                finished = true
+                browser.cancelRename()
+                return true
+            }
+            if selector == #selector(NSResponder.insertNewline(_:)) {
+                finish(control.stringValue)
+                return true
+            }
+            return false
+        }
+
+        /// Clicking elsewhere (or Tab) ends editing: save, as Finder does.
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            finish(field.stringValue)
+        }
+
+        private func finish(_ text: String) {
+            guard !finished else { return }
+            finished = true
+            browser.commitRename(item, to: text)
+        }
     }
 }
 

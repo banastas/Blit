@@ -976,6 +976,77 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRenameFieldTest <log>` (with -BlitIsolatedQueue YES): the rename field
+    /// selects the base name, scrolls to the end of a long name (snapshot at
+    /// <log>.png), and Return renames; a single click on the selected file's
+    /// name starts a rename (click to rename).
+    static func runRenameFieldTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitRenameFieldTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active, let window = BrowserModel.activeWindow else { return lines.append("no browser") }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-rename-field-test")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            let long = "Some.Movie.Title.1999.2160p.UHD.BluRay.REMUX.DV.HDR.HEVC.DTS-HD.MA.5.1-GROUP.mkv"
+            fm.createFile(atPath: root.appendingPathComponent(long).path, contents: Data("x".utf8))
+            browser.open(.local(root))
+            for _ in 0..<20 where browser.items.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+            guard let item = browser.items.first else { return lines.append("no item") }
+            // 1. The field
+            browser.beginRename(item)
+            try? await Task.sleep(for: .seconds(1))
+            guard let editor = window.firstResponder as? NSTextView else { return lines.append("no field editor · responder \(String(describing: window.firstResponder))") }
+            lines.append("selected \(NSStringFromRange(editor.selectedRange())) of \((long as NSString).length) (base name is \((long as NSString).length - 4))")
+            editor.moveToEndOfLine(nil)
+            try? await Task.sleep(for: .milliseconds(300))
+            let caret = editor.firstRect(forCharacterRange: editor.selectedRange(), actualRange: nil)
+            let field = editor.delegate as? NSTextField
+            let fieldRect = field.map { $0.window?.convertToScreen($0.convert($0.bounds, to: nil)) ?? .zero } ?? .zero
+            lines.append("caret at end inside the field: \(fieldRect.insetBy(dx: -2, dy: -2).contains(CGPoint(x: caret.minX, y: caret.midY)))")
+            if let content = window.contentView, let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                content.cacheDisplay(in: content.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + ".png"))
+            }
+            editor.selectAll(nil)
+            editor.insertText("Renamed.Movie.1999.mkv", replacementRange: editor.selectedRange())
+            editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+            try? await Task.sleep(for: .seconds(1.5))
+            lines.append("after Return: \(((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).sorted()) · renaming \(browser.renaming != nil)")
+            // 2. Click to rename
+            for _ in 0..<20 where browser.items.first?.name != "Renamed.Movie.1999.mkv" { try? await Task.sleep(for: .milliseconds(200)) }
+            guard let renamed = browser.items.first, let table = firstTable(in: window.contentView) else { return lines.append("no table") }
+            browser.selection = [renamed.location]
+            try? await Task.sleep(for: .milliseconds(600))
+            let rowRect = table.rect(ofRow: 0)
+            let nameX = table.rect(ofColumn: 0).minX + 120
+            let pointInWindow = table.convert(NSPoint(x: nameX, y: rowRect.midY), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                if let event = NSEvent.mouseEvent(with: type, location: pointInWindow, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    NSApp.postEvent(event, atStart: false)
+                }
+                try? await Task.sleep(for: .milliseconds(80))
+            }
+            try? await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.8))
+            lines.append("single click on the selected name → renaming: \(browser.renaming == renamed.location)")
+            browser.cancelRename()
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
+    @MainActor private static func firstTable(in view: NSView?) -> NSTableView? {
+        guard let view else { return nil }
+        if let table = view as? NSTableView, table.headerView != nil { return table }
+        for sub in view.subviews { if let found = firstTable(in: sub) { return found } }
+        return nil
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

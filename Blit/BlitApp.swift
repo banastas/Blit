@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UITestHarness.runSortTestIfRequested()
         UITestHarness.renderPathBarIfRequested()
         UITestHarness.renderSettingsIfRequested()
+        UITestHarness.runRenameFieldTestIfRequested()
         UITestHarness.renderInfoIfRequested()
         UITestHarness.runLogWindowTestIfRequested()
         #endif
