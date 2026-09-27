@@ -129,6 +129,5 @@ fi
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 for copy in "$APP" "$HOME"/Library/Developer/Xcode/DerivedData/Blit-*/Build/Products/Release/Blit.app \
             "$HOME"/Library/Developer/Xcode/DerivedData/Blit-*/Build/Intermediates.noindex/ArchiveIntermediates/Blit/InstallationBuildProductsLocation/Applications/Blit.app; do
-  [[ -d "$copy" ]] && "$LSREGISTER" -u "$copy" 2>/dev/null
+  if [[ -d "$copy" ]]; then "$LSREGISTER" -u "$copy" >/dev/null 2>&1 || true; fi
 done
-true
