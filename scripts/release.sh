@@ -123,3 +123,12 @@ if [[ "${INSTALL:-0}" == 1 ]]; then
   ditto "$APP" /Applications/Blit.app
   open /Applications/Blit.app || { sleep 3; open /Applications/Blit.app; }
 fi
+
+# Only the installed app should stay registered under Blit's bundle ID: build
+# copies left in Launch Services can end up supplying Notification Center's icon.
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+for copy in "$APP" "$HOME"/Library/Developer/Xcode/DerivedData/Blit-*/Build/Products/Release/Blit.app \
+            "$HOME"/Library/Developer/Xcode/DerivedData/Blit-*/Build/Intermediates.noindex/ArchiveIntermediates/Blit/InstallationBuildProductsLocation/Applications/Blit.app; do
+  [[ -d "$copy" ]] && "$LSREGISTER" -u "$copy" 2>/dev/null
+done
+true

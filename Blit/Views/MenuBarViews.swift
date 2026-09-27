@@ -10,6 +10,7 @@ struct MenuBarLabel: View {
     @Environment(TransferManager.self) private var transfers
     /// "timeLeft" or "percent" (Settings › General).
     @AppStorage("menuBarShows") private var shows = "timeLeft"
+    @Environment(\.openWindow) private var openWindow
     /// Animation frame for the pixel arrow's marching stem.
     @State private var frame = 0
 
@@ -36,6 +37,8 @@ struct MenuBarLabel: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(spoken(running))
+        // Lives as long as the app: lets a notification click reopen the window.
+        .onAppear { NotificationRouter.shared.openMainWindow = openWindow }
     }
 
     private func line(_ job: TransferJob) -> MenuBarIcon.Line {

@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(ServerStore.self) private var servers
     @Environment(ConnectionManager.self) private var connections
     @Environment(TransferManager.self) private var transfers
+    @Environment(\.openWindow) private var openWindow
     @Environment(FileOperations.self) private var operations
     @Environment(\.undoManager) private var undoManager
     @State private var browser: BrowserModel?
@@ -375,6 +376,7 @@ struct ContentView: View {
         operations.undoManager = undoManager
         operations.onUndoProblem = { message in transfers.notice(message, action: "UNDO") }
         transfers.restoreQueue()
+        if NotificationRouter.shared.openMainWindow == nil { NotificationRouter.shared.openMainWindow = openWindow }
         #if DEBUG
         transfers.startFakeTransferIfRequested()
         UITestHarness.runQueueTestIfRequested(transfers: transfers)
@@ -386,6 +388,7 @@ struct ContentView: View {
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)
+        UITestHarness.runNotificationTextTestIfRequested()
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)

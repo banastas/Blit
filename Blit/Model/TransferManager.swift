@@ -391,7 +391,7 @@ final class TransferManager {
     /// Every job finished so far in the current batch verified its files.
     @ObservationIgnored private var batchVerified = true
     /// Totals for the current batch (until the queue drains), for its summary.
-    struct Batch { var jobs = 0; var bytes: Int64 = 0; var failed = 0; var sizeOnly = 0; var unverified = 0 }
+    struct Batch { var jobs = 0; var bytes: Int64 = 0; var failed = 0; var sizeOnly = 0; var unverified = 0; var started: Date? }
     @ObservationIgnored private var batch = Batch()
 
     /// Settings: a notification per transfer (default), or only when the queue
@@ -909,7 +909,8 @@ final class TransferManager {
     // MARK: Notifications (PRD R5.5)
 
     private func notify(_ job: TransferJob) async {
-        guard !isQuitting else { return }
+        // Test copies never notify: their jobs aren't the user's.
+        guard !isQuitting, !Self.isIsolated else { return }
         let center = UNUserNotificationCenter.current()
         do {
             guard try await center.requestAuthorization(options: [.alert, .sound]) else { return }
@@ -922,48 +923,19 @@ final class TransferManager {
             }
             return
         }
-        let content = UNMutableNotificationContent()
-        let size = job.totalBytes.formatted(.byteCount(style: .file))
-        if job.failures.isEmpty, job.sizeOnlyCount > 0 {
-            // Finished, but not everything was hash-verified: say so plainly.
-            content.title = "Not fully verified: \(job.title)"
-            content.body = "\(job.sizeOnlyCount) of \(job.fileCount) files were only checked by size (the server couldn't hash them). \(job.filesVerified) verified by SHA-256 · \(size)"
-            content.sound = .default
-        } else if job.failures.isEmpty {
-            guard notifyEachTransfer else { return }
-            content.title = "\(job.title) → \(job.destinationName)"
-            var body = "\(job.filesVerified) of \(job.fileCount) files verified · \(size)"
-            if job.unverifiedCount > 0, job.filesVerified == 0 {
-                body = "\(job.fileCount) file\(job.fileCount == 1 ? "" : "s") copied, checked by size (verification is off) · \(size)"
-            }
-            if job.allAlreadyPresent { body = "All \(job.fileCount) already there · \(size)" }
-            else if job.filesAlreadyPresent > 0 { body += " · \(job.filesAlreadyPresent) already there" }
-            content.body = body
-        } else {
-            content.title = "\(job.failures.count) problem\(job.failures.count == 1 ? "" : "s"): \(job.title)"
-            content.body = job.failures.prefix(3).joined(separator: "\n")
-            content.sound = .default
-        }
+        guard let content = TransferNotifications.content(for: job, eachTransfer: notifyEachTransfer) else { return }
         try? await center.add(UNNotificationRequest(identifier: job.id.uuidString, content: content, trigger: nil))
     }
 
     /// When the queue drains: one summary, if it held more than one transfer
     /// (or if per-transfer notifications are off).
     private func notifyBatch(_ batch: Batch) async {
-        guard !isQuitting, batch.jobs > 0, batch.jobs > 1 || !notifyEachTransfer else { return }
+        guard !isQuitting, !Self.isIsolated, batch.jobs > 0, batch.jobs > 1 || !notifyEachTransfer else { return }
         let center = UNUserNotificationCenter.current()
         guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
-        let content = UNMutableNotificationContent()
-        let size = batch.bytes.formatted(.byteCount(style: .file))
-        if batch.failed > 0 {
-            content.title = "Queue finished with problems"
-            content.body = "\(batch.jobs) transfers · \(size) · \(batch.failed) with problems. Open Blit for details."
-            content.sound = .default
-        } else {
-            content.title = "All transfers finished"
-            content.body = "\(batch.jobs) transfers · \(size)" + (batch.sizeOnly > 0 ? " · \(batch.sizeOnly) files only size-checked"
-                : batch.unverified > 0 ? " · \(batch.unverified) size-checked (verification off)" : " · all verified")
-        }
+        let content = TransferNotifications.batchContent(jobs: batch.jobs, bytes: batch.bytes, failed: batch.failed,
+                                                         sizeOnly: batch.sizeOnly, unverified: batch.unverified,
+                                                         elapsed: batch.started.map { Date().timeIntervalSince($0) })
         try? await center.add(UNNotificationRequest(identifier: "batch-\(UUID().uuidString)", content: content, trigger: nil))
     }
 
@@ -996,6 +968,7 @@ final class TransferManager {
     private func start(_ job: TransferJob) {
         let lane = job.lane
         clearMenuBarDone()
+        if batch.started == nil { batch.started = Date() }
         runningJobs[lane] = job
         runTasks[lane] = Task {
             await run(job)

@@ -1375,6 +1375,62 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitNotificationTextTest <log>`: the notification for each kind of
+    /// outcome, from simulated jobs (nothing is posted).
+    static func runNotificationTextTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitNotificationTextTest") else { return }
+        VolumeKinds.networkRoots.insert("/Volumes/TestShare")
+        var server = ServerConfig()
+        server.host = "example.invalid"
+        let now = Date()
+        func job(_ kind: TransferJob.Kind, _ title: String, to dest: String, _ name: String, files: Int, bytes: Int64,
+                 minutes: Double, setup: (TransferJob) -> Void = { _ in }) -> TransferJob {
+            let source: BrowseLocation = if case .download = kind { .remote(server.id, RemotePath("files/\(title)")) }
+                                         else { .local(URL(fileURLWithPath: "/Volumes/TestSSD/\(title)")) }
+            let j = TransferJob(kind: kind, sources: [source], destination: URL(fileURLWithPath: dest), title: title, destinationName: name)
+            j.fileCount = files
+            j.totalBytes = bytes
+            j.filesFinished = files
+            j.filesVerified = files
+            j.counter.add(Int(bytes))
+            j.startedAt = now.addingTimeInterval(-minutes * 60)
+            j.status = .finished
+            setup(j)
+            return j
+        }
+        let cases: [(String, TransferJob)] = [
+            ("download", job(.download(server), "Sexy.Beast.2000.2160p.UHD.Bluray.Remux.DV.HDR.HEVC.DTS-HD.mkv", to: "/Volumes/TestSSD/Downloads",
+                             "Downloads", files: 1, bytes: 63_100_000_000, minutes: 9)),
+            ("nas copy", job(.copy, "Go 1999.mkv", to: "/Volumes/TestShare/Movies", "Movies", files: 1, bytes: 71_600_000_000, minutes: 11) {
+                $0.nasVerified = true }),
+            ("move", job(.copy, "Pack", to: "/Volumes/TestShare/Movies", "Movies", files: 12, bytes: 210_000_000_000, minutes: 31) {
+                $0.nasVerified = true; $0.deleteSources = true }),
+            ("clone", job(.copy, "Pack", to: "/Volumes/TestSSD/Archive", "Archive", files: 2, bytes: 2_100_000, minutes: 0) {
+                $0.filesVerified = 0; $0.outcomes = ["a.bin": "cloned", "b.bin": "cloned"] }),
+            ("present", job(.copy, "Go 1999.mkv", to: "/Volumes/TestShare/Movies", "Movies", files: 1, bytes: 71_600_000_000, minutes: 0) {
+                $0.filesAlreadyPresent = 1; $0.filesVerified = 0 }),
+            ("verify off", job(.copy, "Pack", to: "/Volumes/TestSSD/Archive", "Archive", files: 3, bytes: 9_000_000_000, minutes: 2) {
+                $0.filesVerified = 0; $0.unverifiedCount = 3 }),
+            ("size only", job(.download(server), "Pack", to: "/Volumes/TestSSD/Downloads", "Downloads", files: 12, bytes: 40_000_000_000, minutes: 8) {
+                $0.sizeOnlyCount = 3; $0.filesVerified = 9 }),
+            ("failure", job(.copy, "Pack", to: "/Volumes/TestShare/Movies", "Movies", files: 12, bytes: 40_000_000_000, minutes: 8) {
+                $0.status = .failed("2 failed")
+                $0.failures = ["Extras.mkv: SHA-256 mismatch: source \(String(repeating: "a", count: 64)), NAS \(String(repeating: "b", count: 64))",
+                               "Sample.mkv: permission denied"] }),
+        ]
+        var lines: [String] = []
+        for (label, j) in cases {
+            guard let c = TransferNotifications.content(for: j, eachTransfer: true, now: now) else { lines.append("\(label): none"); continue }
+            lines.append("[\(label)] \(c.title) | \(c.subtitle) | \(c.body) | \(c.categoryIdentifier)\(c.sound == nil ? "" : " · sound")")
+        }
+        lines.append("[each off, clean] \(TransferNotifications.content(for: cases[0].1, eachTransfer: false, now: now) == nil ? "none" : "posted")")
+        let batch = TransferNotifications.batchContent(jobs: 4, bytes: 210_000_000_000, failed: 0, sizeOnly: 0, unverified: 0, elapsed: 4320)
+        lines.append("[batch] \(batch.title) | \(batch.subtitle) | \(batch.body)")
+        VolumeKinds.networkRoots.remove("/Volumes/TestShare")
+        lines.append("done")
+        try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

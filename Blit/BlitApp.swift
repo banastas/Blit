@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BrowserModel.cleanUpPreviewDownloads()
         _ = Updates.shared   // starts the daily update check (release builds)
         NSApp.servicesProvider = self
+        TransferNotifications.register()
         NSUpdateDynamicServices()
         #if DEBUG
         UITestHarness.runIfRequested()
@@ -137,7 +138,10 @@ struct BlitApp: App {
                 .environment(connections)
                 .environment(transfers)
                 .environment(operations)
-                .onAppear { appDelegate.transfers = transfers }
+                .onAppear {
+                    appDelegate.transfers = transfers
+                    NotificationRouter.shared.transfers = transfers
+                }
                 .frame(minWidth: 760, minHeight: 440)
         }
         .windowToolbarStyle(.unified)
