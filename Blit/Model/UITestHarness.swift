@@ -930,6 +930,29 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRenderSettings out.png` (with -BlitIsolatedQueue YES): the Settings
+    /// view hosted in a window of its own and snapshotted (the General tab),
+    /// with its fitted size logged.
+    static func renderSettingsIfRequested() {
+        guard let path = UserDefaults.standard.string(forKey: "BlitRenderSettings") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let host = NSHostingView(rootView: SettingsView())
+            let size = host.fittingSize
+            let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: 80, y: 80), size: size),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.contentView = host
+            window.orderFront(nil)
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+            try? "fitted size \(size)".write(toFile: path + ".txt", atomically: true, encoding: .utf8)
+            window.orderOut(nil)
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

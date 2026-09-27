@@ -205,45 +205,63 @@ struct SettingsView: View {
     @AppStorage("notifyEachTransfer") private var notifyEachTransfer = true
     @AppStorage("verifyFiles") private var verifyFiles = "sha256"
 
+    // Tabs, as in Finder and Mail: each pane holds a few settings and sizes to
+    // fit, so nothing scrolls and the window stays small enough for any screen.
     var body: some View {
-        Form {
-            if LicenseManager.shared.isEnforced { LicenseSection() }
-            UpdatesSection()
-            Section("General") {
-                Toggle("Show Blit in the menu bar", isOn: $showMenuBarExtra)
-                Text("Shows transfer speed while Blit is working, and keeps the transfer HUD one click away when the window is closed.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("Open the full transfer HUD when a transfer starts", isOn: $expandHUDOnTransfer)
-                Text("Collapse it and it stays collapsed until those transfers finish.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Picker("Notifications", selection: $notifyEachTransfer) {
-                    Text("When each transfer finishes").tag(true)
-                    Text("When the queue finishes, and on problems").tag(false)
+        TabView {
+            pane {
+                Section {
+                    Toggle("Show Blit in the menu bar", isOn: $showMenuBarExtra)
+                    note("Shows transfer speed while Blit is working, and keeps the transfer HUD one click away when the window is closed.")
+                    Toggle("Open the full transfer HUD when a transfer starts", isOn: $expandHUDOnTransfer)
+                    note("Collapse it and it stays collapsed until those transfers finish.")
+                    Picker("Notifications", selection: $notifyEachTransfer) {
+                        Text("When each transfer finishes").tag(true)
+                        Text("When the queue finishes, and on problems").tag(false)
+                    }
+                    note("Problems, files that were only size-checked, and waiting for disk space always notify.")
                 }
-                Text("Problems, files that were only size-checked, and waiting for disk space always notify.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Picker("Verify files", selection: $verifyFiles) {
-                    Text("SHA-256 (recommended)").tag("sha256")
-                    Text("Size only (faster)").tag("sizeOnly")
+            }
+            .tabItem { Label("General", systemImage: "gearshape") }
+
+            pane {
+                Section {
+                    Picker("Verify files", selection: $verifyFiles) {
+                        Text("SHA-256 (recommended)").tag("sha256")
+                        Text("Size only (faster)").tag("sizeOnly")
+                    }
+                    note(verifyFiles == "sizeOnly"
+                         ? "Files are checked by size only, with no hashing on the server or NAS. Moves still verify by SHA-256 before removing anything. Applies to transfers queued from now on."
+                         : "Each file is checked by SHA-256 where it lands, alongside the download, before it gets its real name. Applies to transfers queued from now on.")
+                    Picker("When a file already exists", selection: $existsRule) {
+                        ForEach(ExistsRule.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    note(existsRule.explanation + " Applies to transfers queued from now on.")
                 }
-                Text(verifyFiles == "sizeOnly"
-                     ? "Files are checked by size only, with no hashing on the server or NAS. Moves still verify by SHA-256 before removing anything. Applies to transfers queued from now on."
-                     : "Each file is checked by SHA-256 where it lands, alongside the download, before it gets its real name. Applies to transfers queued from now on.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Picker("When a file already exists", selection: $existsRule) {
-                    ForEach(ExistsRule.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                Text(existsRule.explanation + " Applies to transfers queued from now on.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            }
+            .tabItem { Label("Transfers", systemImage: "arrow.down.circle") }
+
+            pane { UpdatesSection() }
+                .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
+
+            if LicenseManager.shared.isEnforced {
+                pane { LicenseSection() }
+                    .tabItem { Label("License", systemImage: "key") }
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 440)
+        .frame(width: 480)
+    }
+
+    /// One tab: a grouped form that sizes to its content (no scrolling).
+    private func pane<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        Form { content() }
+            .formStyle(.grouped)
+            .scrollDisabled(true)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
 
