@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.7</title>
-      <pubDate>Sun, 27 Sep 2026 18:44:10 +0000</pubDate>
-      <sparkle:version>10</sparkle:version>
-      <sparkle:shortVersionString>0.2.7</sparkle:shortVersionString>
+      <title>Blit 0.2.8</title>
+      <pubDate>Sun, 27 Sep 2026 19:01:48 +0000</pubDate>
+      <sparkle:version>11</sparkle:version>
+      <sparkle:shortVersionString>0.2.8</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit now reconnects NAS shares that have dropped off (for a waiting transfer, an unavailable favorite, or Reconnect in the sidebar). It no longer risks freezing when a NAS share hangs. The Transfer Log labels size-only results more clearly.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.7.zip" type="application/octet-stream" sparkle:edSignature="COoNGrrS4vMRB9yTQPP/0b0VhwQKXriB9hMFbZiYB1dMBL0IFtBuaxTeVNX7RO9PQzo17w/AbF2EnxiqNWMhBQ==" length="5402338" />
+      <description><![CDATA[<p>Click a selected file's name to rename it, as in Finder. Long names now stay fully visible while you move through them when renaming.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.8.zip" type="application/octet-stream" sparkle:edSignature="vAjB5CrCM6vPi+/zgOgcI57nRG6qfzBusNUH3XYgWHpreRN9RLfER25kv5Y1uBDEin58C5NQQohNqchTj2+rCg==" length="5403112" />
     </item>
   </channel>
 </rss>
