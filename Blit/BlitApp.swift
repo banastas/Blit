@@ -316,9 +316,11 @@ struct AboutCommands: Commands {
             Button("About Blit") { openWindow(id: "about") }
             Button("Check for Updates…") { Updates.shared.checkNow() }
                 .disabled(!Updates.shared.isAvailable)
-            Divider()
-            Button("Buy Blit…") { LicenseManager.shared.openBuyPage() }
-            Button("Enter License…") { openSettings() }
+            if LicenseManager.shared.isEnforced {
+                Divider()
+                Button("Buy Blit…") { LicenseManager.shared.openBuyPage() }
+                Button("Enter License…") { openSettings() }
+            }
         }
     }
 }

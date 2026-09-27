@@ -11,6 +11,10 @@ import Observation
 import Security
 
 enum LicenseConfig {
+    /// Off until launch (0.3.0): no trial clock, no Keychain writes, no License
+    /// UI, and transfers are never locked. Turning it on starts each Mac's trial
+    /// at its next launch.
+    static let enforced = false
     /// Lemon Squeezy store and product. Keys from any other store or product
     /// are refused once these are set (nil: not checked yet).
     static let storeID: Int? = 484_060
@@ -103,13 +107,18 @@ final class LicenseManager {
 
     init(storage: LicenseStorage) {
         self.storage = storage
-        refresh()
+        if LicenseConfig.enforced || TransferManager.isIsolated { refresh() }
     }
 
+    /// Whether licensing is in effect (always in isolated test copies, so the
+    /// license test still runs).
+    var isEnforced: Bool { LicenseConfig.enforced || TransferManager.isIsolated }
+
     var canStartTransfers: Bool {
+        guard isEnforced else { return true }
         switch state {
-        case .trial, .licensed: true
-        case .trialEnded, .revoked: false
+        case .trial, .licensed: return true
+        case .trialEnded, .revoked: return false
         }
     }
 
@@ -135,6 +144,7 @@ final class LicenseManager {
     }
 
     func refresh() {
+        guard isEnforced else { return }
         if let license {
             // Unchecked for the weekly interval plus the grace period: ask to
             // reconnect. The key stays; the next successful check restores it.
@@ -242,7 +252,7 @@ final class LicenseManager {
     /// grace period; only an answer from the store that the key is no longer
     /// valid revokes it.
     func revalidateIfDue() async {
-        guard var license, now().timeIntervalSince(license.lastValidated) >= LicenseConfig.revalidateEvery else { return }
+        guard isEnforced, var license, now().timeIntervalSince(license.lastValidated) >= LicenseConfig.revalidateEvery else { return }
         guard let response = try? await call("validate", ["license_key": license.key, "instance_id": license.instanceID]) else {
             return   // offline or the API is down: keep going (within the grace period, see refresh)
         }

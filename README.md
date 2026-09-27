@@ -502,6 +502,7 @@ The setup Blit is tuned against:
       - Blit › Check for Updates… checks now; Settings › Updates turns the daily check off. Debug builds don't run the updater.
       - `PUBLISH=1 scripts/release.sh` signs the zip, puts it in `site/downloads/`, writes the appcast and pushes; Cloudflare Pages serves it.
       - The site's Download buttons fetch `downloads/Blit.zip` once the site is `LIVE`.
+    - **Switched off until launch:** `LicenseConfig.enforced = false` in 0.2.5. There's no trial clock, no Keychain writes, no License UI, and transfers are never locked. It's turned on for 0.3.0. Isolated test copies always enforce, so the license tests still run.
     - **Built (app side):**
       - The trial runs 7 days from first launch; its start is kept in the Keychain, so a reinstall doesn't restart it.
       - Settings › License shows the trial or license status, takes a key (Activate), frees this Mac (Deactivate This Mac), and links to Buy. The Blit menu has Buy Blit… and Enter License….

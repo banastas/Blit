@@ -207,7 +207,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            LicenseSection()
+            if LicenseManager.shared.isEnforced { LicenseSection() }
             UpdatesSection()
             Section("General") {
                 Toggle("Show Blit in the menu bar", isOn: $showMenuBarExtra)
