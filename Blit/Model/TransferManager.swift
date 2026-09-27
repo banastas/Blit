@@ -209,14 +209,19 @@ final class TransferJob: Identifiable {
         }
     }
 
-    /// How far verification of the downloaded files has got, where the server
-    /// reports progress.
-    var verifyProgress: Double? {
+    /// Bytes hashed and to hash across the files waiting on their checksums,
+    /// where progress is reported (the server, the NAS or a read-back).
+    var verifyBytes: (done: UInt64, total: UInt64)? {
         let names = verifying.keys.filter { hashSizes[$0] != nil }
         let total = names.reduce(UInt64(0)) { $0 + (hashSizes[$1] ?? 0) }
         guard total > 0 else { return nil }
         let done = names.reduce(UInt64(0)) { $0 + min(hashed[$1] ?? 0, hashSizes[$1] ?? 0) }
-        return Double(done) / Double(total)
+        return (done, total)
+    }
+
+    /// How far verification has got, where it reports progress.
+    var verifyProgress: Double? {
+        verifyBytes.map { Double($0.done) / Double($0.total) }
     }
 
     /// Seconds until the waiting files are verified, at the current hash rate.
@@ -1768,6 +1773,13 @@ extension TransferJob {
     func handle(_ event: CopyEvent) {
         if stopRequest != nil || isShuttingDown, case .fileFailed = event { return }
         if case .fileFinished(let f, _) = event, completedPaths.contains(f.relativePath) { return }
+        if case .fileHashProgress(let f, let bytes) = event {
+            guard verifying[f.relativePath] != nil else { return }   // late, after the file finished
+            let previous = hashed[f.relativePath] ?? 0
+            if bytes > previous { hashedTotal += bytes - previous }
+            hashed[f.relativePath] = bytes
+            return
+        }
         if case .fileFinished(let f, let v) = event {
             let (hash, method): (String?, String) = switch v {
             case .nas(let h): (h, "nas-sha256")
@@ -1791,9 +1803,14 @@ extension TransferJob {
         case .fileCopied(let f):
             inFlight.remove(f.relativePath)
             verifying[f.relativePath] = Date()
+            hashSizes[f.relativePath] = f.size
             note("COPIED \(f.relativePath.uppercased()) · VERIFYING")
+        case .fileHashProgress:
+            break
         case .fileFinished(let f, let v):
             verifying[f.relativePath] = nil
+            hashed[f.relativePath] = nil
+            hashSizes[f.relativePath] = nil
             guard completedPaths.insert(f.relativePath).inserted else { return }
             filesFinished += 1
             switch v {
@@ -1820,6 +1837,8 @@ extension TransferJob {
             }
         case .fileFailed(let f, let reason):
             verifying[f.relativePath] = nil
+            hashed[f.relativePath] = nil
+            hashSizes[f.relativePath] = nil
             recordFailure(f.relativePath, reason)
         }
     }

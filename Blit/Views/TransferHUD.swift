@@ -111,14 +111,21 @@ struct TransferHUD: View {
                 .truncationMode(.middle)
             // Read the value here, not inside the GeometryReader, so the bar
             // redraws as it changes.
-            let fraction = job.progress
+            // Once every byte is across, the bar follows the checksums.
+            let hashing = job.isVerifyingOnly ? job.verifyBytes : nil
+            let fraction = hashing.map { Double($0.done) / Double($0.total) } ?? job.progress
             GeometryReader { geo in
                 PixelCells(fraction: fraction, count: max(16, Int(geo.size.width / 6)))
             }
             .frame(height: 10)
             .padding(.vertical, 4)
-            HUDRow("\(TransferJob.bytes(job.transferred)) / \(TransferJob.bytes(job.totalBytes))",
-                   "\(Int((job.progress * 100).rounded()))%")
+            if let hashing {
+                HUDRow("SHA256 \(TransferJob.bytes(Int64(hashing.done))) / \(TransferJob.bytes(Int64(hashing.total)))",
+                       "\(Int((fraction * 100).rounded(.down)))%")
+            } else {
+                HUDRow("\(TransferJob.bytes(job.transferred)) / \(TransferJob.bytes(job.totalBytes))",
+                       "\(Int((job.progress * 100).rounded()))%")
+            }
             HUDRow("FILES \(job.filesFinished)/\(job.fileCount)", "VERIFIED \(job.filesVerified)")
             detailSlot
         }

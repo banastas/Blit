@@ -442,7 +442,7 @@ func copyCommand(_ raw: [String]) async -> Never {
 
         let summary = try await copy(files, into: destination, nas: nas, options: options, counter: counter) { event in
             switch event {
-            case .fileStarted: break
+            case .fileStarted, .fileHashProgress: break
             case .fileCopied: progress.downloaded()
             case .fileFinished(let f, let v):
                 progress.finished()

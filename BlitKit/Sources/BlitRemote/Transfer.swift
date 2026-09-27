@@ -270,7 +270,8 @@ public struct RemoteHasher: Sendable {
     /// POSIX sh; no single quotes, since it's passed inside '…'. Needs GNU or
     /// BusyBox `stat -c`. Prints "sha256 size mtime cached|computed". Where
     /// GNU dd has status=progress, the bytes hashed so far go to stderr about
-    /// once a second.
+    /// once a second; without it, on Linux, files over 256 MB report the same
+    /// from `cat`'s read position in /proc (fd 3 is the file it opened).
     ///
     /// Only a complete, successful read is cached or reported: dd's exit
     /// status is checked (a failed read would otherwise hash a truncated
@@ -291,6 +292,13 @@ public struct RemoteHasher: Sendable {
       t="$d/.status.$$"
       if dd if=/dev/null of=/dev/null status=progress 2>/dev/null; then
         h=$( { dd if="$p" bs=4M status=progress; echo $? > "$t"; } | sha256sum | cut -c1-64 )
+      elif [ -r /proc/self/fdinfo/0 ] && [ "$1" -gt 268435456 ]; then
+        h=$( { cat -- "$p" & c=$!
+               while kill -0 $c 2>/dev/null; do
+                 sleep 1
+                 sed -n "s/^pos:[[:space:]]*\([0-9]*\).*/\1 bytes/p" /proc/$c/fdinfo/3 >&2 2>/dev/null
+               done
+               wait $c; echo $? > "$t"; } | sha256sum | cut -c1-64 )
       else
         h=$( { cat -- "$p"; echo $? > "$t"; } | sha256sum | cut -c1-64 )
       fi

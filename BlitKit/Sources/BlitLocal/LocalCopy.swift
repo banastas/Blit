@@ -203,6 +203,8 @@ public struct MountInfo: Sendable, Equatable {
 public enum CopyEvent: Sendable {
     case fileStarted(LocalFile)
     case fileCopied(LocalFile)
+    /// Bytes of the copy hashed so far (on the NAS, or read back here).
+    case fileHashProgress(LocalFile, UInt64)
     case fileFinished(LocalFile, verification: CopyVerification)
     case fileFailed(LocalFile, String)
 }
@@ -404,7 +406,7 @@ public func copy(
                             events(.fileCopied(file))
                             verification = try await verify(part: part, sourceHash: sourceHash, size: file.size,
                                                             nas: options.verify ? nas : nil, verify: options.verify,
-                                                            limiter: hashLimiter)
+                                                            limiter: hashLimiter) { events(.fileHashProgress(file, $0)) }
                         }
                         guard let verification else { throw POSIXFailure("copy \(file.path)", code: EIO) }
                         if let mtime = file.modificationTime {
@@ -431,12 +433,12 @@ public func copy(
 }
 
 private func verify(part: String, sourceHash: String, size: UInt64, nas: NASVerifier?, verify: Bool,
-                    limiter: AsyncLimiter) async throws -> CopyVerification {
+                    limiter: AsyncLimiter, progress: @escaping @Sendable (UInt64) -> Void) async throws -> CopyVerification {
     guard verify else { return .skipped }
     var fallbackReason: String?
     if let nas {
         do {
-            let remote = try await limiter.run { try await nas.hasher.sha256(RemotePath(part)) }
+            let remote = try await limiter.run { try await nas.hasher.sha256(RemotePath(part), progress: progress) }
             if let remoteSize = remote.size, remoteSize != size {
                 throw CopyMismatch(description: "size on the NAS is \(remoteSize), expected \(size)")
             }
@@ -455,7 +457,7 @@ private func verify(part: String, sourceHash: String, size: UInt64, nas: NASVeri
             throw CopyMismatch(description: "NAS verification interrupted (\(error))")
         }
     }
-    let readBack = try await Task.detached { try readBackSHA256(path: part) }.value
+    let readBack = try await Task.detached { try readBackSHA256(path: part, progress: progress) }.value
     guard readBack == sourceHash else {
         throw CopyMismatch(description: "SHA-256 mismatch on read-back: source \(sourceHash), copy \(readBack)")
     }

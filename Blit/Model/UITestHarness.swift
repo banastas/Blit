@@ -934,6 +934,51 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitHashProgressTest <log> -BlitHashProgressTestDest <folder on another
+    /// volume>`: copies a 2 GB file and samples the verify progress while its
+    /// SHA-256 is read back, logging each distinct percentage the HUD would show.
+    static func runHashProgressTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitHashProgressTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitHashProgressTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-hash-progress-test")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            let file = root.appendingPathComponent("big.bin")
+            fm.createFile(atPath: file.path, contents: nil)
+            if let handle = try? FileHandle(forWritingTo: file) {
+                let chunk = Data((0..<(64 << 20)).map { UInt8(truncatingIfNeeded: $0 &* 2654435761) })
+                for _ in 0..<32 { handle.write(chunk) }
+                try? handle.close()
+            }
+            if let message = transfers.enqueue([.local(file)], to: .local(URL(fileURLWithPath: destPath)), destinationName: "dest", move: false) {
+                lines.append("enqueue: \(message)"); lines.append("done"); return
+            }
+            guard let job = transfers.transferJobs.last else { return }
+            var seen: [String] = []
+            for _ in 0..<2400 {
+                if job.status == .finished { break }
+                if case .failed = job.status { break }
+                if job.isVerifyingOnly {
+                    let shown = job.verifyProgress.map { "\(Int(($0 * 100).rounded(.down)))%" } ?? "nil"
+                    if seen.last != shown { seen.append(shown) }
+                }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            lines.append("status \(job.status) · method \(job.verificationMethod) · verified \(job.filesVerified)")
+            lines.append("verify progress seen: \(seen.joined(separator: " "))")
+            transfers.dismissFinished()
+            try? fm.removeItem(at: root)
+            try? fm.removeItem(at: URL(fileURLWithPath: destPath).appendingPathComponent("big.bin"))
+            lines.append("done")
+        }
+    }
+
     /// `-BlitRenderSettings out.png` (with -BlitIsolatedQueue YES): the Settings
     /// view hosted in a window of its own and snapshotted (the General tab),
     /// with its fitted size logged.
