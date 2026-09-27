@@ -181,6 +181,13 @@ struct BlitApp: App {
     }
 }
 
+extension Notification.Name {
+    /// Edit › Find (⌘F): focus the toolbar search.
+    static let blitFocusSearch = Notification.Name("BlitFocusSearch")
+    /// Go › Go to… (⌘K): open the jump palette.
+    static let blitShowPalette = Notification.Name("BlitShowPalette")
+}
+
 extension FocusedValues {
     @Entry var browser: BrowserModel?
     @Entry var transferDetails: TransferDetailsState?
@@ -333,9 +340,17 @@ struct GoCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Go") {
+            // Jump to a favorite, server, drive or recent folder (the ⌘K palette).
+            Button("Go to…") { NotificationCenter.default.post(name: .blitShowPalette, object: nil) }
+                .keyboardShortcut("k", modifiers: .command)
             Button("Go to Folder…") { browser?.showGoToFolder = true }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
                 .disabled(browser == nil)
+        }
+        CommandGroup(after: .textEditing) {
+            Button("Find") { NotificationCenter.default.post(name: .blitFocusSearch, object: nil) }
+                .keyboardShortcut("f", modifiers: .command)
+                .disabled(browser?.current == nil)
         }
     }
 }

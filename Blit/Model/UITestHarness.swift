@@ -1047,6 +1047,80 @@ enum UITestHarness {
         return nil
     }
 
+    /// `-BlitConflictTest <log> -BlitConflictTestDest <folder on another volume>`
+    /// (with -BlitIsolatedQueue YES): Replace / Keep Both / Skip / Stop for a copy
+    /// onto an existing file across devices, Replace for a move on one drive
+    /// (the old file goes to the Trash), and the toolbar search's filtering.
+    static func runConflictTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitConflictTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitConflictTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active else { return lines.append("no browser") }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-conflict-test")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            let source = root.appendingPathComponent("movie.mkv")
+            fm.createFile(atPath: source.path, contents: Data(repeating: 1, count: 2000))
+            let dest = URL(fileURLWithPath: destPath)
+            @MainActor func reset() {
+                for name in (try? fm.contentsOfDirectory(atPath: dest.path)) ?? [] { try? fm.removeItem(at: dest.appendingPathComponent(name)) }
+                fm.createFile(atPath: dest.appendingPathComponent("movie.mkv").path, contents: Data(repeating: 9, count: 1000))
+            }
+            @MainActor func state() -> String {
+                ((try? fm.contentsOfDirectory(atPath: dest.path)) ?? []).sorted().map { name in
+                    let size = (try? fm.attributesOfItem(atPath: dest.appendingPathComponent(name).path)[.size] as? NSNumber)?.intValue ?? -1
+                    return "\(name)=\(size)"
+                }.joined(separator: " ")
+            }
+            for (label, answer) in [("Replace", ConflictPrompt.Choice.replace), ("Keep Both", .keepBoth), ("Skip", .skip), ("Stop", .stop)] {
+                reset()
+                ConflictPrompt.testAnswer = answer
+                ConflictPrompt.lastAsked = nil
+                let message = await browser.operations.place([.local(source)], into: .local(dest), destinationName: "dest", mode: .copy)
+                for _ in 0..<60 where transfers.transferJobs.contains(where: { $0.isActive || $0.status == .queued }) {
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+                lines.append("copy onto existing, \(label): asked \(ConflictPrompt.lastAsked.map { "\($0.count), move \($0.move)" } ?? "no") · message \(message.map { "“\($0)”" } ?? "none") · dest \(state())")
+                transfers.dismissFinished()
+            }
+            // Same drive: move onto an existing file, Replace.
+            let other = root.appendingPathComponent("sub")
+            try? fm.createDirectory(at: other, withIntermediateDirectories: true)
+            fm.createFile(atPath: other.appendingPathComponent("movie.mkv").path, contents: Data(repeating: 7, count: 500))
+            ConflictPrompt.testAnswer = .replace
+            _ = await browser.operations.place([.local(source)], into: .local(other), destinationName: "sub", mode: .move)
+            let movedSize = (try? fm.attributesOfItem(atPath: other.appendingPathComponent("movie.mkv").path)[.size] as? NSNumber)?.intValue ?? -1
+            lines.append("same-drive move, Replace: asked move \(ConflictPrompt.lastAsked?.move ?? false) · sub/movie.mkv is \(movedSize) bytes (2000 = the moved one) · source gone \(!fm.fileExists(atPath: source.path))")
+            ConflictPrompt.testAnswer = nil
+            // Search
+            try? fm.createDirectory(at: root.appendingPathComponent("Folder"), withIntermediateDirectories: true)
+            fm.createFile(atPath: root.appendingPathComponent("Folder/Nested Match.txt").path, contents: nil)
+            fm.createFile(atPath: root.appendingPathComponent("Top Match.txt").path, contents: nil)
+            fm.createFile(atPath: root.appendingPathComponent("Other.txt").path, contents: nil)
+            browser.open(.local(root))
+            for _ in 0..<20 where browser.items.count < 4 { try? await Task.sleep(for: .milliseconds(200)) }
+            if let folder = browser.items.first(where: { $0.name == "Folder" }) { browser.toggleExpanded(folder) }
+            try? await Task.sleep(for: .seconds(1))
+            browser.searchText = "match"
+            lines.append("search “match”: \(browser.rows.map(\.name))")
+            browser.searchText = "zzz"
+            lines.append("search “zzz”: \(browser.rows.map(\.name))")
+            browser.searchText = "MATCH"
+            lines.append("search is case-insensitive: \(browser.rows.count)")
+            browser.open(.local(dest))
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("search cleared after navigating: “\(browser.searchText)”")
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

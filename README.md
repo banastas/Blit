@@ -215,7 +215,8 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
   - For files: queued · ▲ transferring · verifying NN% (the server's hash progress) · ✓ verified / cloned · = size only / already there · ✕ failed (reason in the tooltip) · ‖ paused.
   - For folders: the dragged folder shows the job's percent while it runs, then ✓ done or ✕ N failed. Subfolders show how many files are done.
   - Glyph and word, never color alone. Once the transfer is dismissed from the strip, the Status clears, and the name's ✓ badge keeps the verification.
-- **R2.7** ⌘K command palette to jump to any server, drive, or recent folder.
+- **R2.7** ⌘K command palette (Go › Go to…) to jump to any server, drive, or recent folder.
+- **R2.7a** **Search** in the toolbar (Edit › Find, ⌘F) filters the active pane's folder as you type, by name, ignoring case and accents. It includes expanded folders: a folder stays while it or something inside it matches. It clears on moving to another folder, and a search with no results says so.
 - **R2.8** A single pane by default, with a keyboard shortcut to toggle a second pane.
 - **R2.9** **Favorites:** pinned folders on any location (local drive, NAS share, remote server) at the top of the sidebar. Add by dragging a folder in, with ⌘D (the folder being viewed, a drive's top level included), or by right-clicking a drive, NAS share or server › Add to Favorites. A favorited drive or share shows its drive icon, its volume name and the device serving it; reorder by dragging; remove from a context menu. Each shows its volume or server, and is dimmed when that isn't mounted or connected.
 - **R2.10** **Dropping files on any sidebar item** (favorite, drive, share, server) starts a transfer to it: download, copy, or clone as appropriate, with the same verification as any other transfer. The target highlights while dragging. Dropping onto a folder in the file list works the same way.
@@ -248,6 +249,10 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
   - **Copy To ▸ / Move To ▸** (right-click) archive reviewed items without dragging.
     - Destinations: favorite folders (NAS first), then mounted NAS shares, then Other Folder….
     - Copy is a verified copy. Move removes each file here only once its copy is verified by SHA-256, as a cross-device move always does.
+  - **Existing files ask first, as in Finder.** When a drop, paste, Copy To / Move To or Send to Blit would land on a file that already exists (same-name folders merge), Blit asks once: **Replace**, **Keep Both** (" 2" name), **Skip** (leave the existing file), or **Stop**.
+    - Across devices, Replace overwrites only after the new copy is verified.
+    - On the same drive, the replaced file goes to the Trash (deleted where there's none).
+    - The answer overrides the Settings rule for that transfer.
   - **Problems appear in the strip, not in alerts.** A failed new folder, rename, paste, drop, duplicate, trash, Quick Look, undo or resume shows as a ✕ line in the condensed strip: what was tried, then the reason. The full text is in its tooltip and the HUD's WARNING panel, and VoiceOver announces it. It stays until dismissed.
     - A failed operation always reaches the strip, even one that fails before its progress would have shown.
     - A problem the operation already shows there isn't reported a second time.

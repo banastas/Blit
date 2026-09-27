@@ -82,6 +82,13 @@ struct FileListView: View {
     private var table: some View {
         ScrollViewReader { proxy in
             tableContent
+                .overlay {
+                    // A search with nothing to show says so, instead of an empty list.
+                    let query = browser.searchText.trimmingCharacters(in: .whitespaces)
+                    if !query.isEmpty, browser.rows.isEmpty, !browser.items.isEmpty {
+                        ContentUnavailableView.search(text: query)
+                    }
+                }
                 .onChange(of: browser.selection) {
                     // Keep the file Quick Look is showing in view as ↑/↓ move through the list.
                     guard browser.previewURL != nil, let first = browser.selectedItems.first else { return }

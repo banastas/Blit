@@ -687,7 +687,7 @@ final class TransferManager {
     /// Queues a transfer of `sources` into `destination`. Returns a message
     /// if it can't be done.
     func enqueue(_ sources: [BrowseLocation], to destination: BrowseLocation, destinationName: String,
-                 includeHidden: Bool = false, move: Bool = false) -> String? {
+                 includeHidden: Bool = false, move: Bool = false, existsRule: ExistsRule? = nil) -> String? {
         // After the trial (or a revoked key), new transfers don't start; queued
         // and running ones still finish (PRD open question 12).
         let license = LicenseManager.shared
@@ -710,12 +710,14 @@ final class TransferManager {
                                   title: Self.title(remote.map(\.lastComponent)), destinationName: destinationName)
             job.includeHidden = includeHidden
             job.deleteSources = move
+            if let existsRule { job.existsRule = existsRule }   // the answer to Replace / Keep Both
             jobs.append(job)
         }
         if !local.isEmpty {
             let job = TransferJob(kind: .copy, sources: local.map { .local($0) }, destination: folder,
                                   title: Self.title(local.map(\.lastPathComponent)), destinationName: destinationName)
             job.deleteSources = move
+            if let existsRule { job.existsRule = existsRule }   // the answer to Replace / Keep Both
             jobs.append(job)
         }
         expandForTransfer()

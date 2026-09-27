@@ -117,19 +117,29 @@ final class BrowserModel {
     /// The rows to show: this folder's items, with the contents of expanded
     /// folders nested under them, each level sorted.
     var rows: [FileItem] {
-        var result: [FileItem] = []
-        func add(_ list: [FileItem], depth: Int) {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        func matches(_ item: FileItem) -> Bool { query.isEmpty || item.name.localizedStandardContains(query) }
+        // With a search, a folder stays when it matches or holds a match (in an expanded folder).
+        func rows(_ list: [FileItem], depth: Int) -> [FileItem] {
+            var result: [FileItem] = []
             for var item in list.sorted(using: sortOrder) {
                 item.depth = depth
-                result.append(item)
-                if item.isDirectory, expanded.contains(item.location), let nested = children[item.location] {
-                    add(nested, depth: depth + 1)
+                var nested: [FileItem] = []
+                if item.isDirectory, expanded.contains(item.location), let inside = children[item.location] {
+                    nested = rows(inside, depth: depth + 1)
                 }
+                guard matches(item) || !nested.isEmpty else { continue }
+                result.append(item)
+                result += nested
             }
+            return result
         }
-        add(items, depth: 0)
-        return result
+        return rows(items, depth: 0)
     }
+
+    /// The toolbar search (⌘F): filters the listing (and expanded folders) by
+    /// name, ignoring case and accents. Cleared when moving to another folder.
+    var searchText = ""
 
     /// Whether this browser shows `folder`, as its location or an expanded folder.
     func shows(_ folder: BrowseLocation) -> Bool {
@@ -231,6 +241,7 @@ final class BrowserModel {
 
     private func show(_ location: BrowseLocation) {
         if location != current {
+            searchText = ""
             // A new folder: start collapsed, showing the last listing (if any)
             // at once while a fresh one loads.
             expanded = []

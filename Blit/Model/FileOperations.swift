@@ -188,7 +188,7 @@ final class FileOperations {
                               includeHidden: Bool) async -> String? {
         let here = BrowseLocation.local(folder)
         var local = sources.compactMap(\.localURL)
-        let remote = sources.filter { $0.serverID != nil }
+        var remote = sources.filter { $0.serverID != nil }
         var problems: [String] = []
 
         // Copying into the folder the items are already in: duplicate them, like Finder.
@@ -197,6 +197,35 @@ final class FileOperations {
         if mode == .copy, !inPlace.isEmpty {
             problems += await duplicateTracked(inPlace)
             onChanged?([here])
+        }
+
+        // Files that would land on an existing file: ask first, as Finder does
+        // (Replace / Keep Both / Skip / Stop), instead of failing them later.
+        var existsOverride: ExistsRule?
+        var replacing = Set<String>()
+        var keepingBoth = Set<String>()
+        let conflicts = await ConflictPrompt.conflicts(local.map { .local($0) } + remote, in: folder)
+        if !conflicts.isEmpty {
+            let volume = Self.volumeID(folder)
+            let moves = mode == .move || (mode == .automatic && remote.isEmpty && local.allSatisfy { url in
+                guard let volume, let other = Self.volumeID(url) else { return false }
+                return other.isEqual(volume)
+            })
+            switch await ConflictPrompt.ask(conflicts, folderName: destinationName, move: moves) {
+            case .stop:
+                return ""   // cancelled: nothing to report, and a Cut stays on the pasteboard
+            case .skip:
+                let skipped = Set(conflicts.map(\.source))
+                local.removeAll { skipped.contains(.local($0)) }
+                remote.removeAll { skipped.contains($0) }
+                if local.isEmpty, remote.isEmpty { return Self.summary(problems) }
+            case .replace:
+                existsOverride = .replace
+                replacing = Set(conflicts.map(\.name))
+            case .keepBoth:
+                existsOverride = .keepBoth
+                keepingBoth = Set(conflicts.map(\.name))
+            }
         }
 
         // Moves within one volume are renames.
@@ -211,8 +240,23 @@ final class FileOperations {
                 var moved: [(from: URL, to: URL)] = []
                 problems += await track("MOVE", done: "MOVED", sameVolume.map { .local($0) }, to: folder.lastPathComponent) { item in
                     guard let url = item.localURL else { return }
-                    try await Task.detached { try Self.moveLocal(url, into: folder) }.value
-                    let target = folder.appendingPathComponent(url.lastPathComponent)
+                    var target = folder.appendingPathComponent(url.lastPathComponent)
+                    let name = url.lastPathComponent
+                    if replacing.contains(name) {
+                        // Replace: the existing file goes to the Trash (deleted where there's none).
+                        let existing = target
+                        try await Task.detached {
+                            let fm = FileManager.default
+                            do { try fm.trashItem(at: existing, resultingItemURL: nil) } catch { try fm.removeItem(at: existing) }
+                        }.value
+                    }
+                    if keepingBoth.contains(name) {
+                        target = URL(fileURLWithPath: ExistsRule.keepBothPath(target.path) { FileManager.default.fileExists(atPath: $0) })
+                        let destination = target
+                        try await Task.detached { try FileManager.default.moveItem(at: url, to: destination) }.value
+                    } else {
+                        try await Task.detached { try Self.moveLocal(url, into: folder) }.value
+                    }
                     VerifiedIndex.shared.moved(from: url, to: target)
                     moved.append((url, target))
                 }
@@ -236,7 +280,7 @@ final class FileOperations {
         if !crossing.isEmpty {
             // A drag between devices copies (Finder's rule); a server's items only move within it.
             if let message = transfers.enqueue(crossing, to: here, destinationName: destinationName,
-                                               includeHidden: includeHidden, move: mode == .move) {
+                                               includeHidden: includeHidden, move: mode == .move, existsRule: existsOverride) {
                 problems.append(message)
             }
         }

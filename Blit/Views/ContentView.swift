@@ -16,6 +16,7 @@ struct ContentView: View {
     @AppStorage("showSecondPane") private var showSecondPane = false
     @State private var nasShare: VolumeLocation?
     @State private var showPalette = false
+    @FocusState private var searchFocused: Bool
     @State private var selection: BrowseLocation?
     @State private var editing: EditingServer?
     @State private var removing: ServerConfig?
@@ -82,6 +83,11 @@ struct ContentView: View {
         .navigationTitle(active?.title ?? "Blit")
         .navigationSubtitle(active?.subtitle ?? "")
         .toolbar { toolbar }
+        // Search the folder in the active pane (⌘F), as in Finder's toolbar.
+        .searchable(text: searchBinding, placement: .toolbar, prompt: searchPrompt)
+        .searchFocused($searchFocused)
+        .onReceive(NotificationCenter.default.publisher(for: .blitFocusSearch)) { _ in searchFocused = true }
+        .onReceive(NotificationCenter.default.publisher(for: .blitShowPalette)) { _ in showPalette = true }
         .onChange(of: selection) { _, location in
             if let location { active?.open(location) }
         }
@@ -189,9 +195,13 @@ struct ContentView: View {
     }
 
     private func startTransfer(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
-        if let message = transfers.enqueue(sources, to: destination, destinationName: name.isEmpty ? "Folder" : name,
-                                           includeHidden: active?.showHidden ?? false) {
-            transfers.notice(message, action: "TRANSFER", place: name)
+        // Through the same path as a drop, so an existing file prompts Replace / Keep Both.
+        let hidden = active?.showHidden ?? false
+        Task {
+            if let message = await operations.place(sources, into: destination, destinationName: name.isEmpty ? "Folder" : name,
+                                                    mode: .copy, includeHidden: hidden) {
+                transfers.notice(message, action: "TRANSFER", place: name)
+            }
         }
     }
 
@@ -205,9 +215,6 @@ struct ContentView: View {
                 .keyboardShortcut("]", modifiers: .command)
         }
         ToolbarItemGroup {
-            Button("Go to…", systemImage: "magnifyingglass") { showPalette = true }
-                .keyboardShortcut("k", modifiers: .command)
-                .help("Go to a favorite, server, drive or recent folder (⌘K)")
             Button("New Folder", systemImage: "folder.badge.plus") { active?.newFolder() }
                 .disabled(active?.current == nil)
                 .help("New Folder (⇧⌘N)")
@@ -313,6 +320,16 @@ struct ContentView: View {
     }
 
     /// The full HUD is showing (a file operation taking the slot shows the strip).
+    /// The toolbar search edits the active pane's filter.
+    private var searchBinding: Binding<String> {
+        Binding(get: { active?.searchText ?? "" }, set: { active?.searchText = $0 })
+    }
+
+    private var searchPrompt: String {
+        let name = active?.current?.lastComponent ?? ""
+        return name.isEmpty ? "Search" : "Search “\(name)”"
+    }
+
     private var showsExpandedHUD: Bool { transfers.isExpanded && !(transfers.featured?.isOperation ?? true) }
 
     /// Makes `model`'s pane the active one (clicked, right-clicked or focused).
@@ -365,6 +382,7 @@ struct ContentView: View {
         UITestHarness.runHUDKeysTestIfRequested(transfers: transfers)
         UITestHarness.runNoticeTestIfRequested(transfers: transfers)
         UITestHarness.runStatusTestIfRequested(transfers: transfers)
+        UITestHarness.runConflictTestIfRequested(transfers: transfers)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.runLicenseTestIfRequested(transfers: transfers)
