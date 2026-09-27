@@ -5,7 +5,7 @@
 import AppKit
 import SwiftUI
 
-/// A 1-bit bitmap ("#" on, anything else off) as a crisp template image.
+/// A bitmap ("#" on, "+" dim, anything else off) as a crisp template image.
 enum PixelArt {
     @MainActor private static var cache: [String: NSImage] = [:]
 
@@ -16,17 +16,22 @@ enum PixelArt {
         let width = CGFloat(rows.map(\.count).max() ?? 0) * cell
         let height = CGFloat(rows.count) * cell
         let image = NSImage(size: NSSize(width: width, height: height), flipped: true) { _ in
-            NSColor.black.setFill()
-            for (y, row) in rows.enumerated() {
-                for (x, ch) in row.enumerated() where ch == "#" {
-                    NSRect(x: CGFloat(x) * cell, y: CGFloat(y) * cell, width: cell, height: cell).fill()
-                }
-            }
+            draw(rows, cell: cell, at: .zero)
             return true
         }
         image.isTemplate = true
         cache[key] = image
         return image
+    }
+
+    /// Draws `rows` into the current (flipped) context: "#" solid, "+" dim.
+    static func draw(_ rows: [String], cell: CGFloat, at origin: NSPoint) {
+        for (y, row) in rows.enumerated() {
+            for (x, ch) in row.enumerated() where ch == "#" || ch == "+" {
+                NSColor.black.withAlphaComponent(ch == "#" ? 1 : 0.3).setFill()
+                NSRect(x: origin.x + CGFloat(x) * cell, y: origin.y + CGFloat(y) * cell, width: cell, height: cell).fill()
+            }
+        }
     }
 
     /// The NAS-verification shield: a shield with a check knocked out.
@@ -44,8 +49,9 @@ enum PixelArt {
 
     /// Menu bar arrow into a tray, or (`up`: data leaving this Mac for a
     /// share) out of it. While transferring, the stem's dashes march the way
-    /// the data goes (`frame` 0…2); idle, the stem is solid.
-    static func menuBarArrow(frame: Int?, up: Bool = false) -> [String] {
+    /// the data goes (`frame` 0…2) and the tray fills with `progress`; idle,
+    /// the stem and tray are solid.
+    static func menuBarArrow(frame: Int?, up: Bool = false, progress: Double? = nil) -> [String] {
         let head = [
             "#########",
             ".#######.",
@@ -59,8 +65,25 @@ enum PixelArt {
             stem.append(lit ? "...###..." : ".........")
         }
         let arrow = up ? head.reversed() + stem : stem + head
-        return arrow + [".........", "#########"]
+        let lit = progress.map { Int((min(max($0, 0), 1) * 9).rounded(.down)) } ?? 9
+        return arrow + [".........", String(repeating: "#", count: lit) + String(repeating: "+", count: 9 - lit)]
     }
+
+    /// The menu bar's "all done": a check over the tray, the arrow's size.
+    static let menuBarCheck = [
+        ".........",
+        ".........",
+        "........#",
+        ".......##",
+        "#.....##.",
+        "##...##..",
+        ".##.##...",
+        "..###....",
+        "...#.....",
+        ".........",
+        ".........",
+        "#########",
+    ]
 }
 
 /// A pixel spinner: one bright dot chasing around a 3×3 ring, with a fading tail.

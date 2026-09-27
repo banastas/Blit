@@ -13,6 +13,53 @@ import SwiftUI
 
 @MainActor
 enum UITestHarness {
+    /// `-BlitRenderMenuBar out.png`: every menu bar item state at 4×, on light
+    /// and dark bars, each in a frame showing its width.
+    static func renderMenuBarIfRequested() {
+        guard let path = UserDefaults.standard.string(forKey: "BlitRenderMenuBar") else { return }
+        typealias L = MenuBarIcon.Line
+        let states: [(String, [NSImage])] = [
+            ("idle", [MenuBarIcon.idle]),
+            ("down 20%", [MenuBarIcon.image([L(up: false, verifying: false, progress: 0.2, text: MenuBarIcon.time(760))], frame: 0)]),
+            ("up 88%", [MenuBarIcon.image([L(up: true, verifying: false, progress: 0.88, text: MenuBarIcon.time(68))], frame: 1)]),
+            ("1h05", [MenuBarIcon.image([L(up: false, verifying: false, progress: 0.5, text: MenuBarIcon.time(3900))], frame: 2)]),
+            ("percent", [MenuBarIcon.image([L(up: false, verifying: false, progress: 1, text: "100%")], frame: 0)]),
+            ("verify", [MenuBarIcon.image([L(up: true, verifying: true, progress: nil, text: MenuBarIcon.time(300))], frame: nil)]),
+            ("both", [MenuBarIcon.image([L(up: true, verifying: false, progress: nil, text: "1m"),
+                                         L(up: false, verifying: false, progress: nil, text: "12m")], frame: 0)]),
+            ("both+sha", [MenuBarIcon.image([L(up: true, verifying: true, progress: nil, text: "4m"),
+                                             L(up: false, verifying: false, progress: nil, text: "1h05")], frame: 1)]),
+            ("retry", [MenuBarIcon.image([L(up: false, verifying: false, progress: 0.4, text: "···")], frame: nil)]),
+            ("paused", [MenuBarIcon.paused]),
+            ("done", [MenuBarIcon.done]),
+            ("failed", [MenuBarIcon.idle, MenuBarIcon.failureMark]),
+        ]
+        let bar = { (scheme: ColorScheme) in
+            HStack(spacing: 10) {
+                ForEach(states.indices, id: \.self) { i in
+                    VStack(spacing: 2) {
+                        HStack(spacing: 3) {
+                            ForEach(states[i].1.indices, id: \.self) { Image(nsImage: states[i].1[$0]) }
+                        }
+                        .frame(height: 22)
+                        .border(Color.gray.opacity(0.4), width: 0.5)
+                        Text(states[i].0).font(.system(size: 7)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(6)
+            .foregroundStyle(.primary)
+            .background(scheme == .dark ? Color(white: 0.12) : Color(white: 0.9))
+            .environment(\.colorScheme, scheme)
+        }
+        let renderer = ImageRenderer(content: VStack(spacing: 0) { bar(.light); bar(.dark) })
+        renderer.scale = 4
+        if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
     /// `-BlitRenderStatusIcons out.png`: the sidebar status icons at 8×, light and dark.
     static func renderStatusIconsIfRequested() {
         guard let path = UserDefaults.standard.string(forKey: "BlitRenderStatusIcons") else { return }
@@ -1257,6 +1304,72 @@ enum UITestHarness {
             let rows = tables(in: logWindow?.contentView).first?.numberOfRows ?? -1
             let records = TransferLog.records().count
             lines.append("log window open: \(logWindow != nil) · rows \(rows) · records in file \(records)")
+            lines.append("done")
+            try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// `-BlitMenuBarTest <log>`: a download and a copy to a share running at
+    /// once (simulated): lane order, the featured job, time left, the queue
+    /// ETA per lane, and renders of the menu bar item and panel beside the log.
+    static func runMenuBarTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitMenuBarTest") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            VolumeKinds.networkRoots.insert("/Volumes/TestShare")
+            var server = ServerConfig()
+            server.host = "example.invalid"
+            let download = TransferJob(kind: .download(server), sources: [.remote(server.id, RemotePath("files/South.Park.S29E01.mkv"))],
+                                       destination: URL(fileURLWithPath: "/Volumes/TestSSD/Downloads"),
+                                       title: "South.Park.S29E01.mkv", destinationName: "Downloads")
+            download.totalBytes = 10_000_000_000
+            download.resumedBytes = 2_000_000_000
+            download.history = Array(repeating: 60, count: 15)   // 60 MB/s: 8 GB in ~2 min 13 s
+            download.fileCount = 3
+            download.verifying = ["Extras.mkv": Date()]
+            download.hashSizes = ["Extras.mkv": 1_000_000_000]
+            download.hashed = ["Extras.mkv": 420_000_000]
+            download.startedAt = Date().addingTimeInterval(-600)
+            let copy = TransferJob(kind: .copy, sources: [.local(URL(fileURLWithPath: "/Volumes/TestSSD/Go 1999.mkv"))],
+                                   destination: URL(fileURLWithPath: "/Volumes/TestShare/Movies"), title: "Go 1999.mkv",
+                                   destinationName: "Movies")
+            copy.totalBytes = 70_000_000_000
+            copy.resumedBytes = 62_000_000_000
+            copy.history = Array(repeating: 117, count: 15)   // 117 MB/s: 8 GB in ~68 s
+            copy.fileCount = 1
+            copy.startedAt = Date().addingTimeInterval(-60)
+            let queued = TransferJob(kind: .copy, sources: [.local(URL(fileURLWithPath: "/Volumes/TestSSD/Next.mkv"))],
+                                     destination: URL(fileURLWithPath: "/Volumes/TestShare/Movies"), title: "Next.mkv",
+                                     destinationName: "Movies")
+            queued.totalBytes = 30_000_000_000
+            queued.status = .paused
+            download.status = .running
+            copy.status = .running
+            transfers.debugAppend([download, copy, queued])
+            queued.status = .queued
+            var lines: [String] = []
+            lines.append("active order: \(transfers.activeTransfers.map(\.title))")
+            lines.append("outgoing: download \(download.isOutgoing) · copy \(copy.isOutgoing)")
+            lines.append("featured (longest running): \(transfers.featured?.title ?? "none")")
+            lines.append("seconds left: download \(download.secondsLeft ?? -1) · copy \(copy.secondsLeft ?? -1)")
+            lines.append("menu bar text: download \(download.secondsLeft.map(MenuBarIcon.time) ?? "--") · copy \(copy.secondsLeft.map(MenuBarIcon.time) ?? "--")")
+            let totals = transfers.queueTotals
+            lines.append("queue: \(totals.queued) queued · \(totals.bytesLeft / 1_000_000_000) GB left · eta \(totals.eta ?? -1) s (copy lane 38 GB at 117 MB/s ≈ 324 s)")
+            lines.append("time format: \([30, 59, 60, 754, 3599, 3600, 3900, 35_999, 36_000, 400_000].map(MenuBarIcon.time))")
+            let render = { (view: AnyView, suffix: String, scale: CGFloat) in
+                let renderer = ImageRenderer(content: view.environment(transfers))
+                renderer.scale = scale
+                if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: logPath.replacingOccurrences(of: ".log", with: "-\(suffix).png")))
+                }
+            }
+            render(AnyView(MenuBarLabel().padding(4).background(Color(white: 0.9))), "label", 4)
+            render(AnyView(MenuBarPanel().background(Color(white: 0.2)).environment(\.colorScheme, .dark)), "panel", 2)
+            copy.status = .finished
+            lines.append("featured after the copy finished: \(transfers.featured?.title ?? "none")")
+            transfers.debugRemove([download, copy, queued])
+            VolumeKinds.networkRoots.remove("/Volumes/TestShare")
             lines.append("done")
             try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
         }

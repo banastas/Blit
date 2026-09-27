@@ -224,6 +224,25 @@ final class TransferJob: Identifiable {
         verifyBytes.map { Double($0.done) / Double($0.total) }
     }
 
+    /// The average rate over the last 15 seconds (the hash rate while only
+    /// checksums remain), steadier than `rate` for estimates; nil before any.
+    var recentRate: Double? {
+        let recent = history.suffix(15)
+        return recent.isEmpty ? nil : recent.reduce(0, +) / Double(recent.count)
+    }
+
+    /// Seconds left for this job at its recent rate: the bytes still to move,
+    /// then, once they're across, the checksums still to run. For the menu bar,
+    /// which shouldn't jump with every sample.
+    var secondsLeft: Int? {
+        guard let rate = recentRate, rate > 0.5 else { return nil }
+        if isVerifyingOnly {
+            guard let bytes = verifyBytes else { return nil }
+            return Int(Double(bytes.total - bytes.done) / (rate * 1e6))
+        }
+        return Int(Double(max(totalBytes - transferred, 0)) / (rate * 1e6))
+    }
+
     /// Seconds until the waiting files are verified, at the current hash rate.
     var verifySecondsLeft: Int? {
         guard hashRate > 0.5 else { return nil }
@@ -441,12 +460,46 @@ final class TransferManager {
     /// for the user to pick a destination.
     var pendingExternalFiles: [URL] = []
 
-    /// The job the strip shows: the most recently started active one (so a
-    /// delete shows over a long download while it runs), else the most recent.
+    /// The job the strip shows: a running file operation (so a delete shows
+    /// over a long download while it runs), else the transfer that's been
+    /// running longest, so the other lane starting a job doesn't take over;
+    /// else the most recent.
     var featured: TransferJob? {
         if let pinnedJobID, let pinned = jobs.first(where: { $0.id == pinnedJobID }) { return pinned }
-        return jobs.filter(\.isActive).max { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
+        let active = jobs.filter(\.isActive)
+        let started = { (job: TransferJob) in job.startedAt ?? .distantPast }
+        return active.filter(\.isOperation).max { started($0) < started($1) }
+            ?? active.min { started($0) < started($1) }
             ?? jobs.last(where: { $0.status != .queued }) ?? jobs.first
+    }
+
+    /// Transfers running now, at most one per lane: outgoing (to a share) first.
+    var activeTransfers: [TransferJob] {
+        transferJobs.filter(\.isActive).sorted { a, b in
+            a.isOutgoing != b.isOutgoing ? a.isOutgoing : a.lane == .download && b.lane != .download
+        }
+    }
+
+    /// The menu bar's ✕: set when a transfer ends with failures, cleared when
+    /// the menu bar panel is opened.
+    var menuBarFailure = false
+    /// The menu bar's ✓, for a minute after the queue finishes cleanly.
+    private(set) var menuBarDone = false
+    @ObservationIgnored private var menuBarDoneTask: Task<Void, Never>?
+
+    private func showMenuBarDone() {
+        menuBarDone = true
+        menuBarDoneTask?.cancel()
+        menuBarDoneTask = Task {
+            try? await Task.sleep(for: .seconds(60))
+            if !Task.isCancelled { menuBarDone = false }
+        }
+    }
+
+    /// Stops the ✓ as soon as new work starts.
+    private func clearMenuBarDone() {
+        menuBarDoneTask?.cancel()
+        menuBarDone = false
     }
 
     /// A job the user picked in the queue panel to show in the HUD.
@@ -649,8 +702,23 @@ final class TransferManager {
     var queueTotals: (queued: Int, bytesLeft: Int64, eta: Int?) {
         let pending = transferJobs.filter { $0.isActive || $0.status == .queued }
         let left = pending.reduce(Int64(0)) { $0 + max($1.totalBytes - $1.transferred, 0) }
-        let rate = pending.filter(\.isActive).reduce(0) { $0 + $1.rate }
-        return (queuedCount, left, rate > 0.1 && left > 0 ? Int(Double(left) / (rate * 1e6)) : nil)
+        // Each lane drains at its own speed (the internet, the home network):
+        // the queue is done when the slower lane is. A lane with bytes left
+        // but no speed yet makes the whole estimate unknown.
+        var eta: Int? = 0
+        for lane in [TransferJob.Lane.download, .copy] {
+            let inLane = pending.filter { $0.lane == lane }
+            let bytes = inLane.reduce(Int64(0)) { $0 + max($1.totalBytes - $1.transferred, 0) }
+            guard bytes > 0 else { continue }
+            // While only checksums remain, the history holds the hash rate: use the peak.
+            guard let running = inLane.first(where: \.isActive),
+                  let rate = running.isVerifyingOnly ? running.peakRate : running.recentRate, rate > 0.5 else {
+                eta = nil
+                break
+            }
+            eta = max(eta ?? 0, Int(Double(bytes) / (rate * 1e6)))
+        }
+        return (queuedCount, left, left > 0 ? eta : nil)
     }
 
     /// One SFTP round trip in milliseconds (a stat of the home folder), or nil
@@ -927,6 +995,7 @@ final class TransferManager {
 
     private func start(_ job: TransferJob) {
         let lane = job.lane
+        clearMenuBarDone()
         runningJobs[lane] = job
         runTasks[lane] = Task {
             await run(job)
@@ -944,13 +1013,17 @@ final class TransferManager {
             batchVerified = batchVerified && jobVerified
             batch.jobs += 1
             batch.bytes += job.totalBytes
-            if jobFailed { batch.failed += 1 }
+            if jobFailed {
+                batch.failed += 1
+                menuBarFailure = true
+            }
             batch.sizeOnly += job.sizeOnlyCount
             batch.unverified += job.unverifiedCount
             onFinished?(job)
             await notify(job)
             if !isQuitting, !jobs.contains(where: { !$0.isOperation && ($0.status == .queued || $0.isActive) }) {
                 DockProgress.shared.finish(batch.failed > 0 ? .failed : batchVerified ? .verified : .plain)
+                if batch.failed == 0 { showMenuBarDone() }
                 await notifyBatch(batch)
                 batchVerified = true
                 batch = Batch()

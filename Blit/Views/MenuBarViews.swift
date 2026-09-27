@@ -4,39 +4,65 @@
 import BlitRemote
 import SwiftUI
 
+/// The menu bar item: what's running and how long it has left, at a glance.
+/// Speed, names and everything else are in the panel.
 struct MenuBarLabel: View {
     @Environment(TransferManager.self) private var transfers
+    /// "timeLeft" or "percent" (Settings › General).
+    @AppStorage("menuBarShows") private var shows = "timeLeft"
     /// Animation frame for the pixel arrow's marching stem.
     @State private var frame = 0
 
     var body: some View {
-        label
+        let running = transfers.activeTransfers
+        HStack(spacing: 3) {
+            if !running.isEmpty {
+                Image(nsImage: MenuBarIcon.image(running.map(line), frame: frame))
+            } else if transfers.transferJobs.contains(where: { $0.status == .paused }) {
+                Image(nsImage: MenuBarIcon.paused)
+            } else {
+                Image(nsImage: transfers.menuBarDone ? MenuBarIcon.done : MenuBarIcon.idle)
+            }
+            if transfers.menuBarFailure {
+                Image(nsImage: MenuBarIcon.failureMark)
+            }
+        }
+        .task(id: running.isEmpty) {
+            guard !running.isEmpty else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(160))
+                frame = (frame + 1) % 6
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken(running))
     }
 
-    @ViewBuilder private var label: some View {
-        if let job = transfers.featured, job.isActive, !job.isOperation {
-            HStack(spacing: 4) {
-                Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: frame, up: job.isOutgoing), cell: 1.5))
-                Text(rateText(job)).monospacedDigit()
-            }
-            .task {
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(160))
-                    frame = (frame + 1) % 3
-                }
-            }
-        } else {
-            Image(nsImage: PixelArt.image(PixelArt.menuBarArrow(frame: nil), cell: 1.5))
+    private func line(_ job: TransferJob) -> MenuBarIcon.Line {
+        let verifying = job.isVerifyingOnly
+        let progress = verifying ? (job.verifyProgress ?? job.progress) : job.progress
+        let text: String
+        switch job.status {
+        case .preparing: text = "--"
+        case .waiting: text = frame < 3 ? "···" : ""
+        case .waitingForSpace: text = "full"
+        default:
+            text = shows == "percent"
+                ? "\(Int((progress * 100).rounded(.down)))%"
+                : job.secondsLeft.map(MenuBarIcon.time) ?? "--"
         }
+        return MenuBarIcon.Line(up: job.isOutgoing, verifying: verifying, progress: verifying ? nil : progress, text: text)
     }
 
-    private func rateText(_ job: TransferJob) -> String {
-        if !job.verifying.isEmpty, job.transferred >= job.totalBytes {
-            return job.verifyProgress.map { "SHA256 · \(Int(($0 * 100).rounded(.down)))%" } ?? "SHA256"
+    private func spoken(_ running: [TransferJob]) -> String {
+        var parts = running.map { job in
+            let what = job.isVerifyingOnly ? "Verifying" : job.isOutgoing ? "Copying" : job.lane == .download ? "Downloading" : "Copying"
+            let left = job.secondsLeft.map { ", about \(TransferJob.duration($0)) left" } ?? ""
+            return "\(what) \(job.title)\(left)"
         }
-        if job.status == .preparing { return "…" }
-        if case .waiting = job.status { return "RETRY" }
-        return String(format: "%.0f MB/s · %d%%", job.rate, Int((job.progress * 100).rounded(.down)))
+        if parts.isEmpty { parts.append(transfers.menuBarDone ? "Blit, transfers finished" : "Blit") }
+        if transfers.menuBarFailure { parts.append("a transfer had problems") }
+        return parts.joined(separator: "; ")
     }
 }
 
@@ -46,24 +72,23 @@ struct MenuBarPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let job = transfers.featured {
+            // Everything running, one card per lane (downloads, copies, and
+            // jobs down to their checksums); else the latest job.
+            let running = transfers.activeTransfers
+            if !running.isEmpty {
+                ForEach(running) { MenuBarTransfer(job: $0) }
+            } else if let job = transfers.featured {
                 MenuBarTransfer(job: job)
-                let others = transfers.transferJobs.filter { $0 !== job && ($0.isActive || $0.status == .queued || $0.status == .paused) }
-                if !others.isEmpty {
-                    Text("+ \(others.count) more in the queue" + (others.contains(where: \.isActive) ? " · 1 running" : ""))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             } else {
                 Text("No transfers").foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if transfers.isKeepingAwake || transfers.queuedCount > 0 {
+            if transfers.isKeepingAwake || transfers.queuedCount > 0 || pausedCount > 0 {
                 footer
             }
             Divider()
             HStack {
-                if let job = transfers.featured, case .waiting = job.status {
+                if let job = transfers.activeTransfers.first(where: { if case .waiting = $0.status { true } else { false } }) {
                     Button("Retry Now") { transfers.retryNow(job) }
                 }
                 if transfers.hasActiveWork || transfers.queuePaused {
@@ -81,7 +106,10 @@ struct MenuBarPanel: View {
         }
         .padding(12)
         .frame(width: 320)
+        .onAppear { transfers.menuBarFailure = false }
     }
+
+    private var pausedCount: Int { transfers.transferJobs.filter { $0.status == .paused }.count }
 
     /// "Keeping the Mac awake · 2 queued · 1.9 TB left · ~2 d 4 h".
     private var footer: some View {
@@ -89,6 +117,7 @@ struct MenuBarPanel: View {
         var parts: [String] = []
         if transfers.isKeepingAwake { parts.append("Keeping the Mac awake") }
         if totals.queued > 0 { parts.append("\(totals.queued) queued") }
+        if pausedCount > 0 { parts.append("\(pausedCount) paused") }
         if totals.bytesLeft > 0 { parts.append("\(totals.bytesLeft.formatted(.byteCount(style: .file))) left") }
         if let eta = totals.eta { parts.append(TransferJob.duration(eta)) }
         return Label(parts.joined(separator: " · "), systemImage: transfers.isKeepingAwake ? "cup.and.saucer" : "tray.full")
@@ -140,6 +169,14 @@ struct MenuBarTransfer: View {
                 Spacer()
                 Text(detail).font(HUDFont.terminal(15)).foregroundStyle(HUDColor.dim)
             }
+            // Checksums running alongside the transfer (a download hashes each
+            // file on the server as it lands).
+            if !verifying, !job.verifying.isEmpty {
+                hudText(hashLine, glyphSize: 9)
+                    .font(HUDFont.terminal(15))
+                    .foregroundStyle(HUDColor.dim)
+                    .lineLimit(1)
+            }
             if !job.failures.isEmpty {
                 // Opens the window with the full HUD, where the WARNING panel is.
                 Button {
@@ -167,6 +204,14 @@ struct MenuBarTransfer: View {
     }
 
     private var countLabel: String { job.countLabel }
+
+    /// "SHA256 · 2 FILES · 42%".
+    private var hashLine: String {
+        let count = job.verifying.count
+        var text = "SHA256 · \(count) FILE\(count == 1 ? "" : "S")"
+        if let fraction = job.verifyProgress { text += " · \(Int((fraction * 100).rounded(.down)))%" }
+        return text
+    }
 
     private var headline: String {
         if case .operation(let verb, _) = job.kind { return verb }
@@ -206,6 +251,7 @@ struct SettingsView: View {
     @AppStorage("existsRule") private var existsRule: ExistsRule = .skipIfSameSize
     @AppStorage("notifyEachTransfer") private var notifyEachTransfer = true
     @AppStorage("verifyFiles") private var verifyFiles = "sha256"
+    @AppStorage("menuBarShows") private var menuBarShows = "timeLeft"
 
     // Tabs, as in Finder and Mail: each pane holds a few settings and sizes to
     // fit, so nothing scrolls and the window stays small enough for any screen.
@@ -214,7 +260,13 @@ struct SettingsView: View {
             pane {
                 Section {
                     Toggle("Show Blit in the menu bar", isOn: $showMenuBarExtra)
-                    note("Shows transfer speed while Blit is working, and keeps the transfer HUD one click away when the window is closed.")
+                    if showMenuBarExtra {
+                        Picker("Menu bar shows", selection: $menuBarShows) {
+                            Text("Time left").tag("timeLeft")
+                            Text("Percent done").tag("percent")
+                        }
+                    }
+                    note("While Blit is working, the arrow's tray fills as it goes and the transfer HUD is one click away, even with the window closed.")
                     Toggle("Open the full transfer HUD when a transfer starts", isOn: $expandHUDOnTransfer)
                     note("Collapse it and it stays collapsed until those transfers finish.")
                     Picker("Notifications", selection: $notifyEachTransfer) {
