@@ -122,7 +122,8 @@ extension TransferJob {
         case "present-sha256": FileStatus(text: "verified", glyph: "✓", help: "Already there; SHA-256 matched")
         case "read-back": FileStatus(text: "verified", glyph: "✓", help: "SHA-256 matched a read-back of the copy")
         case "cloned": FileStatus(text: "cloned", glyph: "✓", help: "APFS clone on the same volume")
-        case "size-only": FileStatus(text: "size only", glyph: "=", help: "Sizes matched; not hash-verified")
+        case "size-only": FileStatus(text: "size only", glyph: "=", help: "Sizes matched; the server couldn't hash it")
+        case "verify-off": FileStatus(text: "size only", glyph: "=", help: "Sizes matched; SHA-256 verification is off (Settings › Verify files)")
         case "already-present": FileStatus(text: "already there", glyph: "=", help: "Already at the destination (same size)")
         default: FileStatus(text: "done", glyph: "✓", help: "Transferred (not verified)")
         }

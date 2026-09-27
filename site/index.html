@@ -366,6 +366,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
           <h3><span data-glyph="check"></span> Hashed on the server</h3>
           <p>Blit asks the server for each file's <span class="k">SHA-256</span> while the file is still in its cache, and hashes its own copy as the bytes arrive. The two have to match before the file gets its real name.</p>
           <p class="dim">Until then it's a <span class="k">.blitpart</span>. A half-written file never sits under a real name.</p>
+          <p class="dim">The check runs alongside the download. Want raw speed instead? Switch to size checks in Settings; moves still verify.</p>
         </div>
         <div class="card">
           <h3><span data-glyph="check"></span> Hashed on the NAS</h3>
@@ -394,7 +395,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         <div class="metric"><div class="label dim">Up to</div><div class="v">278%<small> FASTER</small></div><div class="d">than the fastest single-connection Mac client we measured <span class="dim">(93.0 vs 24.6 MB/s)</span></div></div>
         <div class="metric"><div class="label dim">SSD → NAS</div><div class="v">94%<small> OF LINE RATE</small></div><div class="d">on 1 GbE, with every file verified on the NAS <span class="dim">(106.3 of ~113 MB/s)</span></div></div>
       </div>
-      <p class="label dim" style="margin:10px 2px 0">Measured from the Mac to a server 148 ms away, same server and network for every method.</p>
+      <p class="label dim" style="margin:10px 2px 0">Measured from the Mac to a server 148 ms away, same server and network for every method. Verification runs alongside the transfer, or can be switched to size checks for raw speed.</p>
       <div class="grid" style="margin-top:14px">
         <div class="card">
           <h3><span data-glyph="up"></span> Resumes anything</h3>

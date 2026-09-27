@@ -296,9 +296,10 @@ struct TransferStrip: View {
         if job.allAlreadyPresent, job.failures.isEmpty {
             return "= \(job.fileCount)/\(job.fileCount) ALREADY PRESENT · \(size) → \(job.destinationName.uppercased())"
         }
-        let mark = !job.failures.isEmpty ? "✕" : job.sizeOnlyCount > 0 ? "=" : "✓"
+        let mark = !job.failures.isEmpty ? "✕" : job.sizeOnlyCount > 0 || job.unverifiedCount > 0 ? "=" : "✓"
         return "\(mark) \(verified) · \(size) → \(job.destinationName.uppercased())"
             + (job.sizeOnlyCount > 0 ? " · \(job.sizeOnlyCount) SIZE ONLY, NOT HASH-VERIFIED" : "")
+            + (job.unverifiedCount > 0 ? " · \(job.unverifiedCount) SIZE-CHECKED (VERIFY OFF)" : "")
             + (job.filesAlreadyPresent > 0 ? " · \(job.filesAlreadyPresent) ALREADY THERE" : "")
             + (job.failures.isEmpty ? "" : " · \(job.failures.count) FAILED")
     }
@@ -359,7 +360,7 @@ extension TransferJob {
         let arrow = status == .paused ? "‖"
             : isActive ? "▲"
             : status != .finished || !failures.isEmpty ? "✕"
-            : allAlreadyPresent || sizeOnlyCount > 0 ? "=" : "✓"
+            : allAlreadyPresent || sizeOnlyCount > 0 || unverifiedCount > 0 ? "=" : "✓"
         guard fileCount > 0 else { return "\(arrow) --/--" }
         let width = max(2, String(fileCount).count)
         return "\(arrow) \(String(filesFinished).leftPadded(width))/\(String(fileCount).leftPadded(width))"

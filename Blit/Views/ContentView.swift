@@ -365,6 +365,7 @@ struct ContentView: View {
         UITestHarness.runHUDKeysTestIfRequested(transfers: transfers)
         UITestHarness.runNoticeTestIfRequested(transfers: transfers)
         UITestHarness.runStatusTestIfRequested(transfers: transfers)
+        UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)

@@ -203,6 +203,7 @@ struct SettingsView: View {
     @AppStorage("expandHUDOnTransfer") private var expandHUDOnTransfer = true
     @AppStorage("existsRule") private var existsRule: ExistsRule = .skipIfSameSize
     @AppStorage("notifyEachTransfer") private var notifyEachTransfer = true
+    @AppStorage("verifyFiles") private var verifyFiles = "sha256"
 
     var body: some View {
         Form {
@@ -222,6 +223,15 @@ struct SettingsView: View {
                     Text("When the queue finishes, and on problems").tag(false)
                 }
                 Text("Problems, files that were only size-checked, and waiting for disk space always notify.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Verify files", selection: $verifyFiles) {
+                    Text("SHA-256 (recommended)").tag("sha256")
+                    Text("Size only (faster)").tag("sizeOnly")
+                }
+                Text(verifyFiles == "sizeOnly"
+                     ? "Files are checked by size only, with no hashing on the server or NAS. Moves still verify by SHA-256 before removing anything. Applies to transfers queued from now on."
+                     : "Each file is checked by SHA-256 where it lands, alongside the download, before it gets its real name. Applies to transfers queued from now on.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Picker("When a file already exists", selection: $existsRule) {

@@ -888,6 +888,48 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitVerifyTest <log> -BlitVerifyTestDest <folder on another volume>`, with
+    /// `-verifyFiles sizeOnly` (a launch argument: not saved): a copy is size-checked
+    /// and labelled so; a move still verifies by SHA-256 before removing sources.
+    static func runVerifyTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitVerifyTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitVerifyTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-verify-test")
+            try? fm.removeItem(at: root)
+            let dest = URL(fileURLWithPath: destPath)
+            for pack in ["Copy", "Move"] {
+                let dir = root.appendingPathComponent(pack)
+                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                for name in ["a.bin", "b.bin"] {
+                    fm.createFile(atPath: dir.appendingPathComponent(name).path, contents: Data((0..<(1 << 20)).map { _ in UInt8.random(in: 0...255) }))
+                }
+            }
+            lines.append("setting: \(UserDefaults.standard.string(forKey: "verifyFiles") ?? "sha256") · default verify \(TransferJob.defaultVerify)")
+            for (pack, move) in [("Copy", false), ("Move", true)] {
+                if let message = transfers.enqueue([.local(root.appendingPathComponent(pack))], to: .local(dest), destinationName: "dest", move: move) {
+                    lines.append("\(pack): \(message)"); continue
+                }
+                guard let job = transfers.transferJobs.last else { continue }
+                for _ in 0..<120 where job.status != .finished && !(job.status == .failed("") ) {
+                    if case .failed = job.status { break }
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                try? await Task.sleep(for: .seconds(1))
+                let sourceLeft = fm.fileExists(atPath: root.appendingPathComponent(pack).appendingPathComponent("a.bin").path)
+                lines.append("\(pack): \(job.status) · verifies \(job.verifies) · verified \(job.filesVerified) · size-checked (off) \(job.unverifiedCount) · method \(job.verificationMethod) · count \(job.countLabel) · outcomes \(job.outcomes.values.sorted()) · source kept \(sourceLeft)")
+            }
+            transfers.dismissFinished()
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

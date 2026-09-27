@@ -265,6 +265,7 @@ final class TransferJob: Identifiable {
     /// How files are actually being verified, from what they finished with:
     /// weaker outcomes (size only, read-back instead of the NAS) are named.
     var verificationMethod: String {
+        if !verifies { return "SIZE ONLY · VERIFY OFF" }
         if case .download = kind {
             if sizeOnlyCount > 0 { return filesVerified > 0 ? "SERVER SHA256 · \(sizeOnlyCount) SIZE ONLY" : "SIZE ONLY" }
             return "SERVER SHA256"
@@ -304,6 +305,18 @@ final class TransferJob: Identifiable {
     /// What to do with files already at the destination (PRD R5.3), chosen in
     /// Settings when the transfer was queued.
     var existsRule: ExistsRule = TransferJob.defaultExistsRule
+    /// Verify each file by SHA-256 (Settings › Verify files); off means a size
+    /// check only. Moves always verify: see `verifies`.
+    var verify = TransferJob.defaultVerify
+    /// Files that finished with a size check because verification is off (by
+    /// choice, unlike `sizeOnlyCount`, which is the server being unable to hash).
+    var unverifiedCount = 0
+
+    /// Whether files are verified: always for a move, since its sources are only
+    /// removed once their copies' SHA-256 has matched.
+    var verifies: Bool { verify || deleteSources }
+
+    static var defaultVerify: Bool { UserDefaults.standard.string(forKey: "verifyFiles") != "sizeOnly" }
 
     static var defaultExistsRule: ExistsRule {
         UserDefaults.standard.string(forKey: "existsRule").flatMap(ExistsRule.init(rawValue:)) ?? .skipIfSameSize
@@ -342,7 +355,7 @@ final class TransferManager {
     /// Every job finished so far in the current batch verified its files.
     @ObservationIgnored private var batchVerified = true
     /// Totals for the current batch (until the queue drains), for its summary.
-    struct Batch { var jobs = 0; var bytes: Int64 = 0; var failed = 0; var sizeOnly = 0 }
+    struct Batch { var jobs = 0; var bytes: Int64 = 0; var failed = 0; var sizeOnly = 0; var unverified = 0 }
     @ObservationIgnored private var batch = Batch()
 
     /// Settings: a notification per transfer (default), or only when the queue
@@ -726,6 +739,7 @@ final class TransferManager {
         var removedRoots: [String]?
         var paused: Bool?
         var existsRule: ExistsRule?
+        var verify: Bool?
     }
 
     private static var queueURL: URL {
@@ -757,7 +771,8 @@ final class TransferManager {
                             verifiedLocal: verified.local.isEmpty ? nil : verified.local,
                             verifiedRemote: verified.remote.isEmpty ? nil : verified.remote,
                             removedRoots: job.removedRoots.isEmpty ? nil : Array(job.removedRoots),
-                            paused: job.status == .paused ? true : nil, existsRule: job.existsRule)
+                            paused: job.status == .paused ? true : nil, existsRule: job.existsRule,
+                            verify: job.verify ? nil : false)
         }
         let url = Self.queueURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -794,6 +809,7 @@ final class TransferManager {
             job.removedRoots = Set(s.removedRoots ?? [])
             if s.paused == true { job.status = .paused }
             if let rule = s.existsRule { job.existsRule = rule }
+            if let verify = s.verify { job.verify = verify }
             job.restored = true
             job.note("RESTORED FROM LAST SESSION · RESUMING")
             jobs.append(job)
@@ -830,6 +846,9 @@ final class TransferManager {
             guard notifyEachTransfer else { return }
             content.title = "\(job.title) → \(job.destinationName)"
             var body = "\(job.filesVerified) of \(job.fileCount) files verified · \(size)"
+            if job.unverifiedCount > 0, job.filesVerified == 0 {
+                body = "\(job.fileCount) file\(job.fileCount == 1 ? "" : "s") copied, checked by size (verification is off) · \(size)"
+            }
             if job.allAlreadyPresent { body = "All \(job.fileCount) already there · \(size)" }
             else if job.filesAlreadyPresent > 0 { body += " · \(job.filesAlreadyPresent) already there" }
             content.body = body
@@ -855,7 +874,8 @@ final class TransferManager {
             content.sound = .default
         } else {
             content.title = "All transfers finished"
-            content.body = "\(batch.jobs) transfers · \(size)" + (batch.sizeOnly > 0 ? " · \(batch.sizeOnly) files only size-checked" : " · all verified")
+            content.body = "\(batch.jobs) transfers · \(size)" + (batch.sizeOnly > 0 ? " · \(batch.sizeOnly) files only size-checked"
+                : batch.unverified > 0 ? " · \(batch.unverified) size-checked (verification off)" : " · all verified")
         }
         try? await center.add(UNNotificationRequest(identifier: "batch-\(UUID().uuidString)", content: content, trigger: nil))
     }
@@ -907,6 +927,7 @@ final class TransferManager {
             batch.bytes += job.totalBytes
             if jobFailed { batch.failed += 1 }
             batch.sizeOnly += job.sizeOnlyCount
+            batch.unverified += job.unverifiedCount
             onFinished?(job)
             await notify(job)
             if !isQuitting, !jobs.contains(where: { !$0.isOperation && ($0.status == .queued || $0.isActive) }) {
@@ -1366,6 +1387,8 @@ final class TransferManager {
         var options = TransferOptions()
         options.skipExistingSameSize = true
         options.existsRule = job.existsRule
+        options.verify = job.verifies
+        if !job.verifies { job.note("VERIFY OFF · FILES ARE SIZE-CHECKED ONLY (SETTINGS › VERIFY FILES)") }
         job.connectionCounters = clients.map { _ in ByteCounter() }
         if job.deleteSources { job.note("MOVE · SOURCES ARE REMOVED ONCE VERIFIED BY SHA256") }
         let ledger = job.verifiedSources
@@ -1566,7 +1589,7 @@ final class TransferManager {
         // Verify on the NAS itself when this share has a NAS login (PRD R1.6, R4.2).
         var nas: NASVerifier?
         var nasConnection: SSHConnection?
-        if let mount = MountInfo.of(job.destination.path), let login = servers.nasLogin(forMount: mount.mountPoint),
+        if job.verifies, let mount = MountInfo.of(job.destination.path), let login = servers.nasLogin(forMount: mount.mountPoint),
            let root = login.nasRoot, login.hasCredential {
             do {
                 let connection = try await SSHConnection.connect(to: login.endpoint, credential: try login.credential(),
@@ -1589,6 +1612,8 @@ final class TransferManager {
         var options = CopyOptions()
         options.skipExistingSameSize = true
         options.existsRule = job.existsRule
+        options.verify = job.verifies
+        if !job.verifies { job.note("VERIFY OFF · FILES ARE SIZE-CHECKED ONLY (SETTINGS › VERIFY FILES)") }
         let stopFlag = job.stopFlag
         options.shouldStop = { stopFlag.isSet }
         job.connectionCounters = (0..<options.concurrentFiles).map { _ in ByteCounter() }
@@ -1646,7 +1671,7 @@ extension TransferJob {
             let (hash, method): (String?, String) = switch v {
             case .sha256(let h, _): (h, "server-sha256")
             case .sizeOnly: (nil, "size-only")
-            case .skipped: (nil, "none")
+            case .skipped: (nil, "verify-off")
             case .alreadyPresent: (nil, "already-present")
             case .alreadyPresentVerified(let h): (h, "present-sha256")
             }
@@ -1691,7 +1716,9 @@ extension TransferJob {
             case .sizeOnly(let why):
                 sizeOnlyCount += 1
                 note("= SIZE ONLY · NOT HASH-VERIFIED · \(f.relativePath.uppercased()) · \(why.uppercased())", failure: true)
-            case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
+            case .skipped:
+                unverifiedCount += 1
+                note("= \(f.relativePath.uppercased()) · SIZE CHECKED · VERIFY OFF")
             case .alreadyPresent:
                 filesAlreadyPresent += 1
                 presentBytes += Int64(f.size)
@@ -1718,7 +1745,7 @@ extension TransferJob {
             case .nas(let h): (h, "nas-sha256")
             case .readBack(let h, _): (h, "read-back")
             case .cloned: (nil, "cloned")
-            case .skipped: (nil, "none")
+            case .skipped: (nil, "verify-off")
             case .alreadyPresent: (nil, "already-present")
             case .alreadyPresentVerified(let h): (h, "present-sha256")
             }
@@ -1750,7 +1777,9 @@ extension TransferJob {
                 if reason != nil { readBackCount += 1 }
                 note("✓ SHA256 \(hash.prefix(8).uppercased())… READ-BACK · \(f.relativePath.uppercased())\(reason.map { " · \($0.uppercased())" } ?? "")")
             case .cloned: note("✓ CLONED · \(f.relativePath.uppercased())")
-            case .skipped: note("✓ \(f.relativePath.uppercased()) · NOT VERIFIED")
+            case .skipped:
+                unverifiedCount += 1
+                note("= \(f.relativePath.uppercased()) · SIZE CHECKED · VERIFY OFF")
             case .alreadyPresent:
                 filesAlreadyPresent += 1
                 presentBytes += Int64(f.size)
