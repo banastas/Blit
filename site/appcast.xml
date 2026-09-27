@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.9</title>
-      <pubDate>Sun, 27 Sep 2026 19:43:58 +0000</pubDate>
-      <sparkle:version>12</sparkle:version>
-      <sparkle:shortVersionString>0.2.9</sparkle:shortVersionString>
+      <title>Blit 0.2.10</title>
+      <pubDate>Sun, 27 Sep 2026 20:39:43 +0000</pubDate>
+      <sparkle:version>13</sparkle:version>
+      <sparkle:shortVersionString>0.2.10</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Search the current folder from the toolbar (⌘F). Moving or copying onto a file that already exists now asks: Replace, Keep Both, Skip or Stop.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.9.zip" type="application/octet-stream" sparkle:edSignature="B2foSJw73C0+aRkfyQ4HoiautDly50Z1qzsDo3S3tlKjTQnT6Y4x56OEakXWObRNuLXoTz0FhGqwViGDuCVNAg==" length="5427623" />
+      <description><![CDATA[<p>The menu bar now shows time left at a fixed width, with the arrow's tray filling as it goes, and both lanes at once when a download and a copy run together. Copies show SHA-256 progress while they verify, on the NAS or read back. The arrow points up for copies onto a network share.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.10.zip" type="application/octet-stream" sparkle:edSignature="ZVFtNME2iMzN5zSH3RfnRss/pOzQjKWfslB5qTQnYEXvSTSJ3MBwSYnxghRrBS77kxosCXYAkeaLg4mriVzMCg==" length="5450491" />
     </item>
   </channel>
 </rss>
