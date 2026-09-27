@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.10</title>
-      <pubDate>Sun, 27 Sep 2026 20:39:43 +0000</pubDate>
-      <sparkle:version>13</sparkle:version>
-      <sparkle:shortVersionString>0.2.10</sparkle:shortVersionString>
+      <title>Blit 0.2.11</title>
+      <pubDate>Sun, 27 Sep 2026 20:54:02 +0000</pubDate>
+      <sparkle:version>14</sparkle:version>
+      <sparkle:shortVersionString>0.2.11</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>The menu bar now shows time left at a fixed width, with the arrow's tray filling as it goes, and both lanes at once when a download and a copy run together. Copies show SHA-256 progress while they verify, on the NAS or read back. The arrow points up for copies onto a network share.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.10.zip" type="application/octet-stream" sparkle:edSignature="ZVFtNME2iMzN5zSH3RfnRss/pOzQjKWfslB5qTQnYEXvSTSJ3MBwSYnxghRrBS77kxosCXYAkeaLg4mriVzMCg==" length="5450491" />
+      <description><![CDATA[<p>Clearer notifications: what happened and where, the item on its own line, and size, verification and speed in the details. Show in Finder on finished transfers, Show Details on problems.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.11.zip" type="application/octet-stream" sparkle:edSignature="aQ5UL7gdQk1rLZDphwpZQ7dWl7YoF8iTwz7h80D8rjpfPtL/PLHOJoEYy00OoAB6fN1ijHD7mKTjHcZftGEiCw==" length="5464647" />
     </item>
   </channel>
 </rss>
