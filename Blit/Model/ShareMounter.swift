@@ -19,8 +19,8 @@ enum ShareMounter {
 
     /// Notes how a mounted SMB share was mounted (from the sidebar's volume scan).
     static func remember(mountPoint: String) {
-        guard let info = MountInfo.of(mountPoint), info.isSMB, info.mountPoint == mountPoint,
-              info.source.hasPrefix("//") else { return }
+        // From the mount table, never statfs: a hung share would block the main thread.
+        guard let info = MountInfo.mounted(at: mountPoint), info.isSMB, info.source.hasPrefix("//") else { return }
         var all = known
         let address = "smb:" + info.source
         guard all[mountPoint] != address else { return }
@@ -41,7 +41,7 @@ enum ShareMounter {
     static func isKnown(_ mountPoint: String) -> Bool { known[mountPoint] != nil }
 
     private static func isMounted(_ mountPoint: String) -> Bool {
-        MountInfo.of(mountPoint)?.mountPoint == mountPoint
+        MountInfo.mounted(at: mountPoint) != nil
     }
 
     /// Remounts the share last mounted at `mountPoint`. Returns a problem to

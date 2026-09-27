@@ -121,7 +121,9 @@ final class SidebarModel {
 
     /// "//user@d1ll1N9eR._smb._tcp.local/Media" → "d1ll1N9eR"; "//user@192.168.20.111/Media" → "192.168.20.111".
     static func deviceName(forMount path: String) -> String? {
-        guard let source = MountInfo.of(path)?.source,
+        // The mount table, not statfs: this runs on the main thread, and a hung
+        // share would block statfs for the whole SMB timeout.
+        guard let source = MountInfo.mounted(at: path)?.source,
               let host = source.split(separator: "@").last?.split(separator: "/").first else { return nil }
         var name = String(host).removingPercentEncoding ?? String(host)
         for suffix in ["._smb._tcp.local", "._smb._tcp", "._afpovertcp._tcp.local", ".local"] where name.hasSuffix(suffix) {

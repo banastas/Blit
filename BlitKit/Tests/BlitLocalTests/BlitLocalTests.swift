@@ -199,3 +199,25 @@ func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(forma
         #expect(NetworkPath.ipv4("localhost") != nil)
     }
 }
+
+/// The mount table lookups agree with statfs, without touching the volume.
+struct MountTableTests {
+    @Test func containingMatchesStatfs() {
+        // Same file system and SMB-ness as statfs (the startup disk's firmlinked
+        // Data volume reports "/" by path; see containing(_:)).
+        for path in ["/", NSHomeDirectory(), FileManager.default.temporaryDirectory.path] {
+            #expect(MountInfo.containing(path)?.fileSystem == MountInfo.of(path)?.fileSystem, "\(path)")
+            #expect(MountInfo.containing(path)?.isSMB == MountInfo.of(path)?.isSMB, "\(path)")
+        }
+        // Mounted volumes (drives, SMB shares) match exactly.
+        for volume in (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? [] {
+            let path = "/Volumes/" + volume
+            guard let real = MountInfo.of(path), real.mountPoint == path else { continue }
+            #expect(MountInfo.containing(path + "/x")?.mountPoint == path)
+            #expect(MountInfo.mounted(at: path)?.source == real.source)
+        }
+        #expect(MountInfo.mounted(at: "/")?.mountPoint == "/")
+        #expect(MountInfo.mounted(at: "/Volumes/BlitNoSuchVolume") == nil)
+        #expect(!MountInfo.all().isEmpty)
+    }
+}

@@ -31,7 +31,7 @@ struct NASVerificationSheet: View {
             _login = State(initialValue: existing)
         } else {
             // Prefill from the mount: //user@host._smb._tcp.local/Share
-            let mount = MountInfo.of(share.url.path)
+            let mount = MountInfo.containing(share.url.path)
             let source = mount?.source ?? ""
             let user = source.split(separator: "@").first.map { String($0.drop { $0 == "/" }) } ?? ""
             let host = source.split(separator: "@").last?.split(separator: "/").first
@@ -45,7 +45,7 @@ struct NASVerificationSheet: View {
         }
     }
 
-    private var shareName: String { MountInfo.of(share.url.path)?.shareName ?? share.name }
+    private var shareName: String { MountInfo.containing(share.url.path)?.shareName ?? share.name }
     private var isNew: Bool { login.nasRoot == nil }
 
     var body: some View {

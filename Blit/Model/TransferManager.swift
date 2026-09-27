@@ -1583,7 +1583,7 @@ final class TransferManager {
         }.value
         guard await waitForSpace(job, needed: copyNeeded) else { return }
 
-        if let mount = MountInfo.of(job.destination.path), mount.isSMB {
+        if let mount = MountInfo.containing(job.destination.path), mount.isSMB {
             let host = mount.source.split(separator: "@").last?.split(separator: "/").first
                 .map { String($0).replacingOccurrences(of: "._smb._tcp", with: "") }
             if let host, let path = NetworkPath.to(host: host) {
@@ -1603,7 +1603,7 @@ final class TransferManager {
         // Verify on the NAS itself when this share has a NAS login (PRD R1.6, R4.2).
         var nas: NASVerifier?
         var nasConnection: SSHConnection?
-        if job.verifies, let mount = MountInfo.of(job.destination.path), let login = servers.nasLogin(forMount: mount.mountPoint),
+        if job.verifies, let mount = MountInfo.containing(job.destination.path), let login = servers.nasLogin(forMount: mount.mountPoint),
            let root = login.nasRoot, login.hasCredential {
             do {
                 let connection = try await SSHConnection.connect(to: login.endpoint, credential: try login.credential(),

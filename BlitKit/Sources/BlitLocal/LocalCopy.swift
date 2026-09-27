@@ -163,6 +163,39 @@ public struct MountInfo: Sendable, Equatable {
         }
         return MountInfo(mountPoint: string(fs.f_mntonname), source: string(fs.f_mntfromname), fileSystem: string(fs.f_fstypename))
     }
+
+    /// Every mounted volume, from the system's mount table without waiting on
+    /// any of them. Unlike `of(_:)` (statfs), this never blocks on a hung SMB
+    /// share, so it's safe on the main thread.
+    public static func all() -> [MountInfo] {
+        var list: UnsafeMutablePointer<statfs>?
+        let count = getmntinfo(&list, MNT_NOWAIT)
+        guard count > 0, let list else { return [] }
+        func string<T>(_ tuple: T) -> String {
+            withUnsafeBytes(of: tuple) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        }
+        return (0..<Int(count)).map { i in
+            MountInfo(mountPoint: string(list[i].f_mntonname), source: string(list[i].f_mntfromname),
+                      fileSystem: string(list[i].f_fstypename))
+        }
+    }
+
+    /// The volume mounted exactly at `mountPoint`, from the mount table (no waiting).
+    public static func mounted(at mountPoint: String) -> MountInfo? {
+        all().first { $0.mountPoint == mountPoint }
+    }
+
+    /// The volume a path is on (the longest mount point containing it), from
+    /// the mount table (no waiting). Like `of(_:)`, but safe on the main thread.
+    /// Paths on the startup disk's firmlinked Data volume (/Users, /private…)
+    /// report "/" rather than /System/Volumes/Data: same file system, and
+    /// never SMB, which is what callers ask.
+    public static func containing(_ path: String) -> MountInfo? {
+        let path = URL(fileURLWithPath: path).standardizedFileURL.path
+        return all().filter { m in
+            m.mountPoint == "/" || path == m.mountPoint || path.hasPrefix(m.mountPoint + "/")
+        }.max { $0.mountPoint.count < $1.mountPoint.count }
+    }
 }
 
 // MARK: - Copy session
