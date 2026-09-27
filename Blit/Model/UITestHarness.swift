@@ -174,7 +174,9 @@ enum UITestHarness {
             write(src.appendingPathComponent("big.bin"), megabytes: 400)
             let filler = URL(fileURLWithPath: mount).appendingPathComponent("filler.bin")
             let free = TransferManager.freeSpace(at: URL(fileURLWithPath: mount)) ?? 0
-            write(filler, megabytes: max(0, Int(free >> 20) - 700))
+            // Leave less room than the 400 MB copy needs (whatever the volume's size),
+            // so it must wait for space.
+            write(filler, megabytes: max(0, Int(free >> 20) - 150))
             lines.append("free after filler: \(TransferManager.freeSpace(at: URL(fileURLWithPath: mount)).map { $0 >> 20 } ?? 0) MB")
             let dest = URL(fileURLWithPath: mount).appendingPathComponent("dest")
             try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
