@@ -100,7 +100,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        MpvPreview.close()
         UserDefaults.standard.synchronize()
         MainActor.assumeIsolated { BrowserModel.cleanUpPreviewDownloads() }
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { _exit(0) }
