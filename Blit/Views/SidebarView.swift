@@ -44,15 +44,17 @@ struct SidebarView: View {
     var body: some View {
         List(selection: rowSelection) {
             Section("Favorites") {
-                ForEach(sidebar.favorites) { favorite in
+                ForEach(Array(sidebar.favorites.enumerated()), id: \.element.id) { index, favorite in
                     FavoriteRow(favorite: favorite)
-                        .transferTarget(favorite.location, name: favorite.location.lastComponent, onTransfer: onTransfer)
+                        .transferTarget(favorite.location, name: favorite.location.lastComponent, onTransfer: onTransfer) { providers, below in
+                            // A folder dropped at a favorite's top or bottom edge becomes a favorite there.
+                            sidebar.addDropped(providers, at: below ? index + 1 : index)
+                        }
                         .tag(SidebarRow.favorite(favorite.location))
                 }
+                // No .onInsert: it offered "add here" for any drag, files too,
+                // and took drops meant for the favorite (a file can't be one).
                 .onMove { sidebar.moveFavorites(from: $0, to: $1) }
-                .onInsert(of: [.blitLocations, .fileURL]) { index, providers in
-                    sidebar.addDropped(providers, at: index)
-                }
                 if sidebar.favorites.isEmpty {
                     Text(favoritesTargeted ? "Drop to add to Favorites" : "Drag folders here")
                         .font(.callout)
@@ -229,44 +231,133 @@ struct SidebarView: View {
     }
 }
 
-/// Makes a sidebar row accept dragged files and folders (PRD R2.10).
+/// Makes a sidebar row accept dragged files and folders (PRD R2.10). A
+/// favorite (`onInsert`) also takes folders at its top or bottom edge, as new
+/// favorites above or below it; files always go into the row's folder.
 private struct TransferTarget: ViewModifier {
     let location: BrowseLocation
     let name: String
     let onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
-    @State private var isTargeted = false
+    var onInsert: (([NSItemProvider], _ below: Bool) -> Void)?
+    @State private var zone: DropZone?
 
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            .dropDestination(for: TransferPayload.self) { payloads, _ in
-                let sources = payloads.flatMap(\.locations).uniqued()
-                guard !sources.isEmpty else { return false }
-                onTransfer(sources, location, name)
-                return true
-            } isTargeted: { isTargeted = $0 }
+            .onDrop(of: [.blitLocations, .fileURL], delegate: RowDropDelegate(
+                takesFavorites: onInsert != nil, zone: $zone,
+                onDrop: { providers, zone in
+                    switch zone {
+                    case .into:
+                        Task {
+                            let sources = await DropReader.locations(from: providers)
+                            if !sources.isEmpty { onTransfer(sources, location, name) }
+                        }
+                    case .above: onInsert?(providers, false)
+                    case .below: onInsert?(providers, true)
+                    }
+                }))
             // Drawn inside the row: a sidebar row clips anything past its edges,
             // which hid the old outline (drawn 3 pt outside) entirely.
             .background {
-                if showsTarget {
+                if zone == .into {
                     RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.22)).padding(-2)
                 }
             }
             .overlay {
-                if showsTarget {
+                if zone == .into {
                     PixelMarchingAnts(cell: 1.5).padding(.horizontal, -1).padding(.vertical, 0)
                 }
             }
+            // "Add as a favorite here": a line at the edge, as in Finder.
+            .overlay(alignment: zone == .below ? .bottom : .top) {
+                if zone == .above || zone == .below {
+                    HStack(spacing: 0) {
+                        // The text colour: macOS paints the row blue under a drag,
+                        // which hid an accent-coloured line.
+                        Circle().strokeBorder(Color.primary, lineWidth: 2).frame(width: 7, height: 7)
+                        Rectangle().fill(Color.primary).frame(height: 2)
+                    }
+                    // In the gap between rows, clear of the icon and name.
+                    .offset(y: zone == .below ? 4 : -4)
+                    .padding(.horizontal, -2)
+                    .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+enum DropZone { case above, into, below }
+
+private struct RowDropDelegate: DropDelegate {
+    let takesFavorites: Bool
+    @Binding var zone: DropZone?
+    let onDrop: ([NSItemProvider], DropZone) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.blitLocations, .fileURL]) }
+
+    /// The row's middle takes the drop; its top and bottom quarter add a
+    /// favorite, but only for favorites and only when folders are dragged.
+    /// Where the pointer is in its row comes from the sidebar itself: the
+    /// drop location SwiftUI reports for a sidebar row isn't the row's own.
+    private func zone(for info: DropInfo) -> DropZone {
+        guard takesFavorites, DragContents.hasFolders, let fraction = Self.pointerFractionInSidebarRow() else { return .into }
+        if fraction < 0.25 { return .above }
+        if fraction > 0.75 { return .below }
+        return .into
     }
 
-    private var showsTarget: Bool { isTargeted }
+    /// How far down its sidebar row the pointer is (0 top, 1 bottom), or nil.
+    @MainActor static func pointerFractionInSidebarRow() -> CGFloat? {
+        let mouse = NSEvent.mouseLocation
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.frame.contains(mouse) }),
+              let content = window.contentView else { return nil }
+        let point = window.convertPoint(fromScreen: mouse)
+        var view = content.hitTest(content.convert(point, from: nil))
+        while let current = view {
+            if let outline = current as? NSOutlineView, outline.headerView == nil {
+                let local = outline.convert(point, from: nil)
+                let row = outline.row(at: local)
+                guard row >= 0 else { return nil }
+                let rect = outline.rect(ofRow: row)
+                let down = outline.isFlipped ? local.y - rect.minY : rect.maxY - local.y
+                return min(max(down / max(rect.height, 1), 0), 1)
+            }
+            view = current.superview
+        }
+        return nil
+    }
+
+    func dropEntered(info: DropInfo) { zone = zone(for: info) }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let now = zone(for: info)
+        if zone != now { zone = now }
+        return DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
+    }
+
+    func dropExited(info: DropInfo) { zone = nil }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let landed = zone(for: info)
+        #if DEBUG
+        UITestHarness.dropTrail.append("row drop at \(Self.pointerFractionInSidebarRow().map { String(format: "%.2f", $0) } ?? "?") → \(landed)")
+        #endif
+        zone = nil
+        onDrop(info.itemProviders(for: [.blitLocations, .fileURL]), landed)
+        // A late drag update can light the row again after the drop.
+        let binding = $zone
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { binding.wrappedValue = nil }
+        return true
+    }
 }
 
 extension View {
     func transferTarget(_ location: BrowseLocation, name: String,
-                        onTransfer: @escaping ([BrowseLocation], BrowseLocation, String) -> Void) -> some View {
-        modifier(TransferTarget(location: location, name: name, onTransfer: onTransfer))
+                        onTransfer: @escaping ([BrowseLocation], BrowseLocation, String) -> Void,
+                        onInsert: (([NSItemProvider], _ below: Bool) -> Void)? = nil) -> some View {
+        modifier(TransferTarget(location: location, name: name, onTransfer: onTransfer, onInsert: onInsert))
     }
 }
 

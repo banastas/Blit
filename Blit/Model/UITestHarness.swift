@@ -1644,11 +1644,12 @@ enum UITestHarness {
             try? fm.removeItem(at: root)
             let list = root.appendingPathComponent("List"), favA = root.appendingPathComponent("FavA"), favB = root.appendingPathComponent("FavB")
             for folder in [list, favA, favB] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
-            fm.createFile(atPath: list.appendingPathComponent("x.mkv").path, contents: Data("x".utf8))
+            for file in ["x.mkv", "y.mkv"] { fm.createFile(atPath: list.appendingPathComponent(file).path, contents: Data("x".utf8)) }
+            try? fm.createDirectory(at: list.appendingPathComponent("Folder1"), withIntermediateDirectories: true)
             sidebar.addFavorite(.local(favA))
             sidebar.addFavorite(.local(favB))
             browser.open(.local(list))
-            for _ in 0..<30 where browser.rows.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+            for _ in 0..<30 where browser.rows.count < 3 { try? await Task.sleep(for: .milliseconds(200)) }
             NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             window.setFrame(NSRect(x: 120, y: 120, width: 1100, height: 700), display: true)
@@ -1656,33 +1657,50 @@ enum UITestHarness {
             guard let table = firstTable(in: window.contentView), let outline = firstOutline(in: window.contentView) else {
                 return lines.append("no table or sidebar")
             }
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
             @MainActor func screen(_ view: NSView, _ p: NSPoint) -> [Double] {
                 let s = window.convertPoint(toScreen: view.convert(p, to: nil))
                 return [s.x, (NSScreen.screens.first?.frame.height ?? 0) - s.y]
             }
-            let fileRect = table.rect(ofRow: 0)
-            let from = screen(table, NSPoint(x: fileRect.minX + 90, y: fileRect.midY))
-            // Sidebar rows: 0 is the Favorites header, 1 FavA, 2 FavB.
-            let a = outline.rect(ofRow: 1), b = outline.rect(ofRow: 2)
-            let between = screen(outline, NSPoint(x: a.midX, y: (a.maxY + b.minY) / 2 + (outline.isFlipped ? 0 : 0)))
-            let onB = screen(outline, NSPoint(x: b.midX, y: b.midY))
-            lines.append("rows: \(outline.numberOfRows) sidebar rows · file list \(browser.rows.map(\.name))")
-            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
-            for (index, to) in [between, onB].enumerated() {
+            @MainActor func listPoint(_ name: String) -> [Double]? {
+                guard let row = browser.rows.firstIndex(where: { $0.name == name }) else { return nil }
+                let r = table.rect(ofRow: row)
+                return screen(table, NSPoint(x: r.minX + 90, y: r.midY))
+            }
+            // Sidebar rows: 0 is the Favorites header, then one per favorite.
+            @MainActor func favoriteRect(_ name: String) -> NSRect? {
+                guard let i = sidebar.favorites.firstIndex(where: { $0.location.lastComponent == name }) else { return nil }
+                return outline.rect(ofRow: i + 1)
+            }
+            @MainActor func betweenAB() -> [Double]? {
+                guard let a = favoriteRect("FavA"), let b = sidebar.favorites.firstIndex(where: { $0.location.lastComponent == "FavA" })
+                    .map({ outline.rect(ofRow: $0 + 2) }) else { return nil }
+                return screen(outline, NSPoint(x: a.midX, y: (a.maxY + b.minY) / 2))
+            }
+            @MainActor func middle(_ name: String) -> [Double]? {
+                favoriteRect(name).map { screen(outline, NSPoint(x: $0.midX, y: $0.midY)) }
+            }
+            let plan: [(label: String, from: String, to: () -> [Double]?)] = [
+                ("file between favorites", "x.mkv", { betweenAB() }),
+                ("folder between favorites", "Folder1", { betweenAB() }),
+                ("file onto FavB", "y.mkv", { middle("FavB") }),
+            ]
+            lines.append("sidebar rows \(outline.numberOfRows) · list \(browser.rows.map(\.name))")
+            for (index, step) in plan.enumerated() {
                 longest = 0
+                UITestHarness.dropTrail = []
+                for _ in 0..<20 where listPoint(step.from) == nil { try? await Task.sleep(for: .milliseconds(200)) }
+                guard let from = listPoint(step.from), let to = step.to() else { lines.append("\(step.label): points not found"); break }
                 try? JSONSerialization.data(withJSONObject: from + to).write(to: URL(fileURLWithPath: logPath + ".points-\(index)"))
                 let hover = logPath + ".hover-\(index)"
                 for _ in 0..<150 where !fm.fileExists(atPath: hover) { try? await Task.sleep(for: .milliseconds(100)) }
-                try? await Task.sleep(for: .milliseconds(300))
-                if let content = window.contentView, let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
-                    content.cacheDisplay(in: content.bounds, to: rep)
-                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + "-hover-\(index).png"))
-                }
                 try? await Task.sleep(for: .seconds(4))
                 let favorites = sidebar.favorites.map { $0.location.lastComponent }
-                let inB = fm.fileExists(atPath: favB.appendingPathComponent("x.mkv").path)
-                let inList = fm.fileExists(atPath: list.appendingPathComponent("x.mkv").path)
-                lines.append("drag \(index + 1) (\(index == 0 ? "between favorites" : "onto FavB")): longest main-thread stall \(String(format: "%.1f", longest)) s · favorites \(favorites) · x.mkv in FavB \(inB) · still in List \(inList)")
+                let places = [("List", list), ("FavA", favA), ("FavB", favB)].compactMap { name, folder in
+                    ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).isEmpty ? nil : "\(name): \(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).sorted())"
+                }
+                lines.append("   trail \(UITestHarness.dropTrail)")
+                lines.append("drag \(index + 1) (\(step.label)): stall \(String(format: "%.1f", longest)) s · favorites \(favorites) · \(places.joined(separator: " · "))")
             }
             try? fm.removeItem(at: root)
             lines.append("done")

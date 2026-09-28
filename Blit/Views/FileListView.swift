@@ -386,40 +386,11 @@ struct FileListView: View {
             #if DEBUG
             let started = Date()
             #endif
-            let sources = await Self.locations(from: providers)
+            let sources = await DropReader.locations(from: providers)
             let accepted = drop(sources, onto: item, copy: copy)
             #if DEBUG
             UITestHarness.lastDrop = "\(providers.count) providers · \(sources.uniqued().count) sources · read in \(Int(Date().timeIntervalSince(started) * 1000)) ms · onto \(item?.name ?? "the list") · accepted \(accepted)"
             #endif
-        }
-    }
-
-    /// Everything dragged, read from all the items at once. A multi-row drag
-    /// makes one item per row, each carrying the whole selection, and some of
-    /// them never answer a read: waiting on them one by one hung the drop. So
-    /// every read starts together, and whatever has arrived when they've all
-    /// answered, or after 3 s, is used.
-    private static func locations(from providers: [NSItemProvider]) async -> [BrowseLocation] {
-        guard !providers.isEmpty else { return [] }
-        let found = await withCheckedContinuation { (continuation: CheckedContinuation<[BrowseLocation], Never>) in
-            let gather = DropGather(expected: providers.count, continuation: continuation)
-            for provider in providers { read(provider) { gather.add($0) } }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { gather.finish() }
-        }
-        return found.uniqued()
-    }
-
-    /// Reads one dragged item: Blit's own payload, or a file URL from Finder.
-    private static func read(_ provider: NSItemProvider, _ done: @escaping @Sendable ([BrowseLocation]) -> Void) {
-        if provider.hasItemConformingToTypeIdentifier(UTType.blitLocations.identifier) {
-            _ = provider.loadDataRepresentation(for: .blitLocations) { data, _ in
-                let payload = data.flatMap { try? JSONDecoder().decode(TransferPayload.self, from: $0) }
-                done(payload?.locations ?? [])
-            }
-        } else if provider.canLoadObject(ofClass: URL.self) {
-            _ = provider.loadObject(ofClass: URL.self) { url, _ in done(url.map { [.local($0)] } ?? []) }
-        } else {
-            done([])
         }
     }
 
@@ -445,41 +416,10 @@ struct FileListView: View {
     /// Dragging a selected row drags the whole selection, in list order.
     private func payload(for item: FileItem) -> TransferPayload {
         let items = browser.selection.contains(item.id) ? browser.selectedItems : [item]
-        return TransferPayload(locations: items.map(\.location), folders: items.filter(\.isDirectory).map(\.location),
-                               primary: item.location)
-    }
-}
-
-/// Collects the reads of a drop's items; answers once, when all have come in
-/// or at the timeout.
-private final class DropGather: @unchecked Sendable {
-    private let lock = NSLock()
-    private var locations: [BrowseLocation] = []
-    private var answers = 0
-    private let expected: Int
-    private var continuation: CheckedContinuation<[BrowseLocation], Never>?
-
-    init(expected: Int, continuation: CheckedContinuation<[BrowseLocation], Never>) {
-        self.expected = expected
-        self.continuation = continuation
-    }
-
-    func add(_ found: [BrowseLocation]) {
-        lock.lock()
-        locations += found
-        answers += 1
-        let complete = answers >= expected
-        lock.unlock()
-        if complete { finish() }
-    }
-
-    func finish() {
-        lock.lock()
-        let pending = continuation
-        continuation = nil
-        let result = locations
-        lock.unlock()
-        pending?.resume(returning: result)
+        let payload = TransferPayload(locations: items.map(\.location), folders: items.filter(\.isDirectory).map(\.location),
+                                      primary: item.location)
+        DragContents.started(payload)   // runs when the drag begins (an autoclosure)
+        return payload
     }
 }
 
