@@ -1518,6 +1518,45 @@ enum UITestHarness {
         try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
     }
 
+    /// `-BlitMpvTest <log> -BlitMpvTestDir <folder of sample media>`: which
+    /// files Space sends to mpv, and that mpv accepts the preview's arguments
+    /// and key bindings (played with no window or sound, half a second).
+    static func runMpvTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitMpvTest"),
+              let dir = UserDefaults.standard.string(forKey: "BlitMpvTestDir") else { return }
+        Task { @MainActor in
+            var lines = ["mpv: \(MpvPreview.executable?.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") ?? "not found")"]
+            let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).sorted()
+                .filter { !$0.hasSuffix(".heic") || $0 == "Sonoma.heic" }
+            for name in files {
+                let url = URL(fileURLWithPath: dir).appendingPathComponent(name)
+                let might = MpvPreview.mightHandle(url)
+                let use = await MpvPreview.shouldPreview(url)
+                lines.append("\(name): considered \(might) · \(use ? "mpv" : "Quick Look")")
+            }
+            // mpv accepts the preview's arguments and bindings (no window, no sound).
+            if let executable = MpvPreview.executable, let sample = files.first(where: { $0.hasSuffix(".mkv") }) {
+                let url = URL(fileURLWithPath: dir).appendingPathComponent(sample)
+                let conf = FileManager.default.temporaryDirectory.appendingPathComponent("blit-mpv-test.conf")
+                try? (MpvPreview.bindings + "\n").write(to: conf, atomically: true, encoding: .utf8)
+                var args = Array(MpvPreview.arguments(for: url, inputConf: conf).dropLast(2))
+                args += ["--vo=null", "--ao=null", "--force-window=no", "--length=0.5", "--msg-level=all=error", "--terminal=yes", "--", url.path]
+                let task = Process()
+                task.executableURL = executable
+                task.arguments = args
+                let pipe = Pipe()
+                task.standardError = pipe
+                task.standardOutput = pipe
+                try? task.run()
+                task.waitUntilExit()
+                let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                lines.append("mpv run: exit \(task.terminationStatus)\(output.isEmpty ? " · no errors" : " · " + output.replacingOccurrences(of: "\n", with: " | "))")
+            }
+            lines.append("done")
+            try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

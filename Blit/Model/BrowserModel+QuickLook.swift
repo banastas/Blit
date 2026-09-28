@@ -50,10 +50,23 @@ extension BrowserModel {
     }
 
     func togglePreview() {
-        if previewURL != nil {
+        if MpvPreview.isShowing {
+            MpvPreview.close()
+        } else if previewURL != nil {
             previewURL = nil
         } else if previewLoading != nil {
             previewLoading = nil   // still downloading: don't open when it arrives
+        } else if selection.count == 1, let item = selectedItems.first, !item.isDirectory,
+                  let url = item.location.localURL, MpvPreview.mightHandle(url) {
+            // Video or audio Quick Look may not play: mpv previews it if so.
+            Task {
+                guard selection.contains(item.location) else { return }   // moved on meanwhile
+                if await MpvPreview.shouldPreview(url) {
+                    if let problem = MpvPreview.show(url) { report(problem, action: "PREVIEW") }
+                } else {
+                    previewSelection()
+                }
+            }
         } else {
             previewSelection()
         }
