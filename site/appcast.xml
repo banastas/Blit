@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.16</title>
-      <pubDate>Mon, 28 Sep 2026 05:19:42 +0000</pubDate>
-      <sparkle:version>19</sparkle:version>
-      <sparkle:shortVersionString>0.2.16</sparkle:shortVersionString>
+      <title>Blit 0.2.17</title>
+      <pubDate>Mon, 28 Sep 2026 05:32:29 +0000</pubDate>
+      <sparkle:version>20</sparkle:version>
+      <sparkle:shortVersionString>0.2.17</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Space now previews MKV, WebM, AVI and other video Quick Look can't play in mpv, when mpv is installed (Space or Escape closes it, arrows seek). The right-click menu adds Open for files and Open With to pick the app.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.16.zip" type="application/octet-stream" sparkle:edSignature="Mnk5zNfdx0sZSKWkgb7I561J7Z83jKRZZzbFUAzX5mRC4jFeU2zgVEXK9QUi9EC5RV3kmAMzoIW6Eqrb5YteBA==" length="5524994" />
+      <description><![CDATA[<p>Space is plain Quick Look again: the mpv preview from 0.2.16 is removed. Open and Open With stay in the right-click menu.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.17.zip" type="application/octet-stream" sparkle:edSignature="MtBrOYQEvGjFcJglVfHsR2cPMWXUOCE0GycEQcHhfivAkC87ifMoAtjfg662vwJKDarJtlON5qJPI0dGu/yTAg==" length="5519631" />
     </item>
   </channel>
 </rss>
