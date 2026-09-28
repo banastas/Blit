@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.12</title>
-      <pubDate>Sun, 27 Sep 2026 21:20:00 +0000</pubDate>
-      <sparkle:version>15</sparkle:version>
-      <sparkle:shortVersionString>0.2.12</sparkle:shortVersionString>
+      <title>Blit 0.2.13</title>
+      <pubDate>Mon, 28 Sep 2026 02:20:23 +0000</pubDate>
+      <sparkle:version>16</sparkle:version>
+      <sparkle:shortVersionString>0.2.13</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Empty Trash: from the Blit menu (⇧⌘⌫), per drive from the sidebar, and offered right in the strip when a transfer is waiting for space. Each empty asks first and shows how much it frees.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.12.zip" type="application/octet-stream" sparkle:edSignature="G6RmECVRKw4Hkir7mcIU3ni3vRkaPsWwTfdCn676rXIStrHI0H0scTrlQpo9HJfaJqzRkwWgVyp0+j9URlg/Aw==" length="5481698" />
+      <description><![CDATA[<p>Reliability fixes: a Wi-Fi route warning no longer fails a verified copy, a file that keeps failing its SHA-256 check stops retrying after three downloads, keyboard commands follow the pane you're in, idle server connections that dropped reconnect, and a hung network share can no longer freeze the window. Copies now report items they can't carry, such as sockets or broken links.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.13.zip" type="application/octet-stream" sparkle:edSignature="YTTaXMl0k1uL1PdicYauFQRLwuowiEVrzetnV6MwYBEL4if7Fyy4fAJIxoCAnggmb2hb3FGUzbqXjQq/sDv0Cg==" length="5498751" />
     </item>
   </channel>
 </rss>
