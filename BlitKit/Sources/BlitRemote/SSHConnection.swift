@@ -178,11 +178,19 @@ public final class SSHConnection: Sendable {
 
     /// Runs a command, sends `stdin` followed by EOF, and collects its output.
     /// `onStderr` sees stderr as it arrives (e.g. progress lines).
+    /// The server must start the command within `startTimeout`. Once it has
+    /// reported progress on stderr, `progressTimeout` of silence fails it; a
+    /// command that never reports (dd's plain fallback, quiet for a whole hash)
+    /// is never timed out — TCP keepalive covers a dead link (M5).
     public func run(_ command: String, stdin: [UInt8] = [],
+                    startTimeout: TimeAmount = .seconds(60),
+                    progressTimeout: TimeAmount = .seconds(120),
                     onStderr: (@Sendable ([UInt8]) -> Void)? = nil) async throws -> CommandResult {
         let done = channel.eventLoop.makePromise(of: CommandResult.self)
         _ = try await openSessionChannel(halfClosure: true) { child in
             try child.pipeline.syncOperations.addHandler(ExecHandler(command: command, stdin: stdin, done: done,
+                                                                     startTimeout: startTimeout,
+                                                                     progressTimeout: progressTimeout,
                                                                      onStderr: onStderr))
         }
         return try await done.futureResult.get()
@@ -318,16 +326,19 @@ final class ExecHandler: ChannelInboundHandler {
     private var watchdog: RepeatedTask?
 
     /// The server must start the command within this long.
-    static let startTimeout: TimeAmount = .seconds(60)
+    private let startTimeout: TimeAmount
     /// Once the command has reported progress (dd status=progress, about once a
     /// second), this much silence means it's stuck (e.g. a hung mount).
-    static let progressTimeout: TimeAmount = .seconds(120)
+    private let progressTimeout: TimeAmount
 
     init(command: String, stdin: [UInt8], done: EventLoopPromise<SSHConnection.CommandResult>,
+         startTimeout: TimeAmount = .seconds(60), progressTimeout: TimeAmount = .seconds(120),
          onStderr: (@Sendable ([UInt8]) -> Void)? = nil) {
         self.command = command
         self.stdin = stdin
         self.done = done
+        self.startTimeout = startTimeout
+        self.progressTimeout = progressTimeout
         self.onStderr = onStderr
     }
 
@@ -346,10 +357,10 @@ final class ExecHandler: ChannelInboundHandler {
 
     private func checkForStall(_ context: ChannelHandlerContext) {
         let now = NIODeadline.now()
-        if !started, now - created > Self.startTimeout {
+        if !started, now - created > startTimeout {
             finish(context, .failure(SSHError.disconnected("the server didn't start the command")))
-        } else if sawProgress, now - lastActivity > Self.progressTimeout {
-            finish(context, .failure(SSHError.disconnected("no progress from the server for \(Self.progressTimeout.nanoseconds / 1_000_000_000) s")))
+        } else if sawProgress, now - lastActivity > progressTimeout {
+            finish(context, .failure(SSHError.disconnected("no progress from the server for \(progressTimeout.nanoseconds / 1_000_000_000) s")))
         }
     }
 
