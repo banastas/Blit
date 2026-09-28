@@ -366,7 +366,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
           <h3><span data-glyph="check"></span> Hashed on the server</h3>
           <p>Blit asks the server for each file's <span class="k">SHA-256</span> while the file is still in its cache, and hashes its own copy as the bytes arrive. The two have to match before the file gets its real name.</p>
           <p class="dim">Until then it's a <span class="k">.blitpart</span>. A half-written file never sits under a real name.</p>
-          <p class="dim">The check runs alongside the download. Want raw speed instead? Switch to size checks in Settings; moves still verify.</p>
+          <p class="dim">The check runs alongside the download and shows its own progress and time left, on the server, the NAS or a read-back, so a 70 GB file never just sits at "verifying". Want raw speed instead? Switch to size checks in Settings; moves still verify.</p>
         </div>
         <div class="card">
           <h3><span data-glyph="check"></span> Hashed on the NAS</h3>
@@ -403,7 +403,11 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         </div>
         <div class="card">
           <h3><span data-glyph="pause"></span> A queue you steer</h3>
-          <p>Pause, resume, reorder, cancel, Retry Now. Downloads and drive-to-NAS copies run in separate lanes, and a full disk waits for space instead of failing.</p>
+          <p>Pause, resume, reorder, cancel, Retry Now. Downloads and drive-to-NAS copies run side by side in separate lanes. A full disk waits for space instead of failing, and Blit offers to empty that drive's Trash to make room.</p>
+        </div>
+        <div class="card">
+          <h3><span data-glyph="arrow"></span> Shares come back</h3>
+          <p>When the NAS sleeps or the network drops, queued copies wait for the share, then Blit remounts it with the password macOS already saved. No dialog, no trip to Finder.</p>
         </div>
         <div class="card">
           <h3><span data-glyph="down"></span> Says why it's slow</h3>
@@ -418,7 +422,8 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       <div class="section-head"><span class="label">03</span><h2>The HUD</h2></div>
       <p class="sub">Everything else in Blit is a plain Mac app. Status and motion get a 1-bit, pixel-terminal instrument, inspired by 1-bit pixel art and the Nostromo's screens: black and grey, with muted red reserved for failures. Every state has a glyph or a word, never color alone.</p>
       <div class="legend">
-        <div><span class="g" data-glyph="up"></span> transferring</div>
+        <div><span class="g" data-glyph="down"></span> coming in: downloads, drive to drive</div>
+        <div><span class="g" data-glyph="up"></span> going out to a NAS share</div>
         <div><span class="g" data-glyph="check"></span> verified by SHA-256</div>
         <div><span class="g">=</span> already there, or size only</div>
         <div><span class="g" data-glyph="pause"></span> paused</div>
@@ -434,7 +439,8 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       <div class="grid">
         <div class="card">
           <h3>Finder-style browser</h3>
-          <p>Servers, drives and NAS shares in one sidebar. Newest first, Quick Look, Get Info, undo, favorites, and two panes to drag between.</p>
+          <p>Servers, drives and NAS shares in one sidebar. Newest first, search (⌘F), Get Info, Open With, undo, favorites, and two panes to drag between.</p>
+          <p class="dim">Quick Look plays what Finder's does, MKV included once QuickLook Video is installed.</p>
         </div>
         <div class="card">
           <h3>Rename N items</h3>
@@ -443,10 +449,29 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         <div class="card">
           <h3>Copy to / Move to</h3>
           <p>Send reviewed files to a NAS folder without dragging. A move removes each file only once its copy is verified.</p>
+          <p class="dim">Already there? Blit asks: Replace, Keep Both, Skip or Stop.</p>
         </div>
         <div class="card">
-          <h3>Menu bar and Dock</h3>
-          <p>Progress, rate and queue totals with the window closed, a pixel Dock badge, and the Mac kept awake while it works.</p>
+          <h3>Menu bar at a glance</h3>
+          <p>Time left, at a width that never nudges its neighbours, while the arrow's tray fills. A download and a NAS copy at once show as two lines, one per lane.</p>
+          <p class="dim">A failure leaves a red <span data-glyph="cross"></span> until you've seen it. The Mac stays awake while Blit works.</p>
+        </div>
+        <div class="card">
+          <h3>Notifications that report</h3>
+          <p><span class="k">Copied to Movies</span> · 71.6 GB · verified on the NAS · 11 min at 108 MB/s.</p>
+          <p class="dim">Show in Finder when it's done, Show Details when something needs you.</p>
+        </div>
+        <div class="card">
+          <h3>Room when you need it</h3>
+          <p>Deleted files keep their space until the Trash is emptied. Empty one drive's Trash from the sidebar, or straight from a transfer waiting for room.</p>
+        </div>
+        <div class="card">
+          <h3>Out of the way</h3>
+          <p>The full HUD opens when a transfer starts and steps back to the strip once everything has verified. Anything that needs you keeps it open.</p>
+        </div>
+        <div class="card">
+          <h3>Keeps itself current</h3>
+          <p>Signed updates, checked once a day and installed in a click from Blit › Check for Updates.</p>
         </div>
       </div>
       <div style="margin-top:14px">
@@ -470,6 +495,8 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         <tr><td>Transport</td><td>SwiftNIO SSH with Blit's own pipelined SFTP v3 client. Password or ed25519 / ECDSA keys, stored in the Keychain.</td></tr>
         <tr><td>Verification</td><td>SHA-256 on the server (with a hash cache), on the NAS, or by read-back, labelled by strength.</td></tr>
         <tr><td>Resume</td><td>Byte-range state beside each part file, a durable queue, and retries with backoff.</td></tr>
+        <tr><td>Preview</td><td>The system's Quick Look, including formats that Media Extensions add (QuickLook Video: MKV, WebM, AVI).</td></tr>
+        <tr><td>Updates</td><td>Sparkle, with EdDSA-signed releases, checked daily (or off in Settings).</td></tr>
         <tr><td>Trust</td><td>Host keys pinned, known_hosts honoured (hashed entries too), and a changed key refused.</td></tr>
         <tr><td>Distribution</td><td>Sold directly, one-time, through Lemon Squeezy. Builds are signed with Developer ID and notarized by Apple.</td></tr>
       </table>
