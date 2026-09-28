@@ -1539,6 +1539,80 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitDropTest <log>`: real drags within a file list, driven from outside
+    /// (a trusted script posts the mouse events; this copy can't). Writes each
+    /// drag's screen points to <log>.points, snapshots the window when the
+    /// script says it's hovering (<log>.hover-N), and logs where files landed.
+    /// The last drop a file list handled (for the drop test).
+    static var lastDrop = ""
+    static var dropTrail: [String] = []
+
+    static func runDropTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitDropTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active, let window = BrowserModel.activeWindow else { return lines.append("no browser") }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-drop-test")
+            try? fm.removeItem(at: root)
+            for folder in ["Target", "Other"] { try? fm.createDirectory(at: root.appendingPathComponent(folder), withIntermediateDirectories: true) }
+            for file in ["a.bin", "b.bin", "c.bin"] { fm.createFile(atPath: root.appendingPathComponent(file).path, contents: Data("x".utf8)) }
+            browser.open(.local(root))
+            for _ in 0..<30 where browser.rows.count < 5 { try? await Task.sleep(for: .milliseconds(200)) }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.setFrame(NSRect(x: 120, y: 120, width: 1100, height: 700), display: true)
+            try? await Task.sleep(for: .seconds(1))
+            guard let table = firstTable(in: window.contentView) else { return lines.append("no table") }
+            @MainActor func point(_ name: String) -> CGPoint? {
+                guard let row = browser.rows.firstIndex(where: { $0.name == name }) else { return nil }
+                let rect = table.rect(ofRow: row)
+                let inWindow = table.convert(NSPoint(x: rect.minX + 90, y: rect.midY), to: nil)
+                let screen = window.convertPoint(toScreen: inWindow)
+                // CGEvent coordinates: origin at the top left of the main screen.
+                return CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.height ?? 0) - screen.y)
+            }
+            lines.append("rows: \(browser.rows.map(\.name))")
+            // Drag 1: a.bin onto Target. Drag 2: b.bin and c.bin (selected) onto
+            // Other. Each drag's points are measured just before it (rows re-sort).
+            let plan: [(from: String, to: String, select: [String], expect: [String])] = [
+                ("a.bin", "Target", [], ["Target/a.bin"]),
+                ("b.bin", "Other", ["b.bin", "c.bin"], ["Other/b.bin", "Other/c.bin"]),
+            ]
+            for (index, step) in plan.enumerated() {
+                if !step.select.isEmpty {
+                    browser.selection = Set(browser.rows.filter { step.select.contains($0.name) }.map(\.id))
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                guard let from = point(step.from), let to = point(step.to) else { lines.append("rows not found"); break }
+                UITestHarness.lastDrop = ""
+                UITestHarness.dropTrail = []
+                try? JSONSerialization.data(withJSONObject: [from.x, from.y, to.x, to.y])
+                    .write(to: URL(fileURLWithPath: logPath + ".points-\(index)"))
+                let hover = logPath + ".hover-\(index)"
+                for _ in 0..<150 where !fm.fileExists(atPath: hover) { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .milliseconds(300))
+                if let content = window.contentView, let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                    content.cacheDisplay(in: content.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + "-hover-\(index).png"))
+                }
+                var landed = false
+                for _ in 0..<50 {
+                    landed = step.expect.allSatisfy { fm.fileExists(atPath: root.appendingPathComponent($0).path) }
+                    if landed { break }
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                lines.append("drag \(index + 1): \(step.expect.joined(separator: ", ")) landed \(landed) · drop: \(UITestHarness.lastDrop.isEmpty ? "none" : UITestHarness.lastDrop) · trail \(UITestHarness.dropTrail.reduce(into: [String]()) { if $0.last != $1 { $0.append($1) } }) · top level \(((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).sorted())")
+                try? await Task.sleep(for: .seconds(1))
+            }
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

@@ -432,6 +432,7 @@ struct ContentView: View {
         UITestHarness.runTrashTestIfRequested(transfers: transfers)
         UITestHarness.runOpenWithTestIfRequested()
         UITestHarness.runMediaExtensionTestIfRequested()
+        UITestHarness.runDropTestIfRequested()
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)
