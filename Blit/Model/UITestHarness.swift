@@ -6,6 +6,7 @@
 
 #if DEBUG
 import AppKit
+import AVFoundation
 import BlitLocal
 import BlitRemote
 import BlitSFTP
@@ -1516,6 +1517,26 @@ enum UITestHarness {
         try? fm.removeItem(at: dir)
         lines.append("done")
         try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+    }
+
+    /// `-BlitMediaExtensionTest <log> -BlitMediaExtensionTestDir <folder>`: with
+    /// Blit's opt-in to Media Extensions, whether AVFoundation (what Quick Look
+    /// plays with) can play each sample here.
+    static func runMediaExtensionTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitMediaExtensionTest"),
+              let dir = UserDefaults.standard.string(forKey: "BlitMediaExtensionTestDir") else { return }
+        Task { @MainActor in
+            var lines: [String] = []
+            let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).sorted().filter { !$0.hasSuffix(".heic") }
+            for name in files {
+                let asset = AVURLAsset(url: URL(fileURLWithPath: dir).appendingPathComponent(name))
+                let playable = (try? await asset.load(.isPlayable)) ?? false
+                let duration = (try? await asset.load(.duration)).map { CMTimeGetSeconds($0) } ?? -1
+                lines.append("\(name): playable \(playable) · \(String(format: "%.2f", duration)) s")
+            }
+            lines.append("done")
+            try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
     }
 
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.

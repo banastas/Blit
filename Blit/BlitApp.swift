@@ -2,8 +2,10 @@
 
 import AppIntents
 import AppKit
+import MediaToolbox
 import Quartz
 import SwiftUI
+import VideoToolbox
 
 /// Quitting mid-transfer: save the queue, close connections, then exit. A
 /// short watchdog guarantees the process ends even if something still holds
@@ -13,6 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var transfers: TransferManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Media Extensions (macOS 15+) teach AVFoundation new containers and
+        // codecs: QuickLook Video's make MKV, WebM and AVI play. Apps must opt
+        // in, and Quick Look plays video inside the app showing the panel, so
+        // without this Space in Blit can't play what Finder can.
+        MTRegisterProfessionalVideoWorkflowFormatReaders()
+        VTRegisterProfessionalVideoWorkflowVideoDecoders()
         // One browser window: keyboard routing (Space, Return, file commands)
         // follows the window's active pane, so no second window or tabs.
         NSWindow.allowsAutomaticWindowTabbing = false
