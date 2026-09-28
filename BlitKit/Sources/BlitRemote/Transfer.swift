@@ -312,6 +312,26 @@ public struct RemoteHasher: Sendable {
     printf "%s %s %s %s\n" "$h" "$1" "$2" "$c"
     """#
 
+    /// Removes the server's cache entry for `path` under its current stat
+    /// (same key derivation as `script`), so the next verification recomputes.
+    /// POSIX sh; no single quotes, since it's passed inside '…'.
+    static let forgetScript = #"""
+    p=$1
+    set -- $(stat -L -c "%s %Y %Z %i" -- "$p" 2>/dev/null)
+    [ $# -eq 4 ] || exit 0
+    d="${XDG_CACHE_HOME:-$HOME/.cache}/blit/sha256"
+    k=$(printf "%s|%s" "$p" "$1 $2 $3 $4" | sha256sum | cut -c1-64)
+    rm -f -- "$d/$k"
+    """#
+
+    /// Forgets the server's cached hash for `path`: after a SHA-256 mismatch
+    /// the entry may be stale or poisoned, and must not be served again
+    /// (PRD R4.1). Best effort; a server that can't run commands has no cache.
+    public func forgetCachedHash(_ path: RemotePath) async {
+        let stdin = mapPath(path).bytes + [0]
+        _ = try? await connection.run("xargs -0 sh -c '\(Self.forgetScript)' blit", stdin: stdin)
+    }
+
     /// `progress` gets the bytes hashed so far, where the server can report them.
     /// `bypassCache` recomputes instead of trusting a cached hash.
     public func sha256(_ path: RemotePath, bypassCache: Bool = false,
@@ -415,6 +435,14 @@ struct PartState: Codable, Equatable {
     var host: String?
     var port: Int?
     var username: String?
+    /// Full downloads of this file that ended in a SHA-256 mismatch. Another
+    /// download can't fix a server-side problem, so after a few the file fails
+    /// for good instead of re-downloading forever (PRD R4.3).
+    /// (Optional: state saved before this still decodes.)
+    var sha256Mismatches: Int?
+
+    /// Mismatched full downloads allowed before the file fails permanently.
+    static let maxSHA256Mismatches = 3
 
     func matches(_ file: RemoteFile) -> Bool {
         version == 1 && remotePath == Data(file.path.bytes) && size == file.size && modificationTime == file.modificationTime
@@ -841,8 +869,24 @@ private func finalize(job: FileJob, part: PartFile, hasher: RemoteHasher?, overw
             }
             let mine = try await local
             guard mine == remote.sha256 else {
-                // Don't resume a complete-but-wrong file; the next run starts over.
-                try? FileManager.default.removeItem(atPath: statePath)
+                // The server's cache entry may be stale or poisoned; forget it
+                // so the retry recomputes from the bytes (PRD R4.1).
+                if let hasher { await hasher.forgetCachedHash(file.path) }
+                // Don't resume a complete-but-wrong file; the next run starts
+                // over — but only so many times (PRD R4.3).
+                let mismatches = (PartState.load(statePath)?.sha256Mismatches ?? 0) + 1
+                guard mismatches < PartState.maxSHA256Mismatches else {
+                    try? FileManager.default.removeItem(atPath: statePath)
+                    throw SFTPError.unexpected("SHA-256 mismatch: local \(mine), server \(remote.sha256); "
+                        + "gave up after \(mismatches) full downloads; kept \(partPath)")
+                }
+                if var next = PartState.load(statePath) {
+                    next.done = ByteRangeSet()
+                    next.sha256Mismatches = mismatches
+                    try? next.save(statePath)
+                } else {
+                    try? FileManager.default.removeItem(atPath: statePath)
+                }
                 throw SFTPError.unexpected("SHA-256 mismatch: local \(mine), server \(remote.sha256); kept \(partPath)")
             }
             verification = .sha256(mine, cached: remote.cached)
