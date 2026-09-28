@@ -1495,6 +1495,29 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitOpenWithTest <log>`: the Open With apps for sample files (listed
+    /// only; nothing is opened).
+    static func runOpenWithTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitOpenWithTest") else { return }
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("blit-openwith-test")
+        try? fm.removeItem(at: dir)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let names = ["movie.mkv", "notes.txt", "photo.png", "clip.mp4"]
+        for name in names { fm.createFile(atPath: dir.appendingPathComponent(name).path, contents: Data("x".utf8)) }
+        let url = { (name: String) in dir.appendingPathComponent(name) }
+        var lines: [String] = []
+        for set in [["movie.mkv"], ["notes.txt"], ["photo.png"], ["clip.mp4"], ["photo.png", "notes.txt"], ["movie.mkv", "clip.mp4"]] {
+            let apps = OpenWith.apps(for: set.map(url))
+            lines.append("\(set.joined(separator: " + ")): default \(apps.primary?.name ?? "none") · \(apps.others.count) others: \(apps.others.prefix(6).map(\.name).joined(separator: ", "))")
+        }
+        let folder = OpenWith.apps(for: [dir])
+        lines.append("folder: default \(folder.primary?.name ?? "none") · \(folder.others.count) others")
+        try? fm.removeItem(at: dir)
+        lines.append("done")
+        try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

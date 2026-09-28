@@ -252,8 +252,14 @@ struct FileListView: View {
             Button("Refresh") { browser.reload() }
         } else {
             let urls = items.compactMap(\.location.localURL)
+            let allLocal = !urls.isEmpty && urls.count == items.count
             if items.count == 1, items[0].isDirectory {
-                Button("Open") { browser.open(items[0].location) }
+                Button("Open") { browser.open(items[0].location) }   // browses into it here
+            } else if allLocal, !items.contains(where: \.isDirectory) {
+                Button("Open") { for url in urls { NSWorkspace.shared.open(url) } }   // each in its default app
+            }
+            if allLocal {
+                OpenWithMenu(urls: urls) { browser.report($0, action: "OPEN") }
             }
             Button("Quick Look") {
                 browser.selection = Set(items.map(\.id))
