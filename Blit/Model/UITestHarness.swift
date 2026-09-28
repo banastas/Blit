@@ -1714,6 +1714,50 @@ enum UITestHarness {
         return nil
     }
 
+    /// `-BlitAutoCollapseTest <log> -BlitAutoCollapseTestDest <folder on another
+    /// volume>`: the full HUD collapses to the strip 2 s after a clean, verified
+    /// queue finishes, and stays open when a transfer fails.
+    static func runAutoCollapseTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitAutoCollapseTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitAutoCollapseTestDest") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            var lines: [String] = []
+            let fm = FileManager.default
+            let src = fm.temporaryDirectory.appendingPathComponent("blit-autocollapse-src")
+            try? fm.removeItem(at: src)
+            try? fm.createDirectory(at: src, withIntermediateDirectories: true)
+            fm.createFile(atPath: src.appendingPathComponent("ok.bin").path, contents: Data((0..<(1 << 20)).map { _ in UInt8.random(in: 0...255) }))
+            let dest = URL(fileURLWithPath: destPath)
+            // 1. A clean copy (verified by read-back on the other volume).
+            _ = transfers.enqueue([.local(src.appendingPathComponent("ok.bin"))], to: .local(dest), destinationName: "dest")
+            transfers.isExpanded = true
+            guard let job = transfers.transferJobs.last else { return }
+            for _ in 0..<100 where job.status != .finished { try? await Task.sleep(for: .milliseconds(100)) }
+            lines.append("clean copy: \(job.status) · verified \(job.filesVerified) · HUD expanded right after \(transfers.isExpanded)")
+            try? await Task.sleep(for: .seconds(3))
+            lines.append("3 s later: HUD expanded \(transfers.isExpanded)")
+            // 2. A failing copy (the source vanishes): the HUD stays open.
+            transfers.dismissFinished()
+            let missing = src.appendingPathComponent("gone.bin")
+            fm.createFile(atPath: missing.path, contents: Data("x".utf8))
+            _ = transfers.enqueue([.local(missing)], to: .local(dest.appendingPathComponent("sub-that-is-a-file")), destinationName: "bad")
+            try? "x".write(to: dest.appendingPathComponent("sub-that-is-a-file"), atomically: true, encoding: .utf8)
+            transfers.isExpanded = true
+            if let bad = transfers.transferJobs.last {
+                for _ in 0..<200 where bad.isActive || bad.status == .queued { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .seconds(3))
+                lines.append("failing copy: \(bad.status) · failures \(bad.failures.count) · HUD expanded 3 s later \(transfers.isExpanded)")
+            }
+            transfers.dismissFinished()
+            try? fm.removeItem(at: src)
+            try? fm.removeItem(at: dest.appendingPathComponent("ok.bin"))
+            try? fm.removeItem(at: dest.appendingPathComponent("sub-that-is-a-file"))
+            lines.append("done")
+            try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

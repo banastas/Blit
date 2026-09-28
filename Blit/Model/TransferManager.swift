@@ -464,6 +464,18 @@ final class TransferManager {
         if hasActiveWork { collapsedThisBatch = true }
     }
 
+    /// The queue finished and everything checked out: the full HUD steps back
+    /// to the strip after a moment, so the ✓ registers first. Problems (and
+    /// size-only results) keep it open, and new work arriving meanwhile does too.
+    private func collapseAfterSuccess() {
+        guard isExpanded else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !jobs.contains(where: { !$0.isOperation && ($0.isActive || $0.status == .queued) }) else { return }
+            isExpanded = false
+        }
+    }
+
     private func expandForTransfer() {
         let wanted = UserDefaults.standard.object(forKey: "expandHUDOnTransfer") as? Bool ?? true
         if !jobs.contains(where: { $0.isActive && !$0.isOperation }) { collapsedThisBatch = false }
@@ -1015,6 +1027,7 @@ final class TransferManager {
             if !isQuitting, !jobs.contains(where: { !$0.isOperation && ($0.status == .queued || $0.isActive) }) {
                 DockProgress.shared.finish(batch.failed > 0 ? .failed : batchVerified ? .verified : .plain)
                 if batch.failed == 0 { showMenuBarDone() }
+                if batch.failed == 0, batch.sizeOnly == 0 { collapseAfterSuccess() }
                 await notifyBatch(batch)
                 batchVerified = true
                 batch = Batch()
