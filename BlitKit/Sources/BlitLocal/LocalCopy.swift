@@ -32,6 +32,9 @@ public struct LocalTree: Sendable {
     public var directories: [String] = []
     public struct Symlink: Sendable { public let relativePath: String; public let source: String; public let target: String }
     public var symlinks: [Symlink] = []
+    /// Items a copy can't carry (sockets, pipes, unreadable links), so the job
+    /// can report them per item instead of dropping them silently (PRD R3.1).
+    public var skipped: [(relativePath: String, reason: String)] = []
     /// Absolute paths of the folders at the source (for cleaning up after a move).
     public var sourceDirectories: [String] = []
 }
@@ -51,6 +54,8 @@ public func localTree(at root: String) throws -> LocalTree {
         if v.isSymbolicLink == true {
             if let target = try? fm.destinationOfSymbolicLink(atPath: url.path) {
                 tree.symlinks.append(.init(relativePath: relative, source: url.path, target: target))
+            } else {
+                tree.skipped.append((relative, "couldn't read the symlink"))
             }
         } else if v.isRegularFile == true {
             tree.files.append(LocalFile(path: url.path, relativePath: relative, size: UInt64(v.fileSize ?? 0),
@@ -58,6 +63,8 @@ public func localTree(at root: String) throws -> LocalTree {
         } else if v.isDirectory == true {
             tree.directories.append(relative)
             tree.sourceDirectories.append(url.path)
+        } else {
+            tree.skipped.append((relative, "not a file, folder or symlink; skipped"))
         }
     }
     if !isDirectory.boolValue {
