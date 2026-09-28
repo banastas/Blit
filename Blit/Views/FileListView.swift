@@ -210,7 +210,15 @@ struct FileListView: View {
                 if dropFolder != folder { dropFolder = folder }
                 if isTargeted != targeted { isTargeted = targeted }
             },
-            onDrop: { providers, item, copy in perform(providers, onto: item, copy: copy) }))
+            onDrop: { providers, item, copy in
+                perform(providers, onto: item, copy: copy)
+                // A drag update can still arrive after the drop and light the
+                // folder again: clear once more when the drag has settled.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    dropFolder = nil
+                    isTargeted = false
+                }
+            }))
         .overlay {
             // The whole list outlines only when the drop goes into this folder.
             if isTargeted, dropFolder == nil {
@@ -500,6 +508,9 @@ private struct ListDropDelegate: DropDelegate {
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        #if DEBUG
+        UITestHarness.dropTrail.append("updated")
+        #endif
         update(info)
         return DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
     }

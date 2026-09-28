@@ -268,12 +268,16 @@ final class SidebarModel {
     }
 
     private func loadFavorites() {
+        // Test copies keep their own Favorites in memory (a drop there must never
+        // land in one of the user's real folders).
+        guard !TransferManager.isIsolated else { return }
         guard let data = UserDefaults.standard.data(forKey: Self.favoritesKey),
               let saved = try? JSONDecoder().decode([Favorite].self, from: data) else { return }
         favorites = saved
     }
 
     private func saveFavorites() {
+        guard !TransferManager.isIsolated else { return }
         if let data = try? JSONEncoder().encode(favorites) {
             UserDefaults.standard.set(data, forKey: Self.favoritesKey)
         }

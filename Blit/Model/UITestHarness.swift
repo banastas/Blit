@@ -1605,12 +1605,95 @@ enum UITestHarness {
                     if landed { break }
                     try? await Task.sleep(for: .milliseconds(200))
                 }
+                try? await Task.sleep(for: .seconds(2))
+                if let content = window.contentView, let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                    content.cacheDisplay(in: content.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + "-after-\(index).png"))
+                }
                 lines.append("drag \(index + 1): \(step.expect.joined(separator: ", ")) landed \(landed) · drop: \(UITestHarness.lastDrop.isEmpty ? "none" : UITestHarness.lastDrop) · trail \(UITestHarness.dropTrail.reduce(into: [String]()) { if $0.last != $1 { $0.append($1) } }) · top level \(((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).sorted())")
                 try? await Task.sleep(for: .seconds(1))
             }
             try? fm.removeItem(at: root)
             lines.append("done")
         }
+    }
+
+    /// `-BlitSidebarDropTest <log>`: real drags from the file list to the
+    /// sidebar (driven from outside, like DropTest), with the test copy's own
+    /// in-memory Favorites on temporary folders. Drag 1 ends between two
+    /// favorites (the insert line), drag 2 on a favorite. Logs whether the main
+    /// thread stalled, what Favorites holds, and where the file went.
+    static func runSidebarDropTestIfRequested(sidebar: SidebarModel) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitSidebarDropTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        // Main-thread heartbeat: the longest gap shows a freeze.
+        var lastBeat = Date(), longest: TimeInterval = 0
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                longest = max(longest, Date().timeIntervalSince(lastBeat))
+                lastBeat = Date()
+            }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let browser = BrowserModel.active, let window = BrowserModel.activeWindow else { return lines.append("no browser") }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-sidebar-drop-test")
+            try? fm.removeItem(at: root)
+            let list = root.appendingPathComponent("List"), favA = root.appendingPathComponent("FavA"), favB = root.appendingPathComponent("FavB")
+            for folder in [list, favA, favB] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            fm.createFile(atPath: list.appendingPathComponent("x.mkv").path, contents: Data("x".utf8))
+            sidebar.addFavorite(.local(favA))
+            sidebar.addFavorite(.local(favB))
+            browser.open(.local(list))
+            for _ in 0..<30 where browser.rows.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.setFrame(NSRect(x: 120, y: 120, width: 1100, height: 700), display: true)
+            try? await Task.sleep(for: .seconds(1))
+            guard let table = firstTable(in: window.contentView), let outline = firstOutline(in: window.contentView) else {
+                return lines.append("no table or sidebar")
+            }
+            @MainActor func screen(_ view: NSView, _ p: NSPoint) -> [Double] {
+                let s = window.convertPoint(toScreen: view.convert(p, to: nil))
+                return [s.x, (NSScreen.screens.first?.frame.height ?? 0) - s.y]
+            }
+            let fileRect = table.rect(ofRow: 0)
+            let from = screen(table, NSPoint(x: fileRect.minX + 90, y: fileRect.midY))
+            // Sidebar rows: 0 is the Favorites header, 1 FavA, 2 FavB.
+            let a = outline.rect(ofRow: 1), b = outline.rect(ofRow: 2)
+            let between = screen(outline, NSPoint(x: a.midX, y: (a.maxY + b.minY) / 2 + (outline.isFlipped ? 0 : 0)))
+            let onB = screen(outline, NSPoint(x: b.midX, y: b.midY))
+            lines.append("rows: \(outline.numberOfRows) sidebar rows · file list \(browser.rows.map(\.name))")
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+            for (index, to) in [between, onB].enumerated() {
+                longest = 0
+                try? JSONSerialization.data(withJSONObject: from + to).write(to: URL(fileURLWithPath: logPath + ".points-\(index)"))
+                let hover = logPath + ".hover-\(index)"
+                for _ in 0..<150 where !fm.fileExists(atPath: hover) { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .milliseconds(300))
+                if let content = window.contentView, let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                    content.cacheDisplay(in: content.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + "-hover-\(index).png"))
+                }
+                try? await Task.sleep(for: .seconds(4))
+                let favorites = sidebar.favorites.map { $0.location.lastComponent }
+                let inB = fm.fileExists(atPath: favB.appendingPathComponent("x.mkv").path)
+                let inList = fm.fileExists(atPath: list.appendingPathComponent("x.mkv").path)
+                lines.append("drag \(index + 1) (\(index == 0 ? "between favorites" : "onto FavB")): longest main-thread stall \(String(format: "%.1f", longest)) s · favorites \(favorites) · x.mkv in FavB \(inB) · still in List \(inList)")
+            }
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
+    @MainActor private static func firstOutline(in view: NSView?) -> NSOutlineView? {
+        guard let view else { return nil }
+        if let outline = view as? NSOutlineView, outline.headerView == nil { return outline }   // the sidebar, not a file list
+        for sub in view.subviews { if let found = firstOutline(in: sub) { return found } }
+        return nil
     }
 
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
