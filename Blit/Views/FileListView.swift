@@ -16,6 +16,8 @@ struct FileListView: View {
     var paneFocus: FocusState<PaneFocus?>.Binding? = nil
     var paneTag: PaneFocus? = nil
     @State private var isTargeted = false
+    /// The folder row a drag is over (it lights up and takes the drop).
+    @State private var dropFolder: BrowseLocation?
     @FocusState private var tableFocused: Bool
     @AppStorage("showPathBar") private var showPathBar = true
     /// Column widths, order and visibility (right-click a column header), kept per window.
@@ -145,6 +147,18 @@ struct FileListView: View {
                         FileIcon(item: item)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // The folder a drag will drop into, as in the sidebar.
+                .background {
+                    if dropFolder == item.location {
+                        RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.22)).padding(-2)
+                    }
+                }
+                .overlay {
+                    if dropFolder == item.location {
+                        PixelMarchingAnts(cell: 1.5).padding(.horizontal, -1)
+                    }
+                }
             }
             .width(min: 180, ideal: 360)
             .customizationID("name")
@@ -183,22 +197,23 @@ struct FileListView: View {
             ForEach(browser.rows) { item in
                 TableRow(item)
                     .draggable(payload(for: item))
-                    .dropDestination(for: TransferPayload.self) { payloads in
-                        _ = drop(payloads.flatMap(\.locations), onto: item)
-                    }
-            }
-            // Drops between rows and below the last one (row drops above take
-            // the rows themselves): into the folder there, else this one.
-            .onInsert(of: [.blitLocations, .fileURL]) { index, providers in
-                insert(providers, at: index)
             }
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
-        .dropDestination(for: TransferPayload.self) { payloads, _ in
-            drop(payloads.flatMap(\.locations), onto: nil)
-        } isTargeted: { isTargeted = $0 }
+        // Every drop is resolved here, from the row under the pointer. SwiftUI's
+        // per-row targets didn't engage for drags that started in this list, so
+        // folders never lit up and the drop landed in this folder instead.
+        .onDrop(of: [.blitLocations, .fileURL], delegate: ListDropDelegate(
+            itemUnderPointer: { itemUnderPointer() },
+            selection: browser.selection,
+            onTarget: { folder, targeted in
+                if dropFolder != folder { dropFolder = folder }
+                if isTargeted != targeted { isTargeted = targeted }
+            },
+            onDrop: { providers, item, copy in perform(providers, onto: item, copy: copy) }))
         .overlay {
-            if isTargeted {
+            // The whole list outlines only when the drop goes into this folder.
+            if isTargeted, dropFolder == nil {
                 PixelMarchingAnts(cell: 2).padding(3)
             }
         }
@@ -350,25 +365,21 @@ struct FileListView: View {
         return .handled
     }
 
-    /// A drop between rows (`index` is the row below it) or below the last
-    /// row: into the expanded folder it falls inside, else this folder.
-    private func insert(_ providers: [NSItemProvider], at index: Int) {
-        let rows = browser.rows
-        var target = browser.current
-        var name = browser.title
-        if index < rows.count, rows[index].depth > 0, let parent = rows[index].location.parent {
-            target = parent
-            name = parent.lastComponent
-        }
-        guard let target else { return }
-        let copy = NSEvent.modifierFlags.contains(.option)
+    /// The row under the pointer, during a drag.
+    private func itemUnderPointer() -> FileItem? {
+        guard let row = EmptySpaceMenu.rowUnderPointer(in: browser), browser.rows.indices.contains(row) else { return nil }
+        return browser.rows[row]
+    }
+
+    /// Reads what was dropped, then drops it onto `item` (nil: this folder).
+    /// `copy` is ⌥ as it was at the drop.
+    private func perform(_ providers: [NSItemProvider], onto item: FileItem?, copy: Bool) {
         Task {
             var sources: [BrowseLocation] = []
             for provider in providers {
                 sources += await Self.locations(from: provider)
             }
-            sources = sources.uniqued().filter { $0 != target }
-            if !sources.isEmpty { browser.drop(sources, into: target, name: name, copy: copy) }
+            _ = drop(sources, onto: item, copy: copy)
         }
     }
 
@@ -392,7 +403,7 @@ struct FileListView: View {
 
     /// Drops onto a folder row go into that folder; onto a file, into the folder
     /// it's in; anywhere else, into this one.
-    private func drop(_ sources: [BrowseLocation], onto item: FileItem?) -> Bool {
+    private func drop(_ sources: [BrowseLocation], onto item: FileItem?, copy: Bool? = nil) -> Bool {
         var target = browser.current
         var name = browser.title
         if let item, item.isDirectory {
@@ -405,7 +416,7 @@ struct FileListView: View {
         guard let target else { return false }
         let sources = sources.uniqued().filter { $0 != target }
         guard !sources.isEmpty else { return false }
-        browser.drop(sources, into: target, name: name)
+        browser.drop(sources, into: target, name: name, copy: copy)
         return true
     }
 
@@ -414,6 +425,44 @@ struct FileListView: View {
         let items = browser.selection.contains(item.id) ? browser.selectedItems : [item]
         return TransferPayload(locations: items.map(\.location), folders: items.filter(\.isDirectory).map(\.location),
                                primary: item.location)
+    }
+}
+
+/// Drops on a file list: the folder row under the pointer lights up and takes
+/// the drop; anywhere else, this folder does (a file in an expanded folder:
+/// that folder).
+private struct ListDropDelegate: DropDelegate {
+    let itemUnderPointer: () -> FileItem?
+    let selection: Set<FileItem.ID>
+    let onTarget: (BrowseLocation?, Bool) -> Void
+    let onDrop: ([NSItemProvider], FileItem?, Bool) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.blitLocations, .fileURL]) }
+
+    func dropEntered(info: DropInfo) { update(info) }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        update(info)
+        return DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
+    }
+
+    func dropExited(info: DropInfo) { onTarget(nil, false) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let item = itemUnderPointer()
+        let copy = NSEvent.modifierFlags.contains(.option)
+        onTarget(nil, false)
+        onDrop(info.itemProviders(for: [.blitLocations, .fileURL]), item, copy)
+        return true
+    }
+
+    private func update(_ info: DropInfo) {
+        // A folder being dragged from this list can't take itself.
+        let dragged = info.hasItemsConforming(to: [.blitLocations])
+        let folder = itemUnderPointer().flatMap { item in
+            item.isDirectory && !(dragged && selection.contains(item.id)) ? item.location : nil
+        }
+        onTarget(folder, true)
     }
 }
 
@@ -480,6 +529,25 @@ enum EmptySpaceMenu {
             nonisolated(unsafe) let event = event
             return MainActor.assumeIsolated { handle(event) } ? nil : event
         }
+    }
+
+    /// The row of `browser`'s file list under the pointer (during a drag), or nil.
+    static func rowUnderPointer(in browser: BrowserModel) -> Int? {
+        guard let view = anchors.first(where: { $0.browser === browser })?.view, let window = view.window,
+              let content = window.contentView else { return nil }
+        let point = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        guard view.convert(view.bounds, to: nil).contains(point),
+              let hit = content.hitTest(content.convert(point, from: nil)) else { return nil }
+        var current: NSView? = hit
+        while let view = current {
+            let table = view as? NSTableView ?? (view as? NSScrollView)?.documentView as? NSTableView
+            if let table {
+                let row = table.row(at: table.convert(point, from: nil))
+                return row >= 0 ? row : nil
+            }
+            current = view.superview
+        }
+        return nil
     }
 
     /// The browser whose file list covers `point` in `window`.
