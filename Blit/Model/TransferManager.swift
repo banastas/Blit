@@ -281,6 +281,13 @@ final class TransferJob: Identifiable {
         if case .download = kind { return .download }
         return .copy
     }
+    /// Whether a retry should wait for the network: downloads always, copies
+    /// only when a network share is involved. A copy between local drives
+    /// mustn't be gated on an offline Mac's network (PRD R1.4).
+    var needsNetwork: Bool {
+        if case .download = kind { return true }
+        return VolumeKinds.isNetwork(destination) || sources.contains { $0.localURL.map(VolumeKinds.isNetwork) ?? true }
+    }
     /// Connections this job holds while running (closed on pause, cancel or quit).
     @ObservationIgnored var liveConnections: [SSHConnection] = []
 
@@ -329,6 +336,9 @@ final class TransferJob: Identifiable {
     var persistent = true
     /// A problem shown in the strip instead of an alert (see notice(_:action:place:)).
     var notice: String?
+    /// The route advisory (PRD R1.7): the transfer is going over Wi-Fi while a
+    /// wired link is up. Never a failure — the copy itself is fine, just slower.
+    var routeWarning: String?
     /// Round trip to the server (an SFTP stat), measured at connect and every
     /// 30 s during a download, for the Link data panel.
     var rttMilliseconds: Double?
@@ -784,12 +794,17 @@ final class TransferManager {
         guard let folder = destination.localURL else {
             return "Uploading to a server isn't supported yet. Drop onto a local folder, drive or NAS share."
         }
-        let sources = sources.uniqued()
+        // An item inside another selected folder goes with that folder; a
+        // duplicate transfer would then log spurious KEPT errors on a move.
+        let unique = sources.uniqued()
+        let sources = unique.filter { item in
+            !unique.contains { $0 != item && FileOperations.location($0, contains: item) }
+        }
         let remote = sources.filter { $0.serverID != nil }
         let local = sources.compactMap(\.localURL)
         if Set(remote.compactMap(\.serverID)).count > 1 { return "Drag from one server at a time." }
-        let target = folder.standardizedFileURL.path
-        if local.contains(where: { let p = $0.standardizedFileURL.path; return target == p || target.hasPrefix(p + "/") }) {
+        // By identity, not spelling: a symlinked path into the folder is still inside it.
+        if sources.contains(where: { FileOperations.location($0, contains: .local(folder)) }) {
             return "Can't copy a folder into itself."
         }
         if let id = remote.first?.serverID {
@@ -1091,7 +1106,7 @@ final class TransferManager {
             }
             // A drive or share that went away turns into "no such file"-style errors;
             // that's worth waiting for, whatever the message says (PRD R1.4).
-            let missing = missingVolumes(job)
+            let missing = await missingVolumes(job)
             guard !missing.isEmpty || reasons.contains(where: Self.isRetryable) else {
                 if let fatal { job.note("✕ \(fatal)".uppercased(), failure: true) }
                 job.status = .failed(fatal ?? "\(job.failures.count) failed")
@@ -1118,7 +1133,7 @@ final class TransferManager {
                 try? await Task.sleep(for: .milliseconds(250))
             }
             if !job.retryNowRequested {
-                await waitForNetwork(job)
+                if job.needsNetwork { await waitForNetwork(job) }
                 await waitForVolumes(job)
             }
             if job.retryNowRequested { job.note("RETRY NOW") }
@@ -1281,27 +1296,35 @@ final class TransferManager {
     }
 
     /// Names of the job's destination and local source folders that are missing
-    /// (an SSD unplugged, a NAS share unmounted).
-    private func missingVolumes(_ job: TransferJob) -> [String] {
-        let fm = FileManager.default
-        var missing: [String] = []
-        if !fm.fileExists(atPath: job.destination.path) { missing.append(job.destinationName) }
-        // A source a move already removed isn't "missing", and a missing file on
-        // a mounted drive isn't a missing drive: only an unmounted volume counts.
-        for source in job.sources where !job.removedRoots.contains(Self.rootKey(source)) {
-            guard let url = source.localURL, !fm.fileExists(atPath: url.path) else { continue }
-            let parts = url.standardizedFileURL.pathComponents
-            guard parts.count > 2, parts[1] == "Volumes", !fm.fileExists(atPath: "/Volumes/" + parts[2]) else { continue }
-            if !missing.contains(parts[2]) { missing.append(parts[2]) }
-        }
-        return missing
+    /// (an SSD unplugged, a NAS share unmounted). The checks run off the main
+    /// actor: fileExists on a mounted-but-dead SMB path blocks for the smbfs
+    /// timeout — exactly during the outage this waits out (PRD R1.4).
+    private func missingVolumes(_ job: TransferJob) async -> [String] {
+        let destinationPath = job.destination.path
+        let destinationName = job.destinationName
+        // A source a move already removed isn't "missing".
+        let sources = job.sources.filter { !job.removedRoots.contains(Self.rootKey($0)) }.compactMap(\.localURL)
+        return await Task.detached { () -> [String] in
+            let fm = FileManager.default
+            var missing: [String] = []
+            if !fm.fileExists(atPath: destinationPath) { missing.append(destinationName) }
+            // A missing file on a mounted drive isn't a missing drive: only an
+            // unmounted volume counts.
+            for url in sources {
+                guard !fm.fileExists(atPath: url.path) else { continue }
+                let parts = url.standardizedFileURL.pathComponents
+                guard parts.count > 2, parts[1] == "Volumes", !fm.fileExists(atPath: "/Volumes/" + parts[2]) else { continue }
+                if !missing.contains(parts[2]) { missing.append(parts[2]) }
+            }
+            return missing
+        }.value
     }
 
     /// Waits (up to an hour) for missing drives or shares to come back.
     private func waitForVolumes(_ job: TransferJob) async {
         var noted = Set<String>()
         for round in 0..<720 {
-            let missing = missingVolumes(job)
+            let missing = await missingVolumes(job)
             if missing.isEmpty || isQuitting || Task.isCancelled { return }
             for name in missing where noted.insert(name).inserted {
                 job.note("WAITING FOR \(name.uppercased()) TO COME BACK", failure: true)
@@ -1318,7 +1341,7 @@ final class TransferManager {
                         job.note("RECONNECTED \((share as NSString).lastPathComponent.uppercased())")
                     }
                 }
-                if missingVolumes(job).isEmpty { return }
+                if await missingVolumes(job).isEmpty { return }
             }
             // The countdown is over; say what it's really waiting for.
             job.status = .waiting(until: .distantPast, reason: "waiting for \(missing.joined(separator: ", ")) to come back · reconnect it")
@@ -1423,6 +1446,8 @@ final class TransferManager {
         let host = server.host, port = UInt16(clamping: server.port)
         if let path = await Task.detached(operation: { NetworkPath.to(host: host, port: port) }).value {
             job.link += " · \(path.interface.uppercased())"
+            // An advisory (PRD R1.7), not a failure: the transfer itself is fine.
+            job.routeWarning = path.wifiDespiteWired ? "Wi-Fi (\(path.interface)) while wired is up" : nil
             if path.wifiDespiteWired {
                 job.note("✕ ROUTE IS WI-FI (\(path.interface)) WHILE WIRED IS UP · SEE PRD R1.7", failure: true)
             }
@@ -1639,6 +1664,9 @@ final class TransferManager {
             directories += tree.directories
             job.localSourceDirectories += tree.sourceDirectories
             job.localSourceSymlinks += tree.symlinks
+            for item in tree.skipped {
+                job.note("= SKIPPED \(item.relativePath.uppercased()) · \(item.reason.uppercased())", failure: true)
+            }
         }
         job.fileCount = files.count
         job.totalBytes = Int64(files.reduce(0) { $0 + $1.size })
@@ -1655,13 +1683,16 @@ final class TransferManager {
         }.value
         guard await waitForSpace(job, needed: copyNeeded) else { return }
 
-        if let mount = MountInfo.containing(job.destination.path), mount.isSMB {
+        let mount = MountInfo.containing(job.destination.path)   // the mount table: no waiting on a hung share
+        if let mount, mount.isSMB {
             let host = mount.source.split(separator: "@").last?.split(separator: "/").first
                 .map { String($0).replacingOccurrences(of: "._smb._tcp", with: "") }
-            if let host, let path = NetworkPath.to(host: host) {
+            // Off the main actor: resolving a .local NAS name blocks on mDNS.
+            if let host, let path = await Task.detached(operation: { NetworkPath.to(host: host) }).value {
                 job.link = "SMB · \(path.interface.uppercased())"
+                // An advisory (PRD R1.7), not a failure: the copy itself is fine.
+                job.routeWarning = path.wifiDespiteWired ? "Wi-Fi (\(path.interface)) while wired is up" : nil
                 if path.wifiDespiteWired {
-                    // An advisory (PRD R1.7), not a failure: the copy itself is fine.
                     job.note("✕ ROUTE IS WI-FI (\(path.interface)) WHILE WIRED IS UP · SEE PRD R1.7", failure: true)
                 }
             } else {
@@ -1675,7 +1706,7 @@ final class TransferManager {
         // Verify on the NAS itself when this share has a NAS login (PRD R1.6, R4.2).
         var nas: NASVerifier?
         var nasConnection: SSHConnection?
-        if job.verifies, let mount = MountInfo.containing(job.destination.path), let login = servers.nasLogin(forMount: mount.mountPoint),
+        if job.verifies, let mount, let login = servers.nasLogin(forMount: mount.mountPoint),
            let root = login.nasRoot, login.hasCredential {
             do {
                 let connection = try await SSHConnection.connect(to: login.endpoint, credential: try login.credential(),

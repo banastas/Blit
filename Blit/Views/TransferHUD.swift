@@ -148,7 +148,9 @@ struct TransferHUD: View {
             }
             PixelHistogram(samples: Array(job.history.suffix(60)), scale: job.histogramScale, columns: 60)
                 .frame(height: 64)
-            HUDRow(String(format: "PEAK %.1f", job.peakRate), eta)
+            // While only checksums remain the bars show the hash rate, so the
+            // peak must match their scale, not the download peak.
+            HUDRow(String(format: "PEAK %.1f", job.isVerifyingOnly ? job.histogramScale : job.peakRate), eta)
         }
     }
 
@@ -156,6 +158,10 @@ struct TransferHUD: View {
         HUDPanel("Link data") {
             HUDRow("CONN", "\(job.connections)")
             HUDRow("LINK", job.link.isEmpty ? "—" : job.link)
+            if let route = job.routeWarning {
+                // An advisory (PRD R1.7), not a failure: the word carries it.
+                HUDRow("ROUTE", route.uppercased())
+            }
             // The same rows for every job ("—" where they don't apply), so the
             // panel keeps its height.
             HUDRow("RTT", isDownload ? job.rttMilliseconds.map { "\(Int($0.rounded())) MS" } ?? "—" : "—")
