@@ -77,7 +77,11 @@ final class SidebarModel {
 
     init() {
         loadFavorites()
-        refreshVolumes()
+        // The launch scan is synchronous so the startup selection (first
+        // available favorite, first external drive) sees the volumes; later
+        // refreshes run off the main thread.
+        let (local, network) = Self.scanVolumes()
+        apply(local: local, network: network, scan: volumeScan)
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -88,24 +92,47 @@ final class SidebarModel {
 
     // MARK: Volumes
 
+    /// Serial of the newest scan, so an older one finishing late can't
+    /// overwrite a newer result.
+    @ObservationIgnored private var volumeScan = 0
+
     func refreshVolumes() {
+        // Volume metadata queries can hang for the SMB timeout on a share
+        // that's dropping off the network — exactly when the unmount
+        // notification fires — so the scan runs off the main thread and only
+        // its results land on it.
+        volumeScan += 1
+        let scan = volumeScan
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let (local, network) = SidebarModel.scanVolumes()
+            await self?.apply(local: local, network: network, scan: scan)
+        }
+    }
+
+    private nonisolated static func scanVolumes() -> (local: [VolumeLocation], network: [VolumeLocation]) {
         let keys: [URLResourceKey] = [.volumeLocalizedNameKey, .volumeIsLocalKey, .volumeIsInternalKey, .volumeIsBrowsableKey]
         let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
         var local: [VolumeLocation] = []
         var network: [VolumeLocation] = []
         for url in urls {
             guard let v = try? url.resourceValues(forKeys: Set(keys)), v.volumeIsBrowsable != false else { continue }
-            let location = VolumeLocation(url: url, name: v.volumeLocalizedName ?? url.lastPathComponent,
+            var location = VolumeLocation(url: url, name: v.volumeLocalizedName ?? url.lastPathComponent,
                                           isInternal: v.volumeIsInternal ?? false)
-            if v.volumeIsLocal == false { network.append(location) } else { local.append(location) }
+            if v.volumeIsLocal == false {
+                location.host = deviceName(forMount: url.path)
+                network.append(location)
+            } else {
+                local.append(location)
+            }
         }
+        return (local, network)
+    }
+
+    private func apply(local: [VolumeLocation], network: [VolumeLocation], scan: Int) {
+        guard scan == volumeScan else { return }
         // Boot volume first, then alphabetical.
         drives = local.sorted { ($0.url.path == "/" ? 0 : 1, $0.name) < ($1.url.path == "/" ? 0 : 1, $1.name) }
-        networkShares = network.map { share in
-            var s = share
-            s.host = Self.deviceName(forMount: share.url.path)
-            return s
-        }.sorted { $0.name < $1.name }
+        networkShares = network.sorted { $0.name < $1.name }
         VolumeKinds.networkRoots = Set(networkShares.map { $0.url.standardizedFileURL.path })
         // Remember how each share was mounted, to reconnect it later (PRD R1.5).
         for share in networkShares { ShareMounter.remember(mountPoint: share.url.standardizedFileURL.path) }
@@ -120,9 +147,9 @@ final class SidebarModel {
     }
 
     /// "//user@d1ll1N9eR._smb._tcp.local/Media" → "d1ll1N9eR"; "//user@192.168.20.111/Media" → "192.168.20.111".
-    static func deviceName(forMount path: String) -> String? {
-        // The mount table, not statfs: this runs on the main thread, and a hung
-        // share would block statfs for the whole SMB timeout.
+    nonisolated static func deviceName(forMount path: String) -> String? {
+        // The mount table, not statfs: a hung share would block statfs for
+        // the whole SMB timeout.
         guard let source = MountInfo.mounted(at: path)?.source,
               let host = source.split(separator: "@").last?.split(separator: "/").first else { return nil }
         var name = String(host).removingPercentEncoding ?? String(host)

@@ -78,12 +78,20 @@ final class ConnectionManager {
             browseClients[id] = nil
             Task { await client.connection.close() }
             guard let server = servers[id] else { continue }
-            Task {
-                for delay in [2, 5, 15, 30] {
-                    try? await Task.sleep(for: .seconds(delay))
-                    guard self.servers[id] != nil, self.browseClients[id] == nil else { return }
-                    if (try? await browseClient(for: server)) != nil { return }
-                }
+            reconnectInBackground(server)
+        }
+    }
+
+    /// Reopens a session in the background (PRD R2.14), retrying with growing
+    /// delays: after a wake or a dropped link the network often needs a few
+    /// seconds to come back. Stops if the server is disconnected or removed,
+    /// or if something else (a click on it) already reconnected.
+    private func reconnectInBackground(_ server: ServerConfig) {
+        Task {
+            for delay in [2, 5, 15, 30] {
+                try? await Task.sleep(for: .seconds(delay))
+                guard self.servers[server.id] != nil, self.browseClients[server.id] == nil else { return }
+                if (try? await browseClient(for: server)) != nil { return }
             }
         }
     }
@@ -104,11 +112,13 @@ final class ConnectionManager {
                     if let rtt { self?.links[server.id]?.rttMilliseconds = rtt }
                 }
                 if !alive {
-                    // It stopped answering; drop it so the next use reconnects.
+                    // It stopped answering: drop it so the sidebar shows it
+                    // disconnected, and reopen it in the background (R2.14).
                     await client.connection.close()
                     guard let self, self.browseClients[server.id] === client else { return }
                     self.browseClients[server.id] = nil
                     self.states[server.id] = .idle
+                    self.reconnectInBackground(server)
                     return
                 }
             }
@@ -166,8 +176,10 @@ final class ConnectionManager {
     }
 
     func disconnect(_ server: ServerConfig) {
-        // An attempt still connecting is abandoned (its result is closed on arrival).
+        // An attempt still connecting is abandoned (its result is closed on
+        // arrival), and forgetting the server stops any background reconnect.
         inFlight.removeValue(forKey: server.id)?.cancel()
+        servers[server.id] = nil
         keepAlive.removeValue(forKey: server.id)?.cancel()
         listings = listings.filter { $0.key.serverID != server.id }
         if let client = browseClients.removeValue(forKey: server.id) {
