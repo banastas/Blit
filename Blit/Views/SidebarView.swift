@@ -4,6 +4,23 @@
 import BlitSFTP
 import SwiftUI
 
+/// A sidebar row's identity. The same folder can be a favorite and a
+/// server's start folder (or a drive's top level) at once; each row keeps its
+/// own identity so its right-click menu is its own (removing a favorite must
+/// never offer to remove the server).
+enum SidebarRow: Hashable {
+    case favorite(BrowseLocation)
+    case server(BrowseLocation)
+    /// Drives and network shares.
+    case place(BrowseLocation)
+
+    var location: BrowseLocation {
+        switch self {
+        case .favorite(let location), .server(let location), .place(let location): location
+        }
+    }
+}
+
 struct SidebarView: View {
     @Environment(SidebarModel.self) private var sidebar
     @Environment(ServerStore.self) private var servers
@@ -12,6 +29,9 @@ struct SidebarView: View {
     @Binding var selection: BrowseLocation?
     @State private var favoritesTargeted = false
     @State private var collapsedDevices = Set<String>()
+    /// The row last clicked, so a folder that's in two sections highlights
+    /// the one you picked.
+    @State private var pickedRow: SidebarRow?
     var onAddServer: () -> Void
     var onEditServer: (ServerConfig) -> Void
     var onRemoveServer: (ServerConfig) -> Void
@@ -22,12 +42,12 @@ struct SidebarView: View {
     var onRefresh: (BrowseLocation, _ reconnect: Bool) -> Void
 
     var body: some View {
-        List(selection: $selection) {
+        List(selection: rowSelection) {
             Section("Favorites") {
                 ForEach(sidebar.favorites) { favorite in
                     FavoriteRow(favorite: favorite)
                         .transferTarget(favorite.location, name: favorite.location.lastComponent, onTransfer: onTransfer)
-                        .tag(favorite.location)
+                        .tag(SidebarRow.favorite(favorite.location))
                 }
                 .onMove { sidebar.moveFavorites(from: $0, to: $1) }
                 .onInsert(of: [.blitLocations, .fileURL]) { index, providers in
@@ -55,7 +75,7 @@ struct SidebarView: View {
                         StatusDot(state: connections.state(server), link: connections.links[server.id]?.summary)
                     }
                     .transferTarget(server.startLocation, name: server.displayName, onTransfer: onTransfer)
-                    .tag(server.startLocation)
+                    .tag(SidebarRow.server(server.startLocation))
                 }
                 if servers.browsable.isEmpty {
                     Button("Add Server…", action: onAddServer)
@@ -77,7 +97,7 @@ struct SidebarView: View {
                 ForEach(sidebar.drives) { drive in
                     Label(drive.name, systemImage: drive.isInternal ? "internaldrive" : "externaldrive")
                         .transferTarget(.local(drive.url), name: drive.name, onTransfer: onTransfer)
-                        .tag(BrowseLocation.local(drive.url))
+                        .tag(SidebarRow.place(.local(drive.url)))
                 }
             }
 
@@ -100,16 +120,34 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         // One menu for the whole list, built for the row that was right-clicked.
         // (Per-row menus didn't open on some rows in the selectable sidebar.)
-        .contextMenu(forSelectionType: BrowseLocation.self) { locations in
-            if locations.count == 1, let location = locations.first {
-                menu(for: location)
+        .contextMenu(forSelectionType: SidebarRow.self) { rows in
+            if rows.count == 1, let row = rows.first {
+                menu(for: row)
             }
         }
     }
 
+    /// The list's selection as rows: picking a row selects its location;
+    /// navigating elsewhere selects the row showing it (a favorite first).
+    private var rowSelection: Binding<SidebarRow?> {
+        Binding(
+            get: {
+                guard let selection else { return nil }
+                if let pickedRow, pickedRow.location == selection { return pickedRow }
+                if sidebar.favorites.contains(where: { $0.location == selection }) { return .favorite(selection) }
+                if servers.browsable.contains(where: { $0.startLocation == selection }) { return .server(selection) }
+                return .place(selection)
+            },
+            set: { row in
+                pickedRow = row
+                selection = row?.location
+            })
+    }
+
     /// The right-click menu for a sidebar row, by what the row is.
-    @ViewBuilder private func menu(for location: BrowseLocation) -> some View {
-        if let server = servers.browsable.first(where: { $0.startLocation == location }) {
+    @ViewBuilder private func menu(for row: SidebarRow) -> some View {
+        let location = row.location
+        if case .server = row, let server = servers.browsable.first(where: { $0.startLocation == location }) {
             Button("Refresh") { onRefresh(location, false) }
             Button("Reconnect") { onRefresh(location, true) }
             Divider()
@@ -121,7 +159,7 @@ struct SidebarView: View {
                 .disabled(sidebar.isFavorite(location))
             Divider()
             Button("Remove…", role: .destructive) { onRemoveServer(server) }
-        } else if let favorite = sidebar.favorites.first(where: { $0.location == location }) {
+        } else if case .favorite = row, let favorite = sidebar.favorites.first(where: { $0.location == location }) {
             Button("Refresh") { onRefresh(location, false) }
                 .disabled(!sidebar.isAvailable(favorite))
             Divider()
@@ -139,7 +177,7 @@ struct SidebarView: View {
                 }
             }
             Button("Remove from Favorites") { sidebar.removeFavorite(favorite) }
-        } else if let url = location.localURL {
+        } else if case .place = row, let url = location.localURL {
             Button("Refresh") { onRefresh(location, false) }
             Divider()
             if let share = sidebar.networkShares.first(where: { $0.url == url }) {
@@ -186,7 +224,7 @@ struct SidebarView: View {
                 }
             }
             .transferTarget(.local(share.url), name: share.name, onTransfer: onTransfer)
-            .tag(BrowseLocation.local(share.url))
+            .tag(SidebarRow.place(.local(share.url)))
         }
     }
 }
