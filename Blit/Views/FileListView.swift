@@ -273,6 +273,9 @@ struct FileListView: View {
                     .disabled(problem != nil)
                     .help(problem ?? "Download the rest of this file into this folder.")
             }
+            // In its own section, after the item's details and before the edits.
+            Divider()
+            Button(browser.deleteTitle(for: items), role: .destructive) { browser.requestDelete(items) }
             Divider()
             Button("New Folder") { browser.newFolder() }
             Button(items.count == 1 ? "Rename" : "Rename \(items.count) Items…") { browser.beginRename(items) }
@@ -285,8 +288,6 @@ struct FileListView: View {
             Button("Copy") { browser.copy(items, cut: false) }
             Button("Paste") { browser.paste(move: false) }
                 .disabled(!browser.operations.canPaste)
-            Divider()
-            Button(browser.deleteTitle(for: items), role: .destructive) { browser.requestDelete(items) }
             Divider()
             Button("Refresh") { browser.reload() }
         }
