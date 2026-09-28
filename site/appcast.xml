@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.17</title>
-      <pubDate>Mon, 28 Sep 2026 05:32:29 +0000</pubDate>
-      <sparkle:version>20</sparkle:version>
-      <sparkle:shortVersionString>0.2.17</sparkle:shortVersionString>
+      <title>Blit 0.2.18</title>
+      <pubDate>Mon, 28 Sep 2026 05:44:38 +0000</pubDate>
+      <sparkle:version>21</sparkle:version>
+      <sparkle:shortVersionString>0.2.18</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Space is plain Quick Look again: the mpv preview from 0.2.16 is removed. Open and Open With stay in the right-click menu.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.17.zip" type="application/octet-stream" sparkle:edSignature="MtBrOYQEvGjFcJglVfHsR2cPMWXUOCE0GycEQcHhfivAkC87ifMoAtjfg662vwJKDarJtlON5qJPI0dGu/yTAg==" length="5519631" />
+      <description><![CDATA[<p>Quick Look in Blit now plays the formats your Media Extensions add, as Finder does: with QuickLook Video installed and enabled, Space previews MKV, WebM and AVI.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.18.zip" type="application/octet-stream" sparkle:edSignature="AmZwyu1NB1iw2rSE5XzRqXbCOn3drREQL6Ml1a12UtnAtsUJVsMZ9xSQFZUQYKzqYodLf2j/Aqb5xb8wYhgKDQ==" length="5519900" />
     </item>
   </channel>
 </rss>
