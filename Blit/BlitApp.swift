@@ -147,7 +147,7 @@ struct BlitApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             BrowserCommands(transfers: transfers)
-            FileCommands()
+            FileCommands(operations: operations)
             GoCommands()
             AboutCommands()
             CommandGroup(after: .appSettings) {
@@ -201,6 +201,28 @@ extension Notification.Name {
 extension FocusedValues {
     @Entry var browser: BrowserModel?
     @Entry var transferDetails: TransferDetailsState?
+    /// True while something that takes typing is up in the window (a rename,
+    /// a sheet, the toolbar search): Edit commands stay enabled to reach it.
+    @Entry var textSurface: Bool?
+}
+
+/// Watches the general pasteboard (it posts no notification), so Edit › Paste
+/// enables and disables as the clipboard changes, like the context menus.
+@MainActor
+@Observable
+final class PasteboardWatcher {
+    static let general = PasteboardWatcher()
+    private(set) var changeCount = NSPasteboard.general.changeCount
+
+    private init() {
+        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                let watcher = PasteboardWatcher.general
+                let count = NSPasteboard.general.changeCount
+                if count != watcher.changeCount { watcher.changeCount = count }
+            }
+        }
+    }
 }
 
 /// The HUD's state for the View menu (commands don't track the manager itself).
@@ -257,9 +279,13 @@ struct BrowserCommands: Commands {
 
 /// File and Edit menu items for file management (PRD R2.12). Cut, Copy, Paste
 /// and Select All act on files unless a text field is being edited, so they
-/// keep working in the Go to… field and the server sheets.
+/// keep working in the Go to… field and the server sheets; with no text
+/// surface up they enable like the context menus (Paste only when the
+/// clipboard holds files, Cut and Copy only with a selection).
 struct FileCommands: Commands {
+    let operations: FileOperations
     @FocusedValue(\.browser) private var browser
+    @FocusedValue(\.textSurface) private var textSurface
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -291,16 +317,31 @@ struct FileCommands: Commands {
         CommandGroup(replacing: .pasteboard) {
             Button("Cut") { edit(#selector(NSText.cut(_:))) { $0.copy($0.selectedItems, cut: true) } }
                 .keyboardShortcut("x")
+                .disabled(!mayEditText && (browser?.selection.isEmpty ?? true))
             Button("Copy") { edit(#selector(NSText.copy(_:))) { $0.copy($0.selectedItems, cut: false) } }
                 .keyboardShortcut("c")
+                .disabled(!mayEditText && (browser?.selection.isEmpty ?? true))
             Button("Paste") { edit(#selector(NSText.paste(_:))) { $0.paste(move: false) } }
                 .keyboardShortcut("v")
+                .disabled(!mayEditText && !canPasteFiles)
             Button("Move Items Here") { onFiles { $0.paste(move: true) } }
                 .keyboardShortcut("v", modifiers: [.command, .option])
-                .disabled(browser?.current == nil)
+                .disabled(!canPasteFiles)
             Button("Select All") { edit(#selector(NSText.selectAll(_:))) { $0.selectAll() } }
                 .keyboardShortcut("a")
         }
+    }
+
+    /// A text field may have the keyboard (nil: no browser window is key, and
+    /// the commands just route down the responder chain).
+    private var mayEditText: Bool { textSurface ?? true }
+
+    /// Paste as a file command: the clipboard holds files and a folder is shown,
+    /// matching the context menus. Reading the watcher re-checks it as the
+    /// clipboard changes, which the menu can't see on its own.
+    @MainActor private var canPasteFiles: Bool {
+        _ = PasteboardWatcher.general.changeCount
+        return operations.canPaste && browser?.current != nil
     }
 
     /// True while a text field or a sheet has the keyboard: file commands then

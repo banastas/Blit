@@ -11,6 +11,10 @@ struct FileListView: View {
     @Bindable var browser: BrowserModel
     /// Called when this list gets the keyboard, so file commands act on it.
     var onFocus: (() -> Void)? = nil
+    /// The window's pane focus (two-pane layouts): binding the table to it lets
+    /// the pane header and a right-click hand this list the keyboard.
+    var paneFocus: FocusState<PaneFocus?>.Binding? = nil
+    var paneTag: PaneFocus? = nil
     @State private var isTargeted = false
     @FocusState private var tableFocused: Bool
     @AppStorage("showPathBar") private var showPathBar = true
@@ -90,9 +94,12 @@ struct FileListView: View {
                     }
                 }
                 .onChange(of: browser.selection) {
-                    // Keep the file Quick Look is showing in view as ↑/↓ move through the list.
+                    // Keep the file Quick Look is showing in view as ↑/↓ move
+                    // through the list. A tick later: the selection change can
+                    // come from the table's own delegate, and scrolling it from
+                    // inside that update re-enters the table.
                     guard browser.previewURL != nil, let first = browser.selectedItems.first else { return }
-                    proxy.scrollTo(first.id)
+                    Task { proxy.scrollTo(first.id) }
                 }
         }
         // SwiftUI's Table shows no menu for right-clicks below the last row;
@@ -223,6 +230,7 @@ struct FileListView: View {
         }
         .focused($tableFocused)
         .onChange(of: tableFocused) { _, focused in if focused { onFocus?() } }
+        .modifier(PaneFocusing(binding: paneFocus, tag: paneTag))
         .onKeyPress(.rightArrow) { expandSelection(true) }
         .onKeyPress(.leftArrow) { expandSelection(false) }
         .overlay {
@@ -399,6 +407,21 @@ struct FileListView: View {
         let items = browser.selection.contains(item.id) ? browser.selectedItems : [item]
         return TransferPayload(locations: items.map(\.location), folders: items.filter(\.isDirectory).map(\.location),
                                primary: item.location)
+    }
+}
+
+/// Ties a file list's keyboard focus to the window's pane bookkeeping, when
+/// the list is one of two panes (single lists have no pane focus to bind).
+private struct PaneFocusing: ViewModifier {
+    let binding: FocusState<PaneFocus?>.Binding?
+    let tag: PaneFocus?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let binding, let tag {
+            content.focused(binding, equals: tag)
+        } else {
+            content
+        }
     }
 }
 

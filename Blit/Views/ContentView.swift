@@ -14,6 +14,10 @@ struct ContentView: View {
     /// the toolbar act on (the one last clicked).
     @State private var secondBrowser: BrowserModel?
     @State private var secondActive = false
+    /// Which pane's table has the keyboard. Every way of activating a pane
+    /// (click, right-click, the header, Tab) moves the keyboard here too, so
+    /// arrows and ⌘⌫ always agree on the pane the user is looking at.
+    @FocusState private var focusedPane: PaneFocus?
     @AppStorage("showSecondPane") private var showSecondPane = false
     @State private var nasShare: VolumeLocation?
     @State private var showPalette = false
@@ -45,8 +49,8 @@ struct ContentView: View {
                 Group {
                     if showSecondPane, let secondBrowser {
                         HSplitView {
-                            pane(browser, isActive: !secondActive) { secondActive = false }
-                            pane(secondBrowser, isActive: secondActive) { secondActive = true }
+                            pane(browser, tag: .first, isActive: !secondActive) { secondActive = false }
+                            pane(secondBrowser, tag: .second, isActive: secondActive) { secondActive = true }
                         }
                     } else {
                         FileListView(browser: browser)
@@ -90,7 +94,12 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .blitFocusSearch)) { _ in searchFocused = true }
         .onReceive(NotificationCenter.default.publisher(for: .blitShowPalette)) { _ in showPalette = true }
         .onChange(of: selection) { _, location in
-            if let location { active?.open(location) }
+            // A tick later: the sidebar's list can still be mid-update when its
+            // selection changes, and reloading a pane's table from inside that
+            // update re-enters the table's delegate.
+            guard let location else { return }
+            let pane = active
+            Task { pane?.open(location) }
         }
         .onChange(of: showSecondPane) { _, shown in
             if shown { openSecondPaneIfNeeded() } else { secondActive = false }
@@ -107,6 +116,7 @@ struct ContentView: View {
         // Plain values, so View › Show/Hide Transfer Details updates with the HUD.
         .focusedSceneValue(\.transferDetails, TransferDetailsState(isExpanded: transfers.isExpanded,
                                                                   available: transfers.featured != nil))
+        .focusedSceneValue(\.textSurface, textSurfaceUp)
         .sheet(item: $editing) { item in
             ServerEditor(server: item.server, isNew: item.isNew) { server, password in
                 servers.save(server, password: password)
@@ -284,8 +294,24 @@ struct ContentView: View {
     /// The browser that sidebar picks, ⌘K and the toolbar act on.
     private var active: BrowserModel? { showSecondPane && secondActive ? secondBrowser : browser }
 
+    /// Something that takes typing is up: the rename field, the toolbar search,
+    /// or a sheet. Edit menu commands stay enabled then, so ⌘X/⌘C/⌘V route
+    /// into the text instead of going dead (PRD R2.12).
+    private var textSurfaceUp: Bool {
+        if searchFocused || showPalette { return true }
+        if editing != nil || nasShare != nil { return true }
+        if !transfers.pendingExternalFiles.isEmpty { return true }
+        let models: [BrowserModel?] = [browser, secondBrowser]
+        for case let model? in models {
+            if model.renaming != nil || model.showGoToFolder { return true }
+            if model.batchRenameItems != nil || model.infoItem != nil { return true }
+            if model.trustRequest != nil || model.passwordRequest != nil { return true }
+        }
+        return false
+    }
+
     /// One pane of the two-pane layout, with a small location header.
-    private func pane(_ model: BrowserModel, isActive: Bool, activate: @escaping () -> Void) -> some View {
+    private func pane(_ model: BrowserModel, tag: PaneFocus, isActive: Bool, activate: @escaping () -> Void) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: model.current?.serverID != nil ? "server.rack" : "folder")
@@ -299,9 +325,14 @@ struct ContentView: View {
             .padding(.vertical, 5)
             .background(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
             .contentShape(Rectangle())
-            .onTapGesture(perform: activate)
+            .onTapGesture {
+                // Activating from the header also hands the pane the keyboard,
+                // so the arrows don't keep moving the other pane's selection.
+                activate()
+                focusedPane = tag
+            }
             Divider()
-            FileListView(browser: model, onFocus: activate)
+            FileListView(browser: model, onFocus: activate, paneFocus: $focusedPane, paneTag: tag)
                 .simultaneousGesture(TapGesture().onEnded(activate))
         }
         .frame(minWidth: 280)
@@ -317,7 +348,8 @@ struct ContentView: View {
         let start = sidebar.favorites.dropFirst().first(where: sidebar.isAvailable)?.location
             ?? sidebar.networkShares.first.map { .local($0.url) }
             ?? .local(FileManager.default.homeDirectoryForCurrentUser)
-        secondBrowser.open(start)
+        // A tick later: the pane's table is being created in this same update.
+        Task { secondBrowser.open(start) }
     }
 
     /// The full HUD is showing (a file operation taking the slot shows the strip).
@@ -333,10 +365,18 @@ struct ContentView: View {
 
     private var showsExpandedHUD: Bool { transfers.isExpanded && !(transfers.featured?.isOperation ?? true) }
 
-    /// Makes `model`'s pane the active one (clicked, right-clicked or focused).
+    /// Makes `model`'s pane the active one (clicked, right-clicked or focused),
+    /// and gives its table the keyboard: a right-click never moves AppKit focus
+    /// on its own, and Space/arrows must follow the pane the menu opened in.
     private func activate(_ model: BrowserModel) {
         guard showSecondPane else { return }
-        if model === secondBrowser { secondActive = true } else if model === browser { secondActive = false }
+        if model === secondBrowser {
+            secondActive = true
+            focusedPane = .second
+        } else if model === browser {
+            secondActive = false
+            focusedPane = .first
+        }
     }
 
     /// Refresh whichever panes show a folder that changed: a transfer's
@@ -414,6 +454,12 @@ struct ContentView: View {
                 ?? .local(FileManager.default.homeDirectoryForCurrentUser)
         }
     }
+}
+
+/// Which pane of a two-pane window has the keyboard: the table focus, the pane
+/// headers and right-clicks all move it, and activation follows it.
+enum PaneFocus: Hashable {
+    case first, second
 }
 
 /// Hands over the window hosting a view (for key handling that needs it).
