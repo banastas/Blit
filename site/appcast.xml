@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.18</title>
-      <pubDate>Mon, 28 Sep 2026 05:44:38 +0000</pubDate>
-      <sparkle:version>21</sparkle:version>
-      <sparkle:shortVersionString>0.2.18</sparkle:shortVersionString>
+      <title>Blit 0.2.19</title>
+      <pubDate>Mon, 28 Sep 2026 14:37:24 +0000</pubDate>
+      <sparkle:version>22</sparkle:version>
+      <sparkle:shortVersionString>0.2.19</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Quick Look in Blit now plays the formats your Media Extensions add, as Finder does: with QuickLook Video installed and enabled, Space previews MKV, WebM and AVI.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.18.zip" type="application/octet-stream" sparkle:edSignature="AmZwyu1NB1iw2rSE5XzRqXbCOn3drREQL6Ml1a12UtnAtsUJVsMZ9xSQFZUQYKzqYodLf2j/Aqb5xb8wYhgKDQ==" length="5519900" />
+      <description><![CDATA[<p>Dragging files onto a folder in the list works again: the folder under the pointer lights up and takes the drop, including when you drag several items at once.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.19.zip" type="application/octet-stream" sparkle:edSignature="wQBO2HsJwVnTFDuSga5HLiCP4mBCxaxiZVU03+DqDtFF5edwc5SXgDxbBGU0NxjTwYWEAmFfC30A68UpUkJ6Bw==" length="5523096" />
     </item>
   </channel>
 </rss>
