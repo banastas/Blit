@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.14</title>
-      <pubDate>Mon, 28 Sep 2026 04:10:56 +0000</pubDate>
-      <sparkle:version>17</sparkle:version>
-      <sparkle:shortVersionString>0.2.14</sparkle:shortVersionString>
+      <title>Blit 0.2.15</title>
+      <pubDate>Mon, 28 Sep 2026 05:01:19 +0000</pubDate>
+      <sparkle:version>18</sparkle:version>
+      <sparkle:shortVersionString>0.2.15</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Fixes the sidebar menu for a favorite on the folder a server opens to: it now offers Remove from Favorites instead of removing the whole server.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.14.zip" type="application/octet-stream" sparkle:edSignature="thY5z9iQFEqE4gWgttsFBOMHEc/mo+qb3ynlTf1WPDOgbNJsgcYbsL92Ez+LyL58NxvZCzsawmtleVYByQDyAg==" length="5499946" />
+      <description><![CDATA[<p>Move to Trash now sits in its own section of the right-click menu, between Get Info and New Folder.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.15.zip" type="application/octet-stream" sparkle:edSignature="5XiQEVLOwHShbb8KJXaoz5zOdjJUSYCnUUwdYmcZonifl2KZ/Id58839zLi+3Db48MOWSMTQ6Yr091MkS1qNDQ==" length="5499753" />
     </item>
   </channel>
 </rss>
