@@ -697,7 +697,13 @@ enum EmptySpaceMenu {
 
     private static func handle(_ event: NSEvent) -> Bool {
         // Right-clicks, and ⌃-clicks (the same menu everywhere else in macOS).
-        if event.type == .leftMouseDown, !event.modifierFlags.contains(.control) { return false }
+        // A plain click only sets up Finder's rule for a drag that may follow.
+        if event.type == .leftMouseDown, !event.modifierFlags.contains(.control) {
+            if let window = event.window, let content = window.contentView, let table = table(at: event.locationInWindow, in: content) {
+                RowDragRule.prepare(for: event.locationInWindow, in: table, browser: browser(at: event.locationInWindow, in: window))
+            }
+            return false
+        }
         guard let window = event.window, let content = window.contentView else { return false }
         let point = event.locationInWindow
         guard let browser = browser(at: point, in: window) else { return false }
@@ -729,6 +735,39 @@ enum EmptySpaceMenu {
         menu.addItem(ClosureMenuItem("Refresh") { browser.reload() })
         NSMenu.popUpContextMenu(menu, with: event, for: table)
         return true
+    }
+}
+
+/// Finder's rule for a drag that starts on a row: from the file's icon or
+/// name it moves the files; from the rest of the row (the blank part of the
+/// Name column, the date, the size) moving up or down selects rows as it
+/// goes. AppKit decides at mouse-down, so each press sets it for its table.
+@MainActor
+enum RowDragRule {
+    static func prepare(for point: NSPoint, in table: NSTableView, browser: BrowserModel?) {
+        let local = table.convert(point, from: nil)
+        guard table.row(at: local) >= 0 else { return }
+        table.verticalMotionCanBeginDrag = isOnName(local, in: table, browser: browser)
+    }
+
+    /// Whether `local` (table coordinates) is on a row's icon or name. The
+    /// Name cell lays out, left to right: the indent for its depth, the
+    /// disclosure triangle (12), the icon (16) and the name, with the tags
+    /// after it; the name's width is measured in the list's font.
+    static func isOnName(_ local: NSPoint, in table: NSTableView, browser: BrowserModel?) -> Bool {
+        let row = table.row(at: local)
+        guard row >= 0, let column = table.tableColumns.firstIndex(where: { $0.title == "Name" }) else { return false }
+        let cellRect = table.frameOfCell(atColumn: column, row: row)
+        guard cellRect.minX <= local.x, local.x <= cellRect.maxX else { return false }
+        guard let rows = browser?.rows, rows.indices.contains(row) else { return true }
+        let item = rows[row]
+        let indent = item.depth > 0 ? CGFloat(item.depth) * 16 + 4 : 0
+        let iconEnd = cellRect.minX + indent + 12 + 4 + 16
+        let nameWidth = (item.name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]).width
+        // The label's gap before the name, the name (cut to the cell), and room
+        // for the tags that follow it (verified, partial, status).
+        let nameEnd = min(cellRect.maxX, iconEnd + 6 + nameWidth + 18)
+        return local.x <= nameEnd
     }
 }
 

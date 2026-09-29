@@ -2353,6 +2353,125 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRowDragTest <log>`: Finder's drag rule, with events posted to
+    /// this copy's own queue (the pointer never moves): pressing on the date
+    /// and moving down selects rows as it goes; pressing on a name keeps a
+    /// file drag possible.
+    static func runRowDragTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitRowDragTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let folder = fm.temporaryDirectory.appendingPathComponent("blit-row-drag")
+            try? fm.removeItem(at: folder)
+            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            for name in ["a.mkv", "b.mkv", "c.mkv", "d.mkv", "e.mkv", "f.mkv"] {
+                fm.createFile(atPath: folder.appendingPathComponent(name).path, contents: Data("x".utf8))
+            }
+            guard let window = BrowserModel.activeWindow, let browser = PaneTabs.shared.current?.first else { return lines.append("no window") }
+            window.setFrame(NSRect(x: 100, y: 100, width: 1200, height: 700), display: true)
+            browser.open(.local(folder))
+            browser.sortOrder = [KeyPathComparator(\FileItem.name)]
+            try? await Task.sleep(for: .seconds(2))
+            var tables: [NSTableView] = []
+            func collect(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                view.subviews.forEach(collect)
+            }
+            if let content = window.contentView { collect(content) }
+            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }),
+                  let nameColumn = table.tableColumns.firstIndex(where: { $0.title == "Name" }),
+                  let dateColumn = table.tableColumns.firstIndex(where: { $0.title == "Modified" }) else { return lines.append("no table") }
+            let names = browser.rows.map(\.name)
+            lines.append("rows \(names)")
+            @MainActor func point(row: Int, column: Int, x: CGFloat? = nil) -> NSPoint {
+                let rect = table.frameOfCell(atColumn: column, row: row)
+                return table.convert(NSPoint(x: x ?? rect.midX, y: rect.midY), to: nil)
+            }
+            @MainActor func post(_ type: NSEvent.EventType, _ at: NSPoint) {
+                if let event = NSEvent.mouseEvent(with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                                                  pressure: type == .leftMouseUp ? 0 : 1) {
+                    NSApp.postEvent(event, atStart: false)
+                }
+            }
+            // Where the name ends in the first row (the cell measures its content).
+            let cell = table.view(atColumn: nameColumn, row: 0, makeIfNecessary: false)
+            let nameRect = table.rect(ofColumn: nameColumn)
+            lines.append("name column \(Int(nameRect.minX))…\(Int(nameRect.maxX)) · cell content width \(Int(cell?.fittingSize.width ?? -1))")
+            for (label, x) in [("on the name", nameRect.minX + 40), ("blank part of the Name column", nameRect.maxX - 20)] {
+                let local = NSPoint(x: x, y: table.rect(ofRow: 0).midY)
+                lines.append("press \(label): moves files \(RowDragRule.isOnName(local, in: table, browser: browser))")
+            }
+            // Press on the date of the first row, move down over three more, release.
+            let start = point(row: 0, column: dateColumn)
+            post(.leftMouseDown, start)
+            for row in 1...3 { post(.leftMouseDragged, point(row: row, column: dateColumn)) }
+            post(.leftMouseUp, point(row: 3, column: dateColumn))
+            try? await Task.sleep(for: .seconds(1.5))
+            lines.append("drag down from the date: selected \(browser.selectedItems.map(\.name).sorted()) · vertical drag moves files \(table.verticalMotionCanBeginDrag)")
+            // A press on a name sets the table up for a file drag again.
+            post(.leftMouseDown, point(row: 4, column: nameColumn, x: nameRect.minX + 40))
+            post(.leftMouseUp, point(row: 4, column: nameColumn, x: nameRect.minX + 40))
+            try? await Task.sleep(for: .seconds(1))
+            lines.append("press on a name: selected \(browser.selectedItems.map(\.name)) · vertical drag moves files \(table.verticalMotionCanBeginDrag)")
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitRowDragRealTest <log>`: Finder's drag rule with a real drag
+    /// (scripts/ui-drag, only into this copy's window): pressing on the first
+    /// row's date and moving down over three more rows selects the four.
+    static func runRowDragRealTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitRowDragRealTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let folder = fm.temporaryDirectory.appendingPathComponent("blit-row-drag-real")
+            try? fm.removeItem(at: folder)
+            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            for name in ["a.mkv", "b.mkv", "c.mkv", "d.mkv", "e.mkv", "f.mkv"] {
+                fm.createFile(atPath: folder.appendingPathComponent(name).path, contents: Data("x".utf8))
+            }
+            guard let window = BrowserModel.activeWindow, let browser = PaneTabs.shared.current?.first else { return lines.append("no window") }
+            browser.open(.local(folder))
+            browser.sortOrder = [KeyPathComparator(\FileItem.name)]
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.setFrame(NSRect(x: 120, y: 120, width: 1200, height: 700), display: true)
+            try? await Task.sleep(for: .seconds(2))
+            var tables: [NSTableView] = []
+            func collect(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                view.subviews.forEach(collect)
+            }
+            if let content = window.contentView { collect(content) }
+            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }),
+                  let dateColumn = table.tableColumns.firstIndex(where: { $0.title == "Modified" }) else { return lines.append("no table") }
+            let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+            @MainActor func cg(row: Int) -> [Double] {
+                let rect = table.frameOfCell(atColumn: dateColumn, row: row)
+                let screen = window.convertPoint(toScreen: table.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil))
+                return [screen.x, screenHeight - screen.y]
+            }
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+            try? JSONSerialization.data(withJSONObject: cg(row: 0) + cg(row: 3)).write(to: URL(fileURLWithPath: logPath + ".points-0"))
+            for _ in 0..<150 where !fm.fileExists(atPath: logPath + ".hover-0") && !fm.fileExists(atPath: logPath + ".aborted") {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            try? await Task.sleep(for: .seconds(2.5))
+            lines.append("frontmost is this test copy: \(NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier)")
+            lines.append("drag down from the date of row 1 to row 4: selected \(browser.selectedItems.map(\.name).sorted()) · files still there \(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).count)")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }
