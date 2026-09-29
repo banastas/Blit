@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.22</title>
-      <pubDate>Tue, 29 Sep 2026 04:48:48 +0000</pubDate>
-      <sparkle:version>25</sparkle:version>
-      <sparkle:shortVersionString>0.2.22</sparkle:shortVersionString>
+      <title>Blit 0.2.23</title>
+      <pubDate>Tue, 29 Sep 2026 05:18:56 +0000</pubDate>
+      <sparkle:version>26</sparkle:version>
+      <sparkle:shortVersionString>0.2.23</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>A cleaner two-pane window: each pane is its own card, the active one shows where F5 and F6 send, headers say what a folder is on (Drive, NAS, Seedbox), and footers show free space. Every file is one line, dates shorten to fit, and columns always fit the pane. The full HUD is about 40% shorter and opens only when there's room.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.22.zip" type="application/octet-stream" sparkle:edSignature="WeoBQ1UDuMKE0K+mPh4Q3Koe/SdDx/eZTjQjY/hlh7EbeD2LaT4Zy8lB2sAHH7q5o88hiLDjFBRK7CpoAWNVBg==" length="5597621" />
+      <description><![CDATA[<p>Tabs of pairs: each tab keeps its own two panes (folders, history, selection, scroll). ⌘T opens a new tab with the same pair, ⌘W closes it, ⌃Tab and ⌘1–9 switch. Drag tabs to reorder, double-click to rename. Tabs come back when you relaunch, and a tab whose folder is part of a running transfer shows its progress.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.23.zip" type="application/octet-stream" sparkle:edSignature="891ReFLq4bjy0Dgpj2w/MD3BwUWg0t4XwnpgaMeUkmfz2mjzGlEei+nRsSyXj81Aq1yXvPA0EqAjwzFdLe1CDg==" length="5661244" />
     </item>
   </channel>
 </rss>
