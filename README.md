@@ -591,6 +591,13 @@ PORT=3232 SHELL_PORT=3232 scripts/sftp-probe.sh user@host "path/to/file.mkv"
 PORT=3232 scripts/sftp-bench.sh user@host "path/to/folder/"
 ```
 
+```bash
+# Head to head: Blit's engine against rclone and lftp, whole-file downloads of one file (0.5–3 GB)
+PORT=3232 scripts/sftp-compare.sh user@host "path/to/folder/"
+```
+
+`sftp-compare.sh` also needs `rclone` (`brew install rclone`) and builds the `blit` tool first.
+
 `SHELL_PORT` / `SSH_PORT` set the SSH shell endpoint used for the server's disk-read test and checksums, when it differs from the SFTP port. Connect once with `ssh -p PORT user@host` first, so the host key is trusted before running the scripts.
 
 **Known limitation:** `sftp-probe.sh` starts timing before login, so higher connection counts pay more login time within the 20-second window. That understates their speed; fixing it to time from first byte is part of M1.
