@@ -1758,6 +1758,58 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitDragOutTest <log>`: a real drag of a file out of the list, released
+    /// over the menu bar (no target there, so it's cancelled and nothing is
+    /// created). Logs the longest main-thread stall during and after it.
+    static func runDragOutTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitDragOutTest") else { return }
+        var lastBeat = Date(), longest: TimeInterval = 0
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                longest = max(longest, Date().timeIntervalSince(lastBeat))
+                lastBeat = Date()
+            }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            var lines: [String] = []
+            guard let browser = BrowserModel.active, let window = BrowserModel.activeWindow else { return }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-drag-out-test")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            fm.createFile(atPath: root.appendingPathComponent("out.bin").path, contents: Data("x".utf8))
+            browser.open(.local(root))
+            for _ in 0..<30 where browser.rows.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.setFrame(NSRect(x: 120, y: 120, width: 1100, height: 700), display: true)
+            try? await Task.sleep(for: .seconds(1))
+            guard let table = firstTable(in: window.contentView) else { return }
+            let rect = table.rect(ofRow: 0)
+            let start = window.convertPoint(toScreen: table.convert(NSPoint(x: rect.minX + 90, y: rect.midY), to: nil))
+            let height = NSScreen.screens.first?.frame.height ?? 0
+            // End over the menu bar, left of the centre: nothing takes a drop there.
+            var end = [Double((NSScreen.screens.first?.frame.width ?? 1000) * 0.4), 4]
+            // -BlitDragOutEnd "x,y": drop there instead (e.g. a Finder window the test opened).
+            if let custom = UserDefaults.standard.string(forKey: "BlitDragOutEnd")?.split(separator: ",").compactMap({ Double($0) }),
+               custom.count == 2 { end = custom }
+            longest = 0
+            try? JSONSerialization.data(withJSONObject: [start.x, height - start.y] + end)
+                .write(to: URL(fileURLWithPath: logPath + ".points-0"))
+            for _ in 0..<150 where !fm.fileExists(atPath: logPath + ".hover-0") { try? await Task.sleep(for: .milliseconds(100)) }
+            let during = longest
+            lines.append("drag types: \((NSPasteboard(name: .drag).types ?? []).map(\.rawValue))")
+            for item in NSPasteboard(name: .drag).pasteboardItems ?? [] { lines.append("  item: \(item.types.map(\.rawValue))") }
+            try? await Task.sleep(for: .seconds(5))
+            lines.append("stall while dragging out \(String(format: "%.1f", during)) s · worst including after release \(String(format: "%.1f", longest)) s")
+            lines.append("file still in place \(fm.fileExists(atPath: root.appendingPathComponent("out.bin").path))")
+            try? fm.removeItem(at: root)
+            lines.append("done")
+            try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

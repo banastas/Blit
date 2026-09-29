@@ -196,7 +196,7 @@ struct FileListView: View {
         } rows: {
             ForEach(browser.rows) { item in
                 TableRow(item)
-                    .draggable(payload(for: item))
+                    .itemProvider { dragProvider(for: item) }
             }
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
@@ -416,10 +416,31 @@ struct FileListView: View {
     /// Dragging a selected row drags the whole selection, in list order.
     private func payload(for item: FileItem) -> TransferPayload {
         let items = browser.selection.contains(item.id) ? browser.selectedItems : [item]
-        let payload = TransferPayload(locations: items.map(\.location), folders: items.filter(\.isDirectory).map(\.location),
-                                      primary: item.location)
-        DragContents.started(payload)   // runs when the drag begins (an autoclosure)
-        return payload
+        return TransferPayload(locations: items.map(\.location), folders: items.filter(\.isDirectory).map(\.location),
+                               primary: item.location)
+    }
+
+    /// What a dragged row carries, built by hand: SwiftUI's Transferable drag
+    /// reached Finder and other apps as a file promise named after Blit's own
+    /// type, so Finder saved a "Blit Locations" file instead of the file.
+    /// A local row carries its file as a plain file URL (what Finder, Books and
+    /// the Desktop take); every row carries Blit's payload, which Blit's own
+    /// drop targets read first.
+    private func dragProvider(for item: FileItem) -> NSItemProvider {
+        let payload = payload(for: item)
+        DragContents.started(payload)   // runs when the drag begins
+        let provider = NSItemProvider()
+        if let url = item.location.localURL {
+            provider.registerObject(url as NSURL, visibility: .all)
+            provider.suggestedName = url.lastPathComponent
+        }
+        if let data = try? JSONEncoder().encode(payload) {
+            provider.registerDataRepresentation(for: .blitLocations, visibility: .all) { completion in
+                completion(data, nil)
+                return nil
+            }
+        }
+        return provider
     }
 }
 

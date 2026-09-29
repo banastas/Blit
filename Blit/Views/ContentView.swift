@@ -435,6 +435,7 @@ struct ContentView: View {
         UITestHarness.runDropTestIfRequested()
         UITestHarness.runSidebarDropTestIfRequested(sidebar: sidebar)
         UITestHarness.runAutoCollapseTestIfRequested(transfers: transfers)
+        UITestHarness.runDragOutTestIfRequested()
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)

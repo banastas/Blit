@@ -26,15 +26,23 @@ struct TransferPayload: Codable, Transferable {
     /// The row this payload was dragged from (a multi-row drag makes one per row).
     var primary: BrowseLocation? = nil
 
-    /// The dragged row's local file, for Finder and other apps.
+    /// The dragged row's local file or folder, for Finder and other apps.
     var primaryFileURL: URL? { (primary ?? locations.first)?.localURL }
 
     static var transferRepresentation: some TransferRepresentation {
-        // Within Blit: every location, local or on a server.
+        // To Finder and other apps (PRD R2.3): the dragged row's file itself,
+        // first, because apps take the first type they can use. (With Blit's
+        // own type first, Finder saved a "Blit Locations" data file instead of
+        // the file; a plain URL proxy reached Finder as a web link it ignored.)
+        FileRepresentation(exportedContentType: .item) { payload in
+            SentTransferredFile(payload.primaryFileURL ?? URL(fileURLWithPath: "/"), allowAccessingOriginalFile: true)
+        }
+        .exportingCondition { $0.primaryFileURL != nil }
+        // Within Blit: every location, local or on a server (Blit's drop
+        // targets read this type first). Hidden from other apps, which would
+        // save it as a "Blit Locations" file rather than take the file itself.
         CodableRepresentation(contentType: .blitLocations)
-        // To Finder and other apps (PRD R2.3): local items as file URLs.
-        ProxyRepresentation(exporting: { (payload: TransferPayload) in payload.primaryFileURL ?? URL(fileURLWithPath: "/") })
-            .exportingCondition { $0.primaryFileURL != nil }
+            .visibility(.ownProcess)
         // From Finder: a dropped file URL becomes a local location, so every
         // drop target (rows, sidebar, path bar) accepts it.
         ProxyRepresentation(importing: { (url: URL) in TransferPayload(locations: [.local(url)]) })
