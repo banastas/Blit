@@ -519,6 +519,10 @@ struct FileListView: View {
                 completion(data, nil)
                 return nil
             }
+            // Server files have no file to hand over: the drag keeps only Blit's
+            // payload, so other apps refuse it (SwiftUI's file promise for it
+            // wrote a "Blit Locations" file into Finder).
+            if payload.locations.allSatisfy({ $0.serverID != nil }) { DragContents.keepOnlyPayload(data) }
         }
         return provider
     }
