@@ -186,11 +186,14 @@ private struct SelectionCount: View {
         let files = selected.filter { !$0.isDirectory }
         let bytes = files.reduce(Int64(0)) { $0 + max($1.size, 0) }
         let folders = selected.count - files.count
+        // The volume's free space: what you check before sending something over.
+        let free = browser.current?.localURL.flatMap { FreeSpace.shared.free(at: $0) }
+        let space = free.map { " · " + $0.formatted(.byteCount(style: .file)) + " free" } ?? ""
         Group {
             if selected.isEmpty {
-                Text("\(total) item\(total == 1 ? "" : "s")")
+                Text("\(total) item\(total == 1 ? "" : "s")" + space)
             } else {
-                Text("\(selected.count) of \(total) selected" + (files.isEmpty ? "" : " · " + bytes.formatted(.byteCount(style: .file))))
+                Text("\(selected.count) of \(total) selected" + (files.isEmpty ? "" : " · " + bytes.formatted(.byteCount(style: .file))) + space)
             }
         }
         .monospacedDigit()

@@ -104,3 +104,38 @@ enum PaneMemory {
         }
     }
 }
+
+/// Free space per volume, for the panes' footers. Read off the main thread
+/// (a share that has gone to sleep can take seconds to answer) and at most
+/// every 30 s per volume.
+@MainActor
+@Observable
+final class FreeSpace {
+    static let shared = FreeSpace()
+    private(set) var bytes: [String: Int64] = [:]
+    @ObservationIgnored private var asked: [String: Date] = [:]
+
+    /// The volume a local path is on: "/Volumes/<name>", or "/" for the startup disk.
+    static func volumeRoot(of url: URL) -> String {
+        let parts = url.standardizedFileURL.pathComponents
+        return parts.count > 2 && parts[1] == "Volumes" ? "/Volumes/" + parts[2] : "/"
+    }
+
+    /// The last known free space for `url`'s volume (refreshed in the background).
+    func free(at url: URL) -> Int64? {
+        let root = Self.volumeRoot(of: url)
+        if asked[root].map({ Date().timeIntervalSince($0) > 30 }) ?? true {
+            asked[root] = Date()
+            Task.detached {
+                let values = try? URL(fileURLWithPath: root).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+                // "Important usage" counts purgeable space on local disks, but reads
+                // 0 on a share: take whichever is larger.
+                let important = values?.volumeAvailableCapacityForImportantUsage ?? 0
+                let plain = Int64(values?.volumeAvailableCapacity ?? 0)
+                let free: Int64? = max(important, plain) > 0 ? max(important, plain) : nil
+                await MainActor.run { if let free { FreeSpace.shared.bytes[root] = free } }
+            }
+        }
+        return bytes[root]
+    }
+}

@@ -19,6 +19,9 @@ struct FileListView: View {
     /// This pane's columns (widths, order); which are shown comes from
     /// ColumnSettings, shared with the other pane and View › Columns.
     @State private var columns = TableColumnCustomization<FileItem>()
+    /// Size stepped out because this pane is too narrow (not the user's choice:
+    /// never saved, never shared with the other pane).
+    @State private var sizeSqueezed = false
     /// The folder row a drag is over (it lights up and takes the drop).
     @State private var dropFolder: BrowseLocation?
     @FocusState private var tableFocused: Bool
@@ -118,15 +121,16 @@ struct FileListView: View {
             }
         }
         .onChange(of: ColumnSettings.shared.hidden) { applyColumnVisibility() }
+        .onChange(of: sizeSqueezed) { applyColumnVisibility() }
         .onChange(of: columns) {
-            for column in ColumnSettings.optional {
+            for column in ColumnSettings.optional where !(column.id == "size" && sizeSqueezed) {
                 let shown = columns[visibility: column.id] != .hidden
                 if shown != ColumnSettings.shared.isShown(column.id) { ColumnSettings.shared.set(column.id, shown: shown) }
             }
         }
         // Fit the columns to the pane, whenever the pane changes size.
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, _ in
-            DispatchQueue.main.async { FitColumns.apply(for: browser) }
+            DispatchQueue.main.async { fitColumns() }
         }
         // SwiftUI's Table shows no menu for right-clicks below the last row;
         // EmptySpaceMenu handles those (New Folder, Paste, Refresh).
@@ -194,7 +198,7 @@ struct FileListView: View {
                     }
                 }
             }
-            .width(min: 150, ideal: 280)
+            .width(min: 110, ideal: 280)
             .customizationID("name")
             .disabledCustomizationBehavior(.visibility)
 
@@ -211,7 +215,7 @@ struct FileListView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .width(min: 56, ideal: 76)
+            .width(min: 54, ideal: 70)
             .customizationID("size")
 
             // Where the row stands in a transfer in the strip (PRD R2.6).
@@ -416,10 +420,17 @@ struct FileListView: View {
 
     private func applyColumnVisibility() {
         for column in ColumnSettings.optional {
-            let wanted: Visibility = ColumnSettings.shared.isShown(column.id) ? .visible : .hidden
+            let shown = ColumnSettings.shared.isShown(column.id) && !(column.id == "size" && sizeSqueezed)
+            let wanted: Visibility = shown ? .visible : .hidden
             if (columns[visibility: column.id] == .hidden) != (wanted == .hidden) { columns[visibility: column.id] = wanted }
         }
-        DispatchQueue.main.async { FitColumns.apply(for: browser) }
+        DispatchQueue.main.async { fitColumns() }
+    }
+
+    private func fitColumns() {
+        FitColumns.apply(for: browser) { squeezed in
+            if sizeSqueezed != squeezed { sizeSqueezed = squeezed }
+        }
     }
 
     /// The row under the pointer, during a drag.
@@ -824,13 +835,16 @@ private struct RenameField: NSViewRepresentable {
 @MainActor
 enum FitColumns {
     /// Fits `browser`'s list to its pane (on appearing and whenever the pane
-    /// changes size).
-    static func apply(for browser: BrowserModel) {
+    /// changes size). `squeeze` hides or shows Size when the pane is too
+    /// narrow for it (through SwiftUI, which owns the table's columns).
+    static func apply(for browser: BrowserModel, squeeze: @escaping (Bool) -> Void) {
         guard let anchor = EmptySpaceMenu.anchorView(for: browser) else { return }
-        apply(near: anchor)
+        apply(near: anchor, squeeze: squeeze)
     }
 
-    static func apply(near anchor: NSView) {
+    private static var squeezeHandlers: [ObjectIdentifier: (Bool) -> Void] = [:]
+
+    static func apply(near anchor: NSView, squeeze: @escaping (Bool) -> Void) {
         // The anchor covers this list: its table is the one under the anchor's
         // centre (with two panes the window holds two).
         guard let window = anchor.window, let content = window.contentView else { return }
@@ -841,8 +855,27 @@ enum FitColumns {
         guard let table = tables.first(where: { ($0.enclosingScrollView ?? $0).convert(($0.enclosingScrollView ?? $0).bounds, to: nil).contains(centre) })
         else { return }
         table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        squeezeHandlers[ObjectIdentifier(table)] = squeeze
         watch(table)
-        fit(table)
+        // Asked for (a pane appearing or resizing, a column shown or hidden):
+        // fit even at the same width.
+        fittedWidth[ObjectIdentifier(table)] = nil
+        scheduleFit(table)
+    }
+
+    /// Fits run after the current layout pass, never inside one: changing
+    /// columns while AppKit lays the window out raised an exception (Blit
+    /// crashed when a pane got narrow enough for Size to step out). Several
+    /// requests before then make one fit.
+    private static var pending = Set<ObjectIdentifier>()
+
+    private static func scheduleFit(_ table: NSTableView) {
+        guard pending.insert(ObjectIdentifier(table)).inserted else { return }
+        DispatchQueue.main.async { [weak table] in
+            guard let table else { return }
+            pending.remove(ObjectIdentifier(table))
+            fit(table)
+        }
     }
 
     /// Refits whenever the list's visible area changes size (a pane resized,
@@ -852,37 +885,74 @@ enum FitColumns {
         guard let clip = table.enclosingScrollView?.contentView, watched.insert(ObjectIdentifier(table)).inserted else { return }
         clip.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: clip, queue: .main) { [weak table] _ in
-            MainActor.assumeIsolated { if let table { fit(table) } }
+            MainActor.assumeIsolated { if let table { scheduleFit(table) } }
         }
     }
 
     /// Every column but Name has a set width; Name takes the rest. Only if
-    /// that would push Name under its minimum does the date give up width
-    /// (and switch to a shorter form).
-    private static let widths: [String: CGFloat] = ["Modified": 132, "Size": 76, "Status": 100, "Kind": 120]
+    /// that would push Name under its minimum do the date, then the size, give
+    /// up width (the date then shows a shorter form); if even that isn't
+    /// enough, Size steps out until there's room again.
+    private static let widths: [String: CGFloat] = ["Modified": 132, "Size": 70, "Status": 100, "Kind": 120]
+
+    /// Columns hidden only because the pane is too narrow (not by the user),
+    /// per table: they come back when there's room.
+    private static var squeezedOut: [ObjectIdentifier: Set<String>] = [:]
+    /// The width each table was last fitted to: only a change of width refits
+    /// (a scroller appearing, or a height change, would otherwise loop).
+    private static var fittedWidth: [ObjectIdentifier: CGFloat] = [:]
+    private static var fitting = false
 
     private static func fit(_ table: NSTableView) {
-        let columns = table.tableColumns.filter { !$0.isHidden }
-        guard let name = columns.first else { return }
-        // A little room at the end, so sizes don't sit under the overlay
-        // scroller, and none of the part the floating sidebar covers (the first
-        // pane's list runs underneath it).
-        let available = (table.enclosingScrollView?.contentView.bounds.width ?? table.bounds.width) - 12
-            - sidebarOverlap(table)
-        let spacing = table.intercellSpacing.width * CGFloat(columns.count)
-        for column in columns.dropFirst() {
-            if let width = widths[column.title], abs(column.width - width) > 0.5 { column.width = width }
+        guard !fitting, let clip = table.enclosingScrollView?.contentView else { return }
+        let key = ObjectIdentifier(table)
+        // What the list can show, less the part the floating sidebar covers.
+        let room = (clip.bounds.width - sidebarOverlap(table)).rounded()
+        guard fittedWidth[key].map({ abs($0 - room) >= 1 }) ?? true else { return }
+        fitting = true
+        defer { fitting = false }
+        fittedWidth[key] = room
+
+        // Worked out from the width alone (no measuring the result), so the
+        // same width always gives the same columns. The inset list style
+        // adds margins at both ends, and a little room is left at the end
+        // for the overlay scroller.
+        let margins: CGFloat = (table.style == .inset ? 20 : 0) + 14
+        func needed(_ columns: [NSTableColumn], _ width: (NSTableColumn) -> CGFloat) -> CGFloat {
+            columns.reduce(CGFloat(0)) { $0 + width($1) + table.intercellSpacing.width } + margins
         }
-        var others = columns.dropFirst().reduce(CGFloat(0)) { $0 + $1.width } + spacing
-        let overflow = others + name.minWidth - available
-        if overflow > 0, let date = columns.first(where: { $0.title == "Modified" }) {
-            let give = min(overflow, date.width - date.minWidth)
-            if give > 0 {
-                date.width -= give
-                others -= give
+        if let size = table.tableColumns.first(where: { $0.title == "Size" }) {
+            let others = table.tableColumns.filter { !$0.isHidden && $0 !== size }
+            let atMinimum = needed(others + [size]) { $0.minWidth }
+            let squeezed = squeezedOut[key]?.contains("Size") == true
+            // Out below the minimum; back only with some room to spare (no flapping).
+            let wanted = squeezed ? room < atMinimum + 20 : (!size.isHidden && room < atMinimum)
+            if wanted != squeezed {
+                squeezedOut[key] = wanted ? ["Size"] : []
+                let handler = squeezeHandlers[key]
+                DispatchQueue.main.async { handler?(wanted) }   // SwiftUI changes the column; that refits
+                return
             }
         }
-        let target = max(name.minWidth, available - others)
+
+        let columns = table.tableColumns.filter { !$0.isHidden }
+        guard let name = columns.first else { return }
+        var set: [ObjectIdentifier: CGFloat] = [:]
+        for column in columns.dropFirst() { set[ObjectIdentifier(column)] = widths[column.title] ?? column.width }
+        var total = needed(columns) { column in column === name ? name.minWidth : set[ObjectIdentifier(column)] ?? column.width }
+        for title in ["Modified", "Size"] where total > room {
+            guard let column = columns.first(where: { $0.title == title }), let current = set[ObjectIdentifier(column)] else { continue }
+            let give = min(total - room, current - column.minWidth)
+            if give > 0 {
+                set[ObjectIdentifier(column)] = current - give
+                total -= give
+            }
+        }
+        for column in columns.dropFirst() {
+            if let width = set[ObjectIdentifier(column)], abs(column.width - width) > 0.5 { column.width = width }
+        }
+        let others = columns.dropFirst().reduce(CGFloat(0)) { $0 + (set[ObjectIdentifier($1)] ?? $1.width) + table.intercellSpacing.width }
+        let target = max(name.minWidth, room - margins - table.intercellSpacing.width - others)
         if abs(name.width - target) > 0.5 { name.width = target }
     }
 

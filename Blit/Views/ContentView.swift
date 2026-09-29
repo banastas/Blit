@@ -27,6 +27,9 @@ struct ContentView: View {
     @State private var removing: ServerConfig?
     /// Height of the floating transfer HUD or strip, reserved below the list.
     @State private var hudHeight: CGFloat = 0
+    /// Height of the panes' area (the full HUD opens only if the lists keep
+    /// about six rows above it).
+    @State private var detailHeight: CGFloat = 1_000
 
     struct EditingServer: Identifiable {
         var server: ServerConfig
@@ -52,10 +55,15 @@ struct ContentView: View {
                             pane(browser, tag: .first, isActive: !secondActive) { secondActive = false }
                             pane(secondBrowser, tag: .second, isActive: secondActive) { secondActive = true }
                         }
+                        .padding(.horizontal, 3)
+                        .padding(.bottom, 3)
+                        // The gutter the two cards sit in.
+                        .background(Color.black.opacity(0.10))
                     } else {
                         FileListView(browser: browser)
                     }
                 }
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { _, height in detailHeight = height }
                     // Room at the bottom for the transfer HUD, which floats over it.
                     .safeAreaPadding(.bottom, transfers.featured == nil ? 0 : hudHeight)
                     .overlay(alignment: .bottom) {
@@ -66,8 +74,9 @@ struct ContentView: View {
                         // HUD jumped.
                         if let job = transfers.featured {
                             Group {
-                                // File operations only ever use the condensed strip.
-                                if transfers.isExpanded, !job.isOperation {
+                                // File operations only ever use the condensed strip, and the
+                                // full HUD waits for room (each pane keeps about six rows).
+                                if transfers.isExpanded, !job.isOperation, hasRoomForFullHUD {
                                     TransferHUD(job: job).transition(.crt)
                                 } else {
                                     TransferStrip(job: job).transition(.crt)
@@ -85,8 +94,13 @@ struct ContentView: View {
                     .animation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36), value: transfers.featured == nil)
             }
         }
-        .navigationTitle(active?.title ?? "Blit")
-        .navigationSubtitle(active?.subtitle ?? "")
+        // The smallest useful window: two panes (the sidebar collapses on its
+        // own) with about eight rows each; also half of a 13" MacBook Air, so
+        // Blit fits beside another app in Split View.
+        .frame(minWidth: 720, minHeight: 480)
+        // With two panes each names its own folder, so the window just says Blit.
+        .navigationTitle(showSecondPane ? "Blit" : (active?.title ?? "Blit"))
+        .navigationSubtitle(showSecondPane ? "" : (active?.subtitle ?? ""))
         .toolbar { toolbar }
         // Search the folder in the active pane (⌘F), as in Finder's toolbar.
         .searchable(text: searchBinding, placement: .toolbar, prompt: searchPrompt)
@@ -106,9 +120,8 @@ struct ContentView: View {
             Panes.shared.twoPanes = shown
         }
         .onChange(of: secondBrowser == nil) { Panes.shared.second = secondBrowser }
-        // Each pane's folder, for next launch.
-        .onChange(of: browser?.current) { _, location in PaneMemory.save(location, pane: 0) }
-        .onChange(of: secondBrowser?.current) { _, location in PaneMemory.save(location, pane: 1) }
+        .modifier(PaneTracking(first: browser?.current, second: secondBrowser?.current, secondActive: secondActive,
+                               follow: followActivePane))
         .onAppear(perform: start)
         .background(alignment: .topLeading) {
             WindowReader { BrowserModel.activeWindow = $0 }
@@ -315,26 +328,51 @@ struct ContentView: View {
         return false
     }
 
-    /// One pane of the two-pane layout, with a small location header.
+    /// One pane of the two-pane layout: a card with a header naming the folder
+    /// and what it's on. The active card has an accent ring, and a chip on its
+    /// inner edge points the way F5 and F6 send.
     private func pane(_ model: BrowserModel, tag: PaneFocus, isActive: Bool, activate: @escaping () -> Void) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Image(systemName: model.current?.serverID != nil ? "server.rack" : "folder")
-                    .foregroundStyle(.secondary)
-                Text(model.title).fontWeight(isActive ? .semibold : .regular)
-                Text(model.subtitle).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Image(systemName: paneSymbol(model)).foregroundStyle(isActive ? Color.accentColor : .secondary)
+                Text(model.title.isEmpty ? " " : model.title)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(isActive ? .primary : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let badge = paneBadge(model) {
+                    Text(badge)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
                 Spacer(minLength: 0)
+                // Where F5 / F6 send from here: the other pane's folder.
+                if isActive, let other = Panes.shared.other(than: model), !other.title.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: tag == .first ? "arrowtriangle.right.fill" : "arrowtriangle.left.fill")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 15, height: 15)
+                            .background(Color.accentColor, in: Circle())
+                        Text(other.title).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                    .layoutPriority(-1)
+                    .help("F5 copies and F6 moves the selection to “\(other.title)”")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Sends to \(other.title)")
+                }
             }
             .font(.callout)
             .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
-            // The active pane (where the sidebar, ⌘K, F5 and F6 act) carries an
-            // accent line under its header; the other a plain divider.
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(isActive ? Color.accentColor : Color.clear).frame(height: 2)
-            }
+            .padding(.vertical, 6)
+            .background(isActive ? Color.accentColor.opacity(0.10) : Color.clear)
             .contentShape(Rectangle())
+            .help(model.subtitle)
             .onTapGesture {
                 // Activating from the header also hands the pane the keyboard,
                 // so the arrows don't keep moving the other pane's selection.
@@ -345,8 +383,53 @@ struct ContentView: View {
             FileListView(browser: model, onFocus: activate, paneFocus: $focusedPane, paneTag: tag)
                 .simultaneousGesture(TapGesture().onEnded(activate))
         }
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(isActive ? Color.accentColor.opacity(0.8) : Color(nsColor: .separatorColor), lineWidth: isActive ? 1.5 : 0.5)
+        }
+        .padding(5)
         // Both panes start the same width (the divider still moves).
         .frame(minWidth: 280, idealWidth: 10_000, maxWidth: .infinity)
+    }
+
+    /// The sidebar highlights the active pane's place when it has a row for
+    /// it, and nothing otherwise (never a place neither pane shows).
+    private func followActivePane() {
+        let location = active?.current
+        guard location != selection else { return }
+        let listed = location.map { location in
+            sidebar.favorites.contains { $0.location == location }
+                || servers.browsable.contains { $0.startLocation == location }
+                || sidebar.drives.contains { BrowseLocation.local($0.url) == location }
+                || sidebar.networkShares.contains { BrowseLocation.local($0.url) == location }
+        } ?? false
+        selection = listed ? location : nil
+    }
+
+    private func paneSymbol(_ model: BrowserModel) -> String {
+        guard let current = model.current else { return "folder" }
+        if current.serverID != nil { return "server.rack" }
+        if let url = current.localURL, VolumeKinds.isNetwork(url) { return "externaldrive.connected.to.line.below" }
+        return "folder"
+    }
+
+    /// What the pane's folder is on: the server, "NAS · Media" (with the
+    /// verified shield when copies there are checked on the NAS), the drive's
+    /// name, or Mac for the startup disk.
+    private func paneBadge(_ model: BrowserModel) -> String? {
+        guard let current = model.current else { return nil }
+        if case .remote(let id, _) = current { return servers.server(id)?.displayName ?? "Server" }
+        guard let url = current.localURL else { return nil }
+        let root = FreeSpace.volumeRoot(of: url)
+        let volumeName = (root as NSString).lastPathComponent
+        if VolumeKinds.isNetwork(url) {
+            let verified = servers.nasLogin(forMount: root) != nil
+            return "NAS · " + volumeName + (verified ? " ◆" : "")
+        }
+        if root == "/" { return "Mac" }
+        return url.standardizedFileURL.path == root ? "Drive" : volumeName
     }
 
     private func openSecondPaneIfNeeded() {
@@ -375,7 +458,11 @@ struct ContentView: View {
         return name.isEmpty ? "Search" : "Search “\(name)”"
     }
 
-    private var showsExpandedHUD: Bool { transfers.isExpanded && !(transfers.featured?.isOperation ?? true) }
+    private var showsExpandedHUD: Bool { transfers.isExpanded && !(transfers.featured?.isOperation ?? true) && hasRoomForFullHUD }
+
+    /// The full HUD (about 285 pt) leaves each list its header, about six rows
+    /// and its path bar; a shorter window keeps the strip (a click still asks).
+    private var hasRoomForFullHUD: Bool { detailHeight >= 285 + 250 }
 
     /// Makes `model`'s pane the active one (clicked, right-clicked or focused),
     /// and gives its table the keyboard: a right-click never moves AppKit focus
@@ -484,6 +571,28 @@ struct ContentView: View {
                 ?? sidebar.drives.first(where: { !$0.isInternal }).map { .local($0.url) }
                 ?? .local(FileManager.default.homeDirectoryForCurrentUser)
         }
+    }
+}
+
+/// Each pane's folder is saved for next launch, and the sidebar follows the
+/// active pane (a modifier of its own, to keep ContentView's body checkable).
+private struct PaneTracking: ViewModifier {
+    let first: BrowseLocation?
+    let second: BrowseLocation?
+    let secondActive: Bool
+    let follow: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: first) { _, location in
+                PaneMemory.save(location, pane: 0)
+                follow()
+            }
+            .onChange(of: second) { _, location in
+                PaneMemory.save(location, pane: 1)
+                follow()
+            }
+            .onChange(of: secondActive) { follow() }
     }
 }
 
