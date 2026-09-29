@@ -599,6 +599,7 @@ struct ContentView: View {
         UITestHarness.runEmptyClickTestIfRequested()
         UITestHarness.runRowDragTestIfRequested()
         UITestHarness.runRowDragRealTestIfRequested()
+        UITestHarness.runRemoteDragTestIfRequested(servers: servers, transfers: transfers)
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.renderCardIfRequested(transfers: transfers)
         UITestHarness.runDemoShotIfRequested(sidebar: sidebar, transfers: transfers)

@@ -592,6 +592,21 @@ final class FileOperations {
         }
     }
 
+    /// `location(_:contains:)` by the paths alone, never asking the disk (so
+    /// no symlinks are resolved). For checks that run while the window draws:
+    /// resolving a path on a share asks the NAS about every folder in it, and
+    /// a share that's asleep or busy blocked the main thread (the tab bar,
+    /// once a second while a transfer ran, froze the window).
+    static func location(_ outer: BrowseLocation, textuallyContains inner: BrowseLocation) -> Bool {
+        switch (outer, inner) {
+        case (.local(let a), .local(let b)):
+            let a = a.standardizedFileURL.path, b = b.standardizedFileURL.path
+            return a == b || b.hasPrefix(a == "/" ? "/" : a + "/")
+        default:
+            return location(outer, contains: inner)   // remote paths never touch the disk
+        }
+    }
+
     /// Same folder, ignoring how the URL was spelled.
     static func same(_ a: BrowseLocation, _ b: BrowseLocation) -> Bool {
         if let x = a.localURL, let y = b.localURL { return x.standardizedFileURL.path == y.standardizedFileURL.path }

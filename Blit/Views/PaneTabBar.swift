@@ -123,7 +123,8 @@ struct PaneTabBar: View {
             guard !job.isOperation else { return false }
             let places = [BrowseLocation.local(job.destination)] + job.sources + job.sources.compactMap(\.parent)
             return shown.contains { pane in
-                places.contains { place in pane == place || FileOperations.location(place, contains: pane) }
+                // By the paths alone: this runs every second on the main thread.
+                places.contains { place in pane == place || FileOperations.location(place, textuallyContains: pane) }
             }
         }
         if let running = touching.last(where: \.isActive) {

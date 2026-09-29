@@ -2656,6 +2656,135 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRemoteDragTest <log>`: a server file dragged into a local list
+    /// with a real drag (scripts/ui-drag), the case that froze the user's
+    /// window: the left pane shows the first saved server's start folder, the
+    /// right a scratch folder already holding a file of the same name (so the
+    /// drop asks Replace / Keep Both, answered Stop here: nothing downloads).
+    /// Logs the drop's events, the longest main-thread stall, whether the drag
+    /// ended, and a heartbeat for 10 s after.
+    static func runRemoteDragTestIfRequested(servers: ServerStore, transfers: TransferManager? = nil) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitRemoteDragTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        var lastBeat = Date(), longest: TimeInterval = 0
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                longest = max(longest, Date().timeIntervalSince(lastBeat))
+                lastBeat = Date()
+            }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            guard let server = servers.browsable.first, let tab = PaneTabs.shared.current, let second = tab.second,
+                  let window = BrowserModel.activeWindow else { return lines.append("no server or panes") }
+            let local = fm.temporaryDirectory.appendingPathComponent("blit-remote-drag")
+            try? fm.removeItem(at: local)
+            try? fm.createDirectory(at: local, withIntermediateDirectories: true)
+            tab.first.open(server.startLocation)
+            second.open(.local(local))
+            for _ in 0..<100 where tab.first.rows.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+            // -BlitRemoteDragChild: a file inside an expanded server folder instead
+            // (the user's freeze: the file came from a folder opened in place).
+            if UserDefaults.standard.bool(forKey: "BlitRemoteDragChild") {
+                for folder in tab.first.rows.filter(\.isDirectory).prefix(8) {
+                    tab.first.toggleExpanded(folder)
+                    for _ in 0..<50 where tab.first.loadingChildren.contains(folder.location) || !tab.first.expanded.contains(folder.location) {
+                        try? await Task.sleep(for: .milliseconds(200))
+                    }
+                    try? await Task.sleep(for: .milliseconds(300))
+                    if tab.first.rows.contains(where: { $0.depth == 1 && !$0.isDirectory }) { break }
+                    tab.first.toggleExpanded(folder)
+                }
+            }
+            let childOnly = UserDefaults.standard.bool(forKey: "BlitRemoteDragChild")
+            // The smallest file at the top of the server folder, with a namesake here.
+            guard let file = tab.first.rows.filter({ !$0.isDirectory && (!childOnly || $0.depth == 1) })
+                    .min(by: { ($0.size ?? .max) < ($1.size ?? .max) }) else {
+                return lines.append("no file on the server (\(tab.first.rows.count) rows, error \(tab.first.error ?? "none"))")
+            }
+            let name = ConflictPrompt.name(for: file.location)
+            // -BlitRemoteDragTwice: the first drag downloads the file for real, the
+            // second drags it again onto its verified copy (the user's freeze).
+            let twice = UserDefaults.standard.bool(forKey: "BlitRemoteDragTwice")
+            if !twice { fm.createFile(atPath: local.appendingPathComponent(name).path, contents: Data("x".utf8)) }
+            second.reload()
+            // -BlitRemoteDragRealPrompt: the real Replace / Keep Both sheet (answered
+            // Stop below, if it appears), as the user saw it.
+            let realPrompt = UserDefaults.standard.bool(forKey: "BlitRemoteDragRealPrompt")
+            if !realPrompt { ConflictPrompt.testAnswer = .stop }
+            window.setFrame(NSRect(x: 120, y: 120, width: 1200, height: 700), display: true)
+            // In front before the drag (ui-drag refuses otherwise); macOS can take a moment.
+            for _ in 0..<20 where NSWorkspace.shared.frontmostApplication?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                NSApp.activate()
+                window.makeKeyAndOrderFront(nil)
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            try? await Task.sleep(for: .seconds(1))
+            var tables: [NSTableView] = []
+            func collect(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                view.subviews.forEach(collect)
+            }
+            if let content = window.contentView { collect(content) }
+            tables.sort { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
+            guard tables.count == 2, let row = tab.first.rows.firstIndex(where: { $0.id == file.id }) else { return lines.append("tables \(tables.count)") }
+            let height = NSScreen.screens.first?.frame.height ?? 0
+            @MainActor func cg(_ table: NSTableView, _ p: NSPoint) -> [Double] {
+                let s = window.convertPoint(toScreen: table.convert(p, to: nil)); return [s.x, height - s.y]
+            }
+            let rect = tables[0].rect(ofRow: row)
+            let from = cg(tables[0], NSPoint(x: rect.minX + 90, y: rect.midY))
+            let seen = tables[1].visibleRect
+            let to = cg(tables[1], NSPoint(x: seen.midX, y: seen.minY + seen.height * 0.6))
+            lines.append("frontmost is this test copy: \(NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier) · dragging \(name) (\(file.size ?? -1) bytes, depth \(file.depth)) from \(server.displayName)")
+            UITestHarness.dropTrail = []
+            longest = 0
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+            try? JSONSerialization.data(withJSONObject: from + to).write(to: URL(fileURLWithPath: logPath + ".points-0"))
+            for _ in 0..<200 where !fm.fileExists(atPath: logPath + ".hover-0") && !fm.fileExists(atPath: logPath + ".aborted") {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            lines.append("hovering: stall so far \(String(format: "%.1f", longest)) s · trail \(UITestHarness.dropTrail.suffix(4))")
+            try? await Task.sleep(for: .seconds(4))
+            if realPrompt {
+                let sheet = window.attachedSheet
+                lines.append("real prompt: sheet on the window \(sheet != nil) · key window is the main one \(NSApp.keyWindow === window) · windows \(NSApp.windows.filter(\.isVisible).map { "\(type(of: $0))" })")
+                if let sheet { window.endSheet(sheet, returnCode: NSApplication.ModalResponse(rawValue: 1003)) }   // Stop
+                try? await Task.sleep(for: .seconds(1))
+            }
+            if twice {
+                for _ in 0..<150 {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    if let job = transfers?.jobs.last, !job.isOperation, job.status == .finished { break }
+                }
+                lines.append("first drag: \(transfers?.jobs.last.map { "\($0.status) · \($0.filesVerified)/\($0.fileCount) verified" } ?? "no job") · file here \(fm.fileExists(atPath: local.appendingPathComponent(name).path))")
+                try? await Task.sleep(for: .seconds(2))
+                second.reload()
+                try? await Task.sleep(for: .seconds(1))
+                UITestHarness.dropTrail = []
+                longest = 0
+                try? JSONSerialization.data(withJSONObject: from + to).write(to: URL(fileURLWithPath: logPath + ".points-1"))
+                for _ in 0..<200 where !fm.fileExists(atPath: logPath + ".hover-1") && !fm.fileExists(atPath: logPath + ".aborted") {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                try? await Task.sleep(for: .seconds(4))
+                let sheet = window.attachedSheet
+                lines.append("second drag: sheet on the window \(sheet != nil) · stall \(String(format: "%.1f", longest)) s · drop performed \(UITestHarness.dropTrail.contains { $0.hasPrefix("perform") }) · trail \(UITestHarness.dropTrail.filter { !$0.hasPrefix("updated") && !$0.hasPrefix("provider") })")
+                if let sheet { window.endSheet(sheet, returnCode: NSApplication.ModalResponse(rawValue: 1003)) }
+            }
+            lines.append("after release: stall \(String(format: "%.1f", longest)) s · drop performed \(UITestHarness.dropTrail.contains { $0.hasPrefix("perform") }) · asked \(ConflictPrompt.lastAsked.map { "\($0.count) conflict(s)" } ?? "no") · trail \(UITestHarness.dropTrail.filter { !$0.hasPrefix("updated") })")
+            for second in 1...10 {
+                try? await Task.sleep(for: .seconds(1))
+                if second % 5 == 0 { lines.append("heartbeat +\(second) s · longest stall \(String(format: "%.1f", longest)) s") }
+            }
+            ConflictPrompt.testAnswer = nil
+            lines.append("done")
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }
