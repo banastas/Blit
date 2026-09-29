@@ -640,7 +640,7 @@ enum EmptySpaceMenu {
         anchor.browser = browser
         anchors.append(anchor)
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { event in
             nonisolated(unsafe) let event = event
             return MainActor.assumeIsolated { handle(event) } ? nil : event
         }
@@ -678,27 +678,44 @@ enum EmptySpaceMenu {
         })?.browser
     }
 
+    /// The file list (a table with column headers; the sidebar has none) whose
+    /// scroll view covers `point` in window coordinates.
+    private static func table(at point: NSPoint, in content: NSView) -> NSTableView? {
+        var found: NSTableView?
+        func search(_ view: NSView) {
+            guard found == nil else { return }
+            if let table = view as? NSTableView, table.headerView != nil, let scroll = table.enclosingScrollView,
+               scroll.convert(scroll.bounds, to: nil).contains(point) {
+                found = table
+                return
+            }
+            view.subviews.forEach(search)
+        }
+        search(content)
+        return found
+    }
+
     private static func handle(_ event: NSEvent) -> Bool {
+        // Right-clicks, and ⌃-clicks (the same menu everywhere else in macOS).
+        if event.type == .leftMouseDown, !event.modifierFlags.contains(.control) { return false }
         guard let window = event.window, let content = window.contentView else { return false }
+        let point = event.locationInWindow
+        guard let browser = browser(at: point, in: window) else { return false }
         // A right-click in a pane makes it the active one, as a left click does:
         // menu commands and ⌘⌫ must act on the pane the user is looking at.
-        if let browser = browser(at: event.locationInWindow, in: window) { BrowserModel.onInteraction?(browser) }
-        guard let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)) else { return false }
-        var table: NSTableView?
-        var view: NSView? = hit
-        while let current = view {
-            if current is NSTableHeaderView { return false }   // column headers keep their own behavior
-            if let found = current as? NSTableView { table = found; break }
-            if let scroll = current as? NSScrollView, let found = scroll.documentView as? NSTableView { table = found; break }
-            view = current.superview
-        }
-        // Only file lists (they have column headers; the sidebar doesn't), and only below the rows.
-        guard let table, table.headerView != nil,
-              table.row(at: table.convert(event.locationInWindow, from: nil)) < 0 else { return false }
-        guard let browser = anchors.first(where: { anchor in
-            guard let view = anchor.view, view.window === window else { return false }
-            return view.convert(view.bounds, to: nil).contains(event.locationInWindow)
-        })?.browser, browser.current != nil else { return false }
+        BrowserModel.onInteraction?(browser)
+        // The pane's list is found from where the click is, not from the view
+        // on top there: the walk up from the hit view gave up (no menu at all)
+        // whenever something other than the table was on top.
+        guard browser.current != nil, let table = table(at: point, in: content),
+              let scroll = table.enclosingScrollView else { return false }
+        // Column headers keep their own menu, and the path bar (over the list's
+        // bottom inset) its own clicks; rows get the table's file menu.
+        var list = scroll.convert(scroll.bounds, to: nil)
+        list.origin.y += scroll.contentInsets.bottom
+        list.size.height -= scroll.contentInsets.bottom + scroll.contentInsets.top
+        if let header = table.headerView, header.convert(header.bounds, to: nil).contains(point) { return false }
+        guard list.contains(point), table.row(at: table.convert(point, from: nil)) < 0 else { return false }
 
         browser.selection = []
         let menu = NSMenu()

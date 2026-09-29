@@ -2229,6 +2229,130 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitEmptyClickTest <log>`: right-clicks below the last row of each
+    /// pane (posted to this copy's own event queue: the pointer never moves)
+    /// show the folder menu, before and after switching tabs.
+    static func runEmptyClickTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitEmptyClickTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-empty-click")
+            try? fm.removeItem(at: root)
+            let left = root.appendingPathComponent("Left"), right = root.appendingPathComponent("Right")
+            for folder in [left, right] {
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                let count = UserDefaults.standard.integer(forKey: "BlitEmptyClickRows")
+                for i in 0..<(count > 0 ? count : 3) { fm.createFile(atPath: folder.appendingPathComponent("f\(i).bin").path, contents: Data("x".utf8)) }
+            }
+            guard let window = BrowserModel.activeWindow, let tab = PaneTabs.shared.current, let second = tab.second else {
+                return lines.append("no window or second pane")
+            }
+            let height = UserDefaults.standard.double(forKey: "BlitEmptyClickHeight")
+            window.setFrame(NSRect(x: 100, y: 100, width: 1000, height: height > 0 ? height : 760), display: true)
+            tab.first.open(.local(left))
+            second.open(.local(right))
+            try? await Task.sleep(for: .seconds(2))
+            var opened: String?
+            let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { note in
+                nonisolated(unsafe) let menu = note.object as? NSMenu
+                MainActor.assumeIsolated {
+                    opened = menu?.items.map { $0.isSeparatorItem ? "—" : $0.title }.joined(separator: " | ") ?? "?"
+                    let timer = Timer(timeInterval: 0.3, repeats: false) { _ in MainActor.assumeIsolated { menu?.cancelTrackingWithoutAnimation() } }
+                    RunLoop.main.add(timer, forMode: .eventTracking)
+                }
+            }
+            defer { NotificationCenter.default.removeObserver(observer) }
+            @MainActor func tables() -> [NSTableView] {
+                var found: [NSTableView] = []
+                func collect(_ view: NSView) {
+                    if let table = view as? NSTableView, table.headerView != nil { found.append(table) }
+                    view.subviews.forEach(collect)
+                }
+                if let content = window.contentView { collect(content) }
+                return found.sorted { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
+            }
+            @MainActor func click(_ label: String) async {
+                for (side, table) in zip(["left", "right"], tables()) {
+                  guard let scroll = table.enclosingScrollView else { continue }
+                  let last = table.rect(ofRow: max(0, table.numberOfRows - 1))
+                  let visible = scroll.convert(scroll.bounds, to: nil)
+                  let lastBottom = table.convert(NSPoint(x: last.midX, y: last.maxY), to: nil)
+                  lines.append("\(label) \(side): rows \(table.numberOfRows) · scroll view y \(Int(visible.minY))…\(Int(visible.maxY)) · last row bottom y \(Int(lastBottom.y)) · inset \(scroll.contentInsets.bottom)")
+                  // From just below the last row down to the bottom of the scroll view.
+                  var ys: [CGFloat] = []
+                  var y = lastBottom.y - 4
+                  while y > visible.minY + 2 && ys.count < 6 { ys.append(y); y -= 10 }
+                  for y in ys {
+                    let point = NSPoint(x: lastBottom.x, y: y)
+                    let hit = window.contentView?.hitTest(window.contentView!.convert(point, from: nil))
+                    var chain: [String] = []
+                    var view = hit
+                    while let current = view, chain.count < 6 { chain.append(String(describing: type(of: current))); view = current.superview }
+                    let row = table.row(at: table.convert(point, from: nil))
+                    let anchored = EmptySpaceMenu.browser(at: point, in: window) != nil
+                    opened = nil
+                    guard let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [],
+                                                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                         context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { continue }
+                    NSApp.postEvent(event, atStart: false)
+                    try? await Task.sleep(for: .milliseconds(1200))
+                    lines.append("  y \(Int(y)): \(opened == nil ? "NO MENU" : "menu") · row \(row) · anchored \(anchored) · hit \(chain.prefix(3).joined(separator: " < "))")
+                    if y == ys.first {
+                        opened = nil
+                        if let control = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: .control,
+                                                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                            context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                            NSApp.postEvent(control, atStart: false)
+                            try? await Task.sleep(for: .milliseconds(1200))
+                        }
+                        lines.append("  ⌃-click y \(Int(y)): \(opened == nil ? "NO MENU" : "menu")")
+                        // A plain click there shows nothing (it only clears the selection).
+                        opened = nil
+                        if let plain = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                                                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                          context: nil, eventNumber: 0, clickCount: 1, pressure: 1),
+                           let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
+                                                       timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                       context: nil, eventNumber: 0, clickCount: 1, pressure: 0) {
+                            NSApp.postEvent(plain, atStart: false)
+                            NSApp.postEvent(up, atStart: false)
+                            try? await Task.sleep(for: .milliseconds(800))
+                        }
+                        lines.append("  plain click y \(Int(y)): \(opened == nil ? "no menu (right)" : "MENU (wrong)")")
+                    }
+                  }
+                }
+            }
+            // A right-click on a row gets the file menu, on a header the columns menu.
+            if let table = tables().first {
+                for (label, local) in [("row", NSPoint(x: table.rect(ofRow: 0).midX, y: table.rect(ofRow: 0).midY)),
+                                       ("header", NSPoint(x: 60, y: (table.headerView?.bounds.midY ?? 10)))] {
+                    let point = label == "row" ? table.convert(local, to: nil) : (table.headerView?.convert(local, to: nil) ?? .zero)
+                    opened = nil
+                    if let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [],
+                                                      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                      context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        NSApp.postEvent(event, atStart: false)
+                        try? await Task.sleep(for: .milliseconds(1200))
+                    }
+                    lines.append("right-click on a \(label): \(opened.map { String($0.prefix(70)) } ?? "NO MENU")")
+                }
+            }
+            await click("one tab")
+            PaneTabs.shared.newTab()
+            try? await Task.sleep(for: .seconds(2))
+            await click("new tab")
+            PaneTabs.shared.select(index: 0)
+            try? await Task.sleep(for: .seconds(2))
+            await click("back on tab 1")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }
