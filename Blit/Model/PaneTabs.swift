@@ -173,6 +173,18 @@ final class PaneTabs {
         save()
     }
 
+    #if DEBUG
+    /// A tab with these folders at the end of the bar, not shown (the website's screenshot).
+    func debugAppend(first: BrowseLocation, second: BrowseLocation, name: String? = nil) {
+        guard let makeBrowser else { return }
+        let tab = PaneTab(first: makeBrowser())
+        tab.pendingFirst = first
+        tab.pendingSecond = second
+        tab.customName = name
+        tabs.append(tab)
+    }
+    #endif
+
     // MARK: Saving
 
     private struct Saved: Codable {

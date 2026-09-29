@@ -128,8 +128,21 @@ final class SidebarModel {
         return (local, network)
     }
 
+    #if DEBUG
+    /// The website's screenshot (-BlitDemoShot): a made-up sidebar, so none
+    /// of the Mac's real drives, shares or devices appear. Later volume scans
+    /// are ignored.
+    func showDemo(drives: [VolumeLocation], devices: [NetworkDevice], favorites: [BrowseLocation]) {
+        volumeScan = .max
+        self.drives = drives
+        networkDevices = devices
+        networkShares = devices.flatMap(\.shares)
+        self.favorites = favorites.map(Favorite.init(location:))
+    }
+    #endif
+
     private func apply(local: [VolumeLocation], network: [VolumeLocation], scan: Int) {
-        guard scan == volumeScan else { return }
+        guard scan == volumeScan, volumeScan != .max else { return }
         // Boot volume first, then alphabetical.
         drives = local.sorted { ($0.url.path == "/" ? 0 : 1, $0.name) < ($1.url.path == "/" ? 0 : 1, $1.name) }
         networkShares = network.sorted { $0.name < $1.name }

@@ -600,6 +600,8 @@ struct ContentView: View {
         UITestHarness.runRowDragTestIfRequested()
         UITestHarness.runRowDragRealTestIfRequested()
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
+        UITestHarness.renderCardIfRequested(transfers: transfers)
+        UITestHarness.runDemoShotIfRequested(sidebar: sidebar, transfers: transfers)
         UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)
         UITestHarness.runRetryNowTestIfRequested(transfers: transfers)

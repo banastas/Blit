@@ -2472,6 +2472,124 @@ enum UITestHarness {
         }
     }
 
+    /// The demo transfer for the website's pictures: a camera shoot coming in
+    /// from a server to the SSD's Incoming folder, two thirds done.
+    static func demoJob(destination: URL) -> TransferJob {
+        var server = ServerConfig()
+        server.name = "Server"
+        let job = TransferJob(kind: .download(server), sources: [.remote(server.id, RemotePath("downloads/SHOOT_2026-09"))],
+                              destination: destination, title: "SHOOT_2026-09", destinationName: "Incoming")
+        job.persistent = false
+        job.status = .running
+        job.startedAt = Date().addingTimeInterval(-551)
+        job.fileCount = 26; job.filesFinished = 17; job.filesVerified = 17
+        job.totalBytes = 61_200_000_000; job.counter.add(40_900_000_000)
+        job.connections = 3; job.link = "3× · 255K×32 · EN7"; job.rttMilliseconds = 148
+        job.rate = 74.2; job.peakRate = 81.3; job.hashCacheHits = 5
+        job.history = (0..<60).map { i in 62 + 12 * sin(Double(i) / 5) + Double(i % 7) }
+        job.connectionRates = [25.1, 23.8, 25.3]
+        job.hashed = ["A001_C017.MOV": 2_600_000_000]; job.hashSizes = ["A001_C017.MOV": 4_100_000_000]
+        for text in ["CONNECT · 3 CONNECTIONS · 255K×32 · EN7", "RESUME A001_C015.MOV · 1.4 GB ON DISK",
+                     "✓ SHA256 9F3A1C… VERIFIED · A001_C015.MOV", "DOWNLOADED A001_C016.MOV · VERIFYING",
+                     "✓ SHA256 2B77E0… VERIFIED · A001_C016.MOV · SERVER CACHE", "GET A001_C018.MOV → INCOMING"] {
+            job.note(text)
+        }
+        return job
+    }
+
+    /// `-BlitDemoShot <log> -BlitDemoSSD <volume> -BlitDemoArchive <volume>`:
+    /// the window for the website, from made-up folders on two scratch disk
+    /// images: a demo sidebar, three tabs, the demo transfer in the full HUD.
+    /// Writes `<log>.wid` and waits for `<log>.shot` (the shell captures it).
+    static func runDemoShotIfRequested(sidebar: SidebarModel, transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitDemoShot"),
+              let ssdPath = UserDefaults.standard.string(forKey: "BlitDemoSSD"),
+              let archivePath = UserDefaults.standard.string(forKey: "BlitDemoArchive") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let ssd = URL(fileURLWithPath: ssdPath), archive = URL(fileURLWithPath: archivePath)
+            let incoming = ssd.appendingPathComponent("Incoming"), projects = archive.appendingPathComponent("Projects")
+            let color = ssd.appendingPathComponent("Grading"), films = archive.appendingPathComponent("Films")
+            let nas = { (name: String) in VolumeLocation(url: URL(fileURLWithPath: "/Volumes/\(name)"), name: name, isInternal: false, host: "Studio NAS") }
+            sidebar.showDemo(
+                drives: [VolumeLocation(url: URL(fileURLWithPath: "/"), name: "Macintosh HD", isInternal: true),
+                         VolumeLocation(url: ssd, name: ssd.lastPathComponent, isInternal: false),
+                         VolumeLocation(url: archive, name: archive.lastPathComponent, isInternal: false)],
+                devices: [NetworkDevice(name: "Studio NAS", model: "Xserve", shares: [nas("Media"), nas("Projects")])],
+                favorites: [.local(incoming), .local(projects), .local(color), .local(films)])
+            guard let window = BrowserModel.activeWindow, let tab = PaneTabs.shared.current, let second = tab.second else { return }
+            window.setFrame(NSRect(x: 80, y: 60, width: 1440, height: 900), display: true)
+            tab.first.open(.local(incoming))
+            second.open(.local(projects))
+            try? await Task.sleep(for: .seconds(1))
+            // Two more tabs, not shown (their folders open only when shown).
+            PaneTabs.shared.debugAppend(first: .local(color), second: .local(films))
+            PaneTabs.shared.debugAppend(first: .local(films), second: .local(URL(fileURLWithPath: "/Volumes/Media")), name: "Delivery")
+            try? await Task.sleep(for: .seconds(1))
+            transfers.debugAppend([demoJob(destination: incoming)])
+            transfers.isExpanded = true
+            if let row = tab.first.rows.first(where: { $0.name == "Interview_A-cam.mov" }) { tab.first.selection = [row.id] }
+            try? await Task.sleep(for: .seconds(2))
+            // In front for the picture (an inactive window greys its controls).
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(for: .seconds(1.5))
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+            for _ in 0..<300 where !FileManager.default.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+            try? "done\n".write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// `-BlitRenderCard <png>`: the 1200 × 630 link-preview card (Open Graph,
+    /// X): the pixel icon, name and line, over the full HUD with the demo transfer.
+    static func renderCardIfRequested(transfers: TransferManager) {
+        guard let path = UserDefaults.standard.string(forKey: "BlitRenderCard") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let job = demoJob(destination: URL(fileURLWithPath: "/tmp"))
+            let art = ["......##......", "......##......", "......##......", "......##......",
+                       "..##########..", "...########...", "....######....", ".....####.....",
+                       "......##......", "..............", "..............", "##.##.##.##.::"]
+            let icon = Canvas { context, size in
+                let cell = size.width / 14
+                for (y, row) in art.enumerated() {
+                    for (x, ch) in row.enumerated() where ch != "." {
+                        context.fill(Path(CGRect(x: CGFloat(x) * cell, y: CGFloat(y) * cell, width: cell, height: cell)),
+                                     with: .color(ch == "#" ? HUDColor.bright : Color(white: 0.29)))
+                    }
+                }
+            }
+            .frame(width: 70, height: 60)
+            let content = VStack(alignment: .leading, spacing: 26) {
+                HStack(alignment: .center, spacing: 24) {
+                    RoundedRectangle(cornerRadius: 22).fill(Color(white: 0.07))
+                        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(HUDColor.border, lineWidth: 1))
+                        .overlay(icon)
+                        .frame(width: 104, height: 104)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 18) {
+                            Text("BLIT").font(HUDFont.label(56)).foregroundStyle(HUDColor.bright)
+                            Text("Big files, moved fast, proven intact.").font(HUDFont.terminal(34)).foregroundStyle(HUDColor.bright)
+                        }
+                        Text("SFTP · DRIVES · NAS  —  EVERY FILE SHA-256 VERIFIED WHERE IT LANDS")
+                            .font(HUDFont.label(12)).foregroundStyle(HUDColor.dim)
+                    }
+                }
+                TransferHUD(job: job).environment(transfers).frame(width: 1088)
+            }
+            .padding(.horizontal, 56)
+            .frame(width: 1200, height: 630, alignment: .center)
+            .background(HUDColor.background)
+            .environment(\.colorScheme, .dark)
+            let renderer = ImageRenderer(content: content)
+            renderer.scale = 1
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: path))
+            }
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }
