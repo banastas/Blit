@@ -1,6 +1,10 @@
 // Posts real mouse drags for Blit's UI tests (DropTest, SidebarDropTest,
 // DragOutTest), only into an isolated test copy's window. Needs Accessibility
-// for the process that runs it. Usage: ui-drag <log> <count>. For each drag N
+// for the process that runs it. Usage: ui-drag <log> <count> <test copy pid>
+// [--allow-end-outside] (DragOutTest ends its drag over Finder). Before each
+// drag it checks that the test copy's window is the one under the start point
+// (and the end point, unless allowed), and stops if not: never into another
+// app the user has in front. For each drag N
 // it waits for <log>.points-N ([fromX, fromY, toX, toY], CG coordinates),
 // drags, touches <log>.hover-N while hovering (and photographs the test
 // window if <log>.wid holds its number), then releases.
@@ -9,6 +13,10 @@ import Foundation
 
 let log = CommandLine.arguments[1]
 let count = Int(CommandLine.arguments[2]) ?? 1
+guard CommandLine.arguments.count > 3, let pid = pid_t(CommandLine.arguments[3]) else {
+    print("usage: ui-drag <log> <count> <test copy pid> [--allow-end-outside]"); exit(64)
+}
+let endMayBeOutside = CommandLine.arguments.contains("--allow-end-outside")
 let fm = FileManager.default
 
 func waitFor(_ path: String, _ seconds: Double) -> Bool {
@@ -28,6 +36,11 @@ for index in 0..<count {
     guard waitFor(log + ".points-\(index)", 40), let data = fm.contents(atPath: log + ".points-\(index)"),
           let d = try? JSONSerialization.jsonObject(with: data) as? [Double] else { print("no points \(index)"); exit(1) }
     let from = CGPoint(x: d[0], y: d[1]), to = CGPoint(x: d[2], y: d[3])
+    guard testCopyOwnsPoint(from, pid: pid), endMayBeOutside || testCopyOwnsPoint(to, pid: pid) else {
+        print("the test copy's window isn't the one under the pointer; stopping before drag \(index + 1)")
+        fm.createFile(atPath: log + ".aborted", contents: nil)
+        exit(2)
+    }
     post(.mouseMoved, from); usleep(200_000)
     post(.leftMouseDown, from); usleep(250_000)
     let steps = 30
@@ -48,4 +61,20 @@ for index in 0..<count {
     usleep(900_000)
     post(.leftMouseUp, to)
     print("drag \(index + 1) posted")
+}
+
+/// Whether the frontmost window under `point` (CG coordinates) belongs to the
+/// test copy. Every synthetic click or drag checks this first: with another
+/// app's window on top, the event would land in that app instead.
+func testCopyOwnsPoint(_ point: CGPoint, pid: pid_t) -> Bool {
+    let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+    for window in windows {   // front to back
+        guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
+              let bounds = window[kCGWindowBounds as String] as? [String: Double],
+              let alpha = window[kCGWindowAlpha as String] as? Double, alpha > 0 else { continue }
+        let frame = CGRect(x: bounds["X"] ?? 0, y: bounds["Y"] ?? 0, width: bounds["Width"] ?? 0, height: bounds["Height"] ?? 0)
+        guard frame.contains(point) else { continue }
+        return (window[kCGWindowOwnerPID as String] as? Int).map { pid_t($0) } == pid
+    }
+    return false
 }
