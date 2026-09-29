@@ -1952,6 +1952,182 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitTabsTest <log>`: tabs of pairs (R2.18), without real input: each
+    /// tab keeps its folders and scroll, the File and Window menus' keys (sent
+    /// to this copy's own menus, never posted to the system), reordering,
+    /// renaming, closing, and a picture of the bar (`<log>.wid`, then the
+    /// shell writes `<log>.shot` once it has captured the window).
+    static func runTabsTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTabsTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-tabs-test")
+            try? fm.removeItem(at: root)
+            let names = ["Seedbox Downloads", "SSD Movies", "Photography", "NAS TV Shows"]
+            let folders = names.map { root.appendingPathComponent($0) }
+            for folder in folders {
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                for i in 0..<80 { fm.createFile(atPath: folder.appendingPathComponent(String(format: "file-%02d.mkv", i)).path, contents: Data("x".utf8)) }
+            }
+            let tabs = PaneTabs.shared
+            guard let window = BrowserModel.activeWindow, let tab1 = tabs.current, let second1 = tab1.second else {
+                return lines.append("no window or second pane")
+            }
+            window.setFrame(NSRect(x: 100, y: 100, width: 1280, height: 760), display: true)
+            // Key within this copy (the menus follow the key window), without
+            // bringing it in front of the user's apps.
+            window.makeKey()
+            tab1.first.open(.local(folders[0]))
+            second1.open(.local(folders[1]))
+            for _ in 0..<30 where tab1.first.rows.count < 80 { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .seconds(1))
+            @MainActor func clip(_ model: BrowserModel) -> NSClipView? {
+                guard let anchor = EmptySpaceMenu.anchorView(for: model), let content = window.contentView else { return nil }
+                let frame = anchor.convert(anchor.bounds, to: nil)
+                let centre = NSPoint(x: frame.midX, y: frame.midY)
+                var found: NSClipView?
+                func search(_ view: NSView) {
+                    if found == nil, let table = view as? NSTableView, table.headerView != nil, let scroll = table.enclosingScrollView,
+                       scroll.convert(scroll.bounds, to: nil).contains(centre) { found = scroll.contentView }
+                    view.subviews.forEach(search)
+                }
+                search(content)
+                return found
+            }
+            clip(tab1.first)?.scroll(to: NSPoint(x: 0, y: 600))
+            try? await Task.sleep(for: .milliseconds(300))
+            lines.append("tab 1 scrolled to \(Int(clip(tab1.first)?.bounds.origin.y ?? -1))")
+
+            // ⌘T: a new tab with the same pair, then new folders in it.
+            tabs.newTab()
+            try? await Task.sleep(for: .seconds(1))
+            guard let tab2 = tabs.current, tab2.id != tab1.id else { return lines.append("⌘T made no tab") }
+            lines.append("new tab: \(tabs.tabs.count) tabs · shows \(tab2.first.current?.lastComponent ?? "-") | \(tab2.second?.current?.lastComponent ?? "-") · bar shown \(tabs.tabs.count > 1)")
+            tab2.first.open(.local(folders[2]))
+            tab2.second?.open(.local(folders[3]))
+            try? await Task.sleep(for: .seconds(1))
+            lines.append("tab 2 now \(tab2.first.current?.lastComponent ?? "-") | \(tab2.second?.current?.lastComponent ?? "-") · tab 1 still \(tab1.first.current?.lastComponent ?? "-") | \(tab1.second?.current?.lastComponent ?? "-")")
+            lines.append("titles: \(tabs.tabs.map { $0.title(twoPanes: true, servers: tab1.first.servers) })")
+            lines.append("menus see tab 2: first is tab 2's \(Panes.shared.first === tab2.first) · active pane is tab 2's \(BrowserModel.active === tab2.first || BrowserModel.active === tab2.second)")
+
+            // The menus, and their keys sent to this copy's own main menu.
+            NSApp.mainMenu?.update()
+            @MainActor func describe(_ title: String) -> String {
+                guard let menu = NSApp.mainMenu?.items.first(where: { $0.title == title })?.submenu else { return "\(title): missing" }
+                menu.update()
+                return "\(title): " + menu.items.filter { !$0.isSeparatorItem }.map { item in
+                    var mods = ""
+                    if item.keyEquivalentModifierMask.contains(.control) { mods += "⌃" }
+                    if item.keyEquivalentModifierMask.contains(.option) { mods += "⌥" }
+                    if item.keyEquivalentModifierMask.contains(.shift) { mods += "⇧" }
+                    if item.keyEquivalentModifierMask.contains(.command) { mods += "⌘" }
+                    let key = item.keyEquivalent == "\t" ? "Tab" : item.keyEquivalent.uppercased()
+                    return item.title + (key.isEmpty ? "" : " \(mods)\(key)") + (item.isEnabled ? "" : " (off)")
+                }.joined(separator: ", ")
+            }
+            lines.append("window key \(window.isKeyWindow)")
+            lines.append(describe("File"))
+            lines.append(describe("Window"))
+            @MainActor func key(_ characters: String, _ flags: NSEvent.ModifierFlags, code: UInt16) -> Bool {
+                guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                                                   windowNumber: window.windowNumber, context: nil, characters: characters,
+                                                   charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) else { return false }
+                NSApp.mainMenu?.update()
+                return NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
+            }
+            let one = key("1", .command, code: 18)
+            try? await Task.sleep(for: .seconds(1))
+            lines.append("⌘1 handled \(one): shows tab \((tabs.selectedIndex ?? -1) + 1) · \(tabs.current?.first.current?.lastComponent ?? "-")")
+            lines.append("tab 1 scroll restored to \(Int(clip(tab1.first)?.bounds.origin.y ?? -1)) (was 600)")
+            let next = key("\t", .control, code: 48)
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("⌃Tab handled \(next): shows tab \((tabs.selectedIndex ?? -1) + 1)")
+            let previous = key("\u{19}", [.control, .shift], code: 48)
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("⌃⇧Tab handled \(previous): shows tab \((tabs.selectedIndex ?? -1) + 1)")
+
+            // A third tab, reordering, renaming.
+            tabs.newTab()
+            try? await Task.sleep(for: .milliseconds(500))
+            let tab3 = tabs.current
+            tabs.move(tab3!.id, to: 0)
+            lines.append("moved the new tab first: order \(tabs.tabs.map { t in t.id == tab1.id ? "1" : t.id == tab2.id ? "2" : "3" }) · shown index \((tabs.selectedIndex ?? -1) + 1)")
+            tabs.rename(tab3!.id, to: "  Review  ")
+            lines.append("renamed: \(tab3!.title(twoPanes: true, servers: tab1.first.servers)) · cleared: \({ tabs.rename(tab3!.id, to: ""); return tab3!.title(twoPanes: true, servers: tab1.first.servers) }())")
+            tabs.rename(tab2.id, to: "Archive")
+
+            // ⌘W with several tabs closes the shown tab, not the window.
+            let close = key("w", .command, code: 13)
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("⌘W handled \(close): \(tabs.tabs.count) tabs · window still open \(window.isVisible) · shows \(tabs.current?.title(twoPanes: true, servers: tab1.first.servers) ?? "-")")
+
+            // The picture: three tabs, one of them touching the fake transfer's folder.
+            tabs.newTab()
+            try? await Task.sleep(for: .milliseconds(500))
+            tabs.current?.first.open(.local(URL(fileURLWithPath: "/tmp")))
+            tabs.select(tab1.id)
+            try? await Task.sleep(for: .seconds(2))
+            lines.append("tabs for the picture: \(tabs.tabs.map { $0.title(twoPanes: true, servers: tab1.first.servers) })")
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+            for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+
+            // Closing the rest leaves one tab and hides the bar; the last can't close.
+            while tabs.tabs.count > 1 { tabs.close(tabs.tabs.last!.id) }
+            tabs.close(tabs.tabs[0].id)
+            lines.append("closed down to \(tabs.tabs.count) tab · Close Tab enabled \(NSApp.mainMenu.map { _ in describe("File").contains("Close Tab ⌘W (off)") == false } ?? false)")
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitTabsRestoreTest <log> -BlitTabsStore <suite> -BlitTabsPhase save|check`:
+    /// tabs come back on relaunch. `save` sets up three tabs (one named, the
+    /// second shown, its right pane active); `check`, a new launch, logs what
+    /// came back. The suite is scratch: the user's own tabs are never touched.
+    static func runTabsRestoreTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTabsRestoreTest"),
+              let phase = UserDefaults.standard.string(forKey: "BlitTabsPhase") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-tabs-restore")
+            let folders = ["A", "B", "C", "D", "E", "F"].map { root.appendingPathComponent($0) }
+            let tabs = PaneTabs.shared
+            var lines: [String] = []
+            if phase == "save" {
+                try? fm.removeItem(at: root)
+                folders.forEach { try? fm.createDirectory(at: $0, withIntermediateDirectories: true) }
+                for pair in 0..<3 {
+                    if pair > 0 { tabs.newTab(); try? await Task.sleep(for: .seconds(1)) }
+                    tabs.current?.first.open(.local(folders[pair * 2]))
+                    tabs.current?.second?.open(.local(folders[pair * 2 + 1]))
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                tabs.rename(tabs.tabs[2].id, to: "Archive")
+                tabs.select(index: 1)
+                tabs.current?.secondActive = true
+                tabs.save()
+                lines.append("saved \(tabs.tabs.count) tabs")
+            } else {
+                // The shown tab opens its folders; the others wait until shown.
+                try? await Task.sleep(for: .seconds(1))
+                lines.append("restored \(tabs.tabs.count) tabs · shown \((tabs.selectedIndex ?? -1) + 1) · right pane active \(tabs.current?.secondActive ?? false)")
+                for (index, tab) in tabs.tabs.enumerated() {
+                    let open = tab.first.current != nil
+                    lines.append("tab \(index + 1): \(tab.firstLocation?.lastComponent ?? "-") | \(tab.secondLocation?.lastComponent ?? "-") · name \(tab.customName ?? "none") · opened \(open)")
+                }
+                tabs.select(index: 2)
+                try? await Task.sleep(for: .seconds(1))
+                lines.append("after showing tab 3: \(tabs.current?.first.current?.lastComponent ?? "-") | \(tabs.current?.second?.current?.lastComponent ?? "-")")
+            }
+            lines.append("done")
+            try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

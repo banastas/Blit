@@ -167,6 +167,7 @@ struct BlitApp: App {
                 Button("Export Transfer Log…") { TransferLog.export() }
             }
             TransferLogCommands()
+            TabCommands()
 
         }
 
@@ -212,6 +213,13 @@ extension FocusedValues {
     /// True while something that takes typing is up in the window (a rename,
     /// a sheet, the toolbar search): Edit commands stay enabled to reach it.
     @Entry var textSurface: Bool?
+    /// The main window's tabs (R2.18), for File › Close Tab and the Window menu.
+    @Entry var paneTabs: TabsState?
+}
+
+struct TabsState: Equatable {
+    var titles: [String]
+    var selected: Int
 }
 
 /// Watches the general pasteboard (it posts no notification), so Edit › Paste
@@ -432,6 +440,47 @@ struct GoCommands: Commands {
             Button("Find") { NotificationCenter.default.post(name: .blitFocusSearch, object: nil) }
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(browser?.current == nil)
+        }
+    }
+}
+
+/// Tabs of pairs (R2.18): File › New Tab and Close Tab, and in the Window
+/// menu the next and previous tab and each tab by its ⌘-number, as in Safari.
+struct TabCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.paneTabs) private var state
+
+    var body: some Commands {
+        let count = state?.titles.count ?? 0
+        CommandGroup(before: .newItem) {
+            Button("New Tab") {
+                // With the window closed, ⌘T brings it back (its tabs kept).
+                if state != nil { PaneTabs.shared.newTab() } else { openWindow(id: "main") }
+            }
+            .keyboardShortcut("t")
+            // Listed before File › Close, so ⌘W closes a tab while there are
+            // several; with one left it's disabled, and ⌘W closes the window.
+            Button("Close Tab") { if let id = PaneTabs.shared.current?.id { PaneTabs.shared.close(id) } }
+                .keyboardShortcut("w")
+                .disabled(count < 2)
+            Divider()
+        }
+        CommandGroup(before: .windowList) {
+            Button("Show Previous Tab") { PaneTabs.shared.selectNext(-1) }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+                .disabled(count < 2)
+            Button("Show Next Tab") { PaneTabs.shared.selectNext(1) }
+                .keyboardShortcut(.tab, modifiers: .control)
+                .disabled(count < 2)
+            if let state, count > 1 {
+                Divider()
+                ForEach(Array(state.titles.prefix(9).enumerated()), id: \.offset) { index, title in
+                    Toggle(title, isOn: Binding(get: { state.selected == index },
+                                                set: { _ in PaneTabs.shared.select(index: index) }))
+                        .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                }
+            }
+            Divider()
         }
     }
 }

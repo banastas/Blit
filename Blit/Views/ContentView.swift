@@ -9,11 +9,6 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(FileOperations.self) private var operations
     @Environment(\.undoManager) private var undoManager
-    @State private var browser: BrowserModel?
-    /// The optional second pane (R2.8) and which pane sidebar picks, ⌘K and
-    /// the toolbar act on (the one last clicked).
-    @State private var secondBrowser: BrowserModel?
-    @State private var secondActive = false
     /// Which pane's table has the keyboard. Every way of activating a pane
     /// (click, right-click, the header, Tab) moves the keyboard here too, so
     /// arrows and ⌘⌫ always agree on the pane the user is looking at.
@@ -30,6 +25,17 @@ struct ContentView: View {
     /// Height of the panes' area (the full HUD opens only if the lists keep
     /// about six rows above it).
     @State private var detailHeight: CGFloat = 1_000
+
+    /// The shown tab (R2.18) and its panes: the first, the optional second
+    /// (R2.8), and which one sidebar picks, ⌘K and the toolbar act on (the one
+    /// last clicked).
+    private var tab: PaneTab? { PaneTabs.shared.current }
+    private var browser: BrowserModel? { tab?.first }
+    private var secondBrowser: BrowserModel? { tab?.second }
+    private var secondActive: Bool {
+        get { tab?.secondActive ?? false }
+        nonmutating set { tab?.secondActive = newValue }
+    }
 
     struct EditingServer: Identifiable {
         var server: ServerConfig
@@ -48,24 +54,21 @@ struct ContentView: View {
                         onRefresh: refresh)
                 .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 300)
         } detail: {
-            if let browser {
-                Group {
-                    if showSecondPane, let secondBrowser {
-                        HSplitView {
-                            pane(browser, tag: .first, isActive: !secondActive) { secondActive = false }
-                            pane(secondBrowser, tag: .second, isActive: secondActive) { secondActive = true }
-                        }
-                        .padding(.horizontal, 3)
-                        .padding(.bottom, 3)
-                        // The gutter the two cards sit in.
-                        .background(Color.black.opacity(0.10))
-                    } else {
-                        FileListView(browser: browser)
-                    }
+            if let tab, let browser {
+                VStack(spacing: 0) {
+                    if PaneTabs.shared.tabs.count > 1 { PaneTabBar(twoPanes: showSecondPane) }
+                    panes(browser)
+                        // Each tab's lists are its own (a tab's scroll comes back with it).
+                        .id(tab.id)
                 }
-                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { _, height in detailHeight = height }
                     // Room at the bottom for the transfer HUD, which floats over it.
                     .safeAreaPadding(.bottom, transfers.featured == nil ? 0 : hudHeight)
+                    // The whole height, measured outside the room kept for the HUD:
+                    // measured inside, showing the HUD took the room it asks for,
+                    // the strip came back, and the two went back and forth.
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { _, height in
+                        detailHeight = height - (PaneTabs.shared.tabs.count > 1 ? PaneTabBar.height : 0)
+                    }
                     .overlay(alignment: .bottom) {
                         // An overlay, not a safe-area inset: overlays don't take part in
                         // sizing the window. As an inset, every HUD update (the percent
@@ -119,22 +122,22 @@ struct ContentView: View {
             if shown { openSecondPaneIfNeeded() } else { secondActive = false }
             Panes.shared.twoPanes = shown
         }
-        .onChange(of: secondBrowser == nil) { Panes.shared.second = secondBrowser }
-        .modifier(PaneTracking(first: browser?.current, second: secondBrowser?.current, secondActive: secondActive,
-                               follow: followActivePane))
+        .modifier(PaneTracking(tabID: tab?.id, first: browser?.current, second: secondBrowser?.current,
+                               secondActive: secondActive, follow: followActivePane, shown: tabShown))
         .onAppear(perform: start)
         .background(alignment: .topLeading) {
             WindowReader { BrowserModel.activeWindow = $0 }
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)
         }
-        .modifier(PaneCoordination(browser: browser, secondBrowser: secondBrowser, active: active,
+        .modifier(PaneCoordination(tabID: tab?.id, browser: browser, secondBrowser: secondBrowser, active: active,
                                    secondActive: secondActive, showSecondPane: showSecondPane,
                                    undoManager: undoManager, operations: operations))
         // Plain values, so View › Show/Hide Transfer Details updates with the HUD.
         .focusedSceneValue(\.transferDetails, TransferDetailsState(isExpanded: transfers.isExpanded,
                                                                   available: transfers.featured != nil))
         .focusedSceneValue(\.textSurface, textSurfaceUp)
+        .focusedSceneValue(\.paneTabs, tabsState)
         .sheet(item: $editing) { item in
             ServerEditor(server: item.server, isNew: item.isNew) { server, password in
                 servers.save(server, password: password)
@@ -309,6 +312,14 @@ struct ContentView: View {
         Binding(get: { active?.passwordRequest }, set: { active?.passwordRequest = $0 })
     }
 
+    /// The tabs for the File and Window menus (plain values: the menus update
+    /// with focused values, not with the tabs themselves).
+    private var tabsState: TabsState {
+        let tabs = PaneTabs.shared
+        return TabsState(titles: tabs.tabs.map { $0.title(twoPanes: showSecondPane, servers: servers) },
+                         selected: tabs.selectedIndex ?? 0)
+    }
+
     /// The browser that sidebar picks, ⌘K and the toolbar act on.
     private var active: BrowserModel? { showSecondPane && secondActive ? secondBrowser : browser }
 
@@ -319,6 +330,7 @@ struct ContentView: View {
         if searchFocused || showPalette { return true }
         if editing != nil || nasShare != nil { return true }
         if !transfers.pendingExternalFiles.isEmpty { return true }
+        if PaneTabs.shared.renamingID != nil { return true }
         let models: [BrowserModel?] = [browser, secondBrowser]
         for case let model? in models {
             if model.renaming != nil || model.showGoToFolder { return true }
@@ -326,6 +338,22 @@ struct ContentView: View {
             if model.trustRequest != nil || model.passwordRequest != nil { return true }
         }
         return false
+    }
+
+    /// The shown tab's panes: two cards in a gutter, or the one list.
+    @ViewBuilder private func panes(_ browser: BrowserModel) -> some View {
+        if showSecondPane, let secondBrowser {
+            HSplitView {
+                pane(browser, tag: .first, isActive: !secondActive) { secondActive = false }
+                pane(secondBrowser, tag: .second, isActive: secondActive) { secondActive = true }
+            }
+            .padding(.horizontal, 3)
+            .padding(.bottom, 3)
+            // The gutter the two cards sit in (the tab bar shares it).
+            .background(Color.black.opacity(0.10))
+        } else {
+            FileListView(browser: browser)
+        }
     }
 
     /// One pane of the two-pane layout: a card with a header naming the folder
@@ -433,18 +461,40 @@ struct ContentView: View {
     }
 
     private func openSecondPaneIfNeeded() {
-        if secondBrowser == nil {
-            let second = BrowserModel(servers: servers, connections: connections, operations: operations)
-            secondBrowser = second
-            wireRefresh(browser, second)
-        }
-        guard let secondBrowser, secondBrowser.current == nil else { return }
-        let start = PaneMemory.restore(pane: 1, servers: servers)
+        guard let tab else { return }
+        if tab.second == nil { tab.second = makeBrowser() }
+        guard let second = tab.second, second.current == nil, !tab.secondOpened else { return }
+        tab.secondOpened = true
+        let start = tab.pendingSecond.flatMap { PaneMemory.isReachable($0, servers: servers) ? $0 : nil }
             ?? sidebar.favorites.dropFirst().first(where: sidebar.isAvailable)?.location
             ?? sidebar.networkShares.first.map { .local($0.url) }
             ?? .local(FileManager.default.homeDirectoryForCurrentUser)
         // A tick later: the pane's table is being created in this same update.
-        Task { secondBrowser.open(start) }
+        Task { second.open(start) }
+    }
+
+    /// A tab being shown: a new or restored one opens its folders (a saved one
+    /// that can't be reached falls back, as at launch); one shown before gets
+    /// its scroll back. The keyboard goes to its active pane.
+    private func tabShown() {
+        guard let tab else { return }
+        if tab.first.current == nil, !tab.firstOpened {
+            tab.firstOpened = true
+            let start = tab.pendingFirst.flatMap { PaneMemory.isReachable($0, servers: servers) ? $0 : nil }
+                ?? sidebar.favorites.first(where: sidebar.isAvailable)?.location
+                ?? sidebar.drives.first(where: { !$0.isInternal }).map { .local($0.url) }
+                ?? .local(FileManager.default.homeDirectoryForCurrentUser)
+            let first = tab.first
+            Task { first.open(start) }
+        }
+        if showSecondPane { openSecondPaneIfNeeded() }
+        PaneScroll.restore(tab)
+        let focus: PaneFocus = showSecondPane && tab.secondActive ? .second : .first
+        Task { focusedPane = focus }
+    }
+
+    private func makeBrowser() -> BrowserModel {
+        BrowserModel(servers: servers, connections: connections, operations: operations)
     }
 
     /// The full HUD is showing (a file operation taking the slot shows the strip).
@@ -478,15 +528,11 @@ struct ContentView: View {
         }
     }
 
-    /// Refresh whichever panes show a folder that changed: a transfer's
-    /// destination (and a move's sources), or a file operation's folders.
-    /// Re-wired when the second pane is created, since the closure holds the
-    /// panes that existed when it was made.
-    private func wireRefresh(_ first: BrowserModel?, _ second: BrowserModel?) {
-        let refresh: ([BrowseLocation]) -> Void = { [weak first, weak second] folders in
-            for model in [first, second].compactMap({ $0 }) {
-                if folders.contains(where: model.shows) { model.reload() }
-            }
+    /// Refresh whichever panes show a folder that changed, in any tab: a
+    /// transfer's destination (and a move's sources), or a file operation's folders.
+    private func wireRefresh() {
+        let refresh: ([BrowseLocation]) -> Void = { folders in
+            for model in PaneTabs.shared.allBrowsers where folders.contains(where: model.shows) { model.reload() }
         }
         operations.onChanged = refresh
         transfers.onFinished = { job in
@@ -495,15 +541,15 @@ struct ContentView: View {
     }
 
     private func start() {
-        if browser == nil { browser = BrowserModel(servers: servers, connections: connections, operations: operations) }
+        PaneTabs.shared.makeBrowser = { [servers, connections, operations] in
+            BrowserModel(servers: servers, connections: connections, operations: operations)
+        }
         // Two panes by default (0.2.22): switched on once for existing installs too.
         if !TransferManager.isIsolated, !UserDefaults.standard.bool(forKey: "twoPanesByDefault") {
             UserDefaults.standard.set(true, forKey: "twoPanesByDefault")
             showSecondPane = true
         }
-        if showSecondPane { openSecondPaneIfNeeded() }
-        Panes.shared.first = browser
-        Panes.shared.second = secondBrowser
+        PaneTabs.shared.startIfNeeded()
         Panes.shared.twoPanes = showSecondPane
         BrowserModel.oppositePane = { Panes.shared.other(than: $0) }
         BrowserModel.swapPanes = { Panes.shared.swap() }
@@ -547,6 +593,8 @@ struct ContentView: View {
         UITestHarness.runDragOutTestIfRequested()
         UITestHarness.runTwoPaneTestIfRequested()
         UITestHarness.runLayoutShotIfRequested()
+        UITestHarness.runTabsTestIfRequested()
+        UITestHarness.runTabsRestoreTestIfRequested()
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)
@@ -564,35 +612,41 @@ struct ContentView: View {
         UITestHarness.runLinkTestIfRequested(connections: connections, servers: servers)
         UITestHarness.runShareTestIfRequested(sidebar: sidebar)
         #endif
-        wireRefresh(browser, secondBrowser)
-        if selection == nil {
-            selection = PaneMemory.restore(pane: 0, servers: servers)
-                ?? sidebar.favorites.first(where: sidebar.isAvailable)?.location
-                ?? sidebar.drives.first(where: { !$0.isInternal }).map { .local($0.url) }
-                ?? .local(FileManager.default.homeDirectoryForCurrentUser)
-        }
+        wireRefresh()
+        // The shown tab's folders (a window made again keeps its tabs).
+        tabShown()
     }
 }
 
-/// Each pane's folder is saved for next launch, and the sidebar follows the
-/// active pane (a modifier of its own, to keep ContentView's body checkable).
+/// The tabs are saved for next launch as their folders change, and the
+/// sidebar follows the active pane (a modifier of its own, to keep
+/// ContentView's body checkable).
 private struct PaneTracking: ViewModifier {
+    let tabID: UUID?
     let first: BrowseLocation?
     let second: BrowseLocation?
     let secondActive: Bool
     let follow: () -> Void
+    let shown: () -> Void
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: first) { _, location in
-                PaneMemory.save(location, pane: 0)
+            .onChange(of: first) {
+                PaneTabs.shared.save()
                 follow()
             }
-            .onChange(of: second) { _, location in
-                PaneMemory.save(location, pane: 1)
+            .onChange(of: second) {
+                PaneTabs.shared.save()
                 follow()
             }
-            .onChange(of: secondActive) { follow() }
+            .onChange(of: secondActive) {
+                PaneTabs.shared.save()
+                follow()
+            }
+            .onChange(of: tabID) {
+                shown()
+                follow()
+            }
     }
 }
 
@@ -626,6 +680,7 @@ struct WindowReader: NSViewRepresentable {
 /// Window-level bookkeeping for the panes: which one keys and Space go to,
 /// one Quick Look at a time, and the undo manager for file operations.
 private struct PaneCoordination: ViewModifier {
+    let tabID: UUID?
     let browser: BrowserModel?
     let secondBrowser: BrowserModel?
     let active: BrowserModel?
@@ -637,6 +692,7 @@ private struct PaneCoordination: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onChange(of: secondActive) { BrowserModel.active = active }
+            .onChange(of: tabID) { BrowserModel.active = active }
             .onChange(of: showSecondPane) { BrowserModel.active = active }
             .onChange(of: undoManager) { _, manager in operations.undoManager = manager }
             .onChange(of: browser?.previewURL) { _, url in if url != nil { secondBrowser?.previewURL = nil } }

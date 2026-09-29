@@ -1,5 +1,5 @@
-// Two-pane support (R2.8): which columns the file lists show, and what each
-// pane last showed, remembered across launches.
+// Two-pane support (R2.8): which columns the file lists show, the shown
+// tab's panes, and checking saved folders before opening them.
 
 import BlitLocal
 import Foundation
@@ -47,16 +47,16 @@ final class ColumnSettings {
     }
 }
 
-/// The window's two panes, for the menus and the context menu: which pane is
-/// the other one, and swapping them. Kept by ContentView; observable, so
+/// The shown tab's two panes, for the menus and the context menu: which pane
+/// is the other one, and swapping them. Observable (through the tabs), so
 /// F5 / F6 enable as soon as the second pane appears. (A closure over the
 /// view's state read stale values when the menus evaluated it.)
 @MainActor
 @Observable
 final class Panes {
     static let shared = Panes()
-    var first: BrowserModel?
-    var second: BrowserModel?
+    var first: BrowserModel? { PaneTabs.shared.current?.first }
+    var second: BrowserModel? { PaneTabs.shared.current?.second }
     var twoPanes = false
 
     func other(than model: BrowserModel) -> BrowserModel? {
@@ -71,36 +71,34 @@ final class Panes {
     }
 }
 
-/// What each pane showed last, restored at launch when it's still reachable.
-/// Test copies neither save nor restore (they'd overwrite the user's panes).
+/// Saved folders, checked before they're opened. Tabs keep them now
+/// (PaneTabs); the two panes' folders from 0.2.22 and earlier become the
+/// first tab.
 @MainActor
 enum PaneMemory {
-    private static func key(_ pane: Int) -> String { "paneLocation\(pane)" }
-
-    static func save(_ location: BrowseLocation?, pane: Int) {
-        guard !TransferManager.isIsolated, let location, let data = try? JSONEncoder().encode(location) else { return }
-        UserDefaults.standard.set(data, forKey: key(pane))
+    /// What pane 0 or 1 showed before tabs.
+    static func legacy(pane: Int) -> BrowseLocation? {
+        guard let data = UserDefaults.standard.data(forKey: "paneLocation\(pane)") else { return nil }
+        return try? JSONDecoder().decode(BrowseLocation.self, from: data)
     }
 
-    /// The saved location if it can be opened now. Drives and shares are
+    /// Whether a saved location can be opened now. Drives and shares are
     /// checked against the mount table, never the file system, so a sleeping
     /// NAS can't hold up the launch.
-    static func restore(pane: Int, servers: ServerStore) -> BrowseLocation? {
-        guard !TransferManager.isIsolated, let data = UserDefaults.standard.data(forKey: key(pane)),
-              let location = try? JSONDecoder().decode(BrowseLocation.self, from: data) else { return nil }
+    static func isReachable(_ location: BrowseLocation, servers: ServerStore) -> Bool {
         switch location {
         case .remote(let id, _):
-            return servers.server(id) == nil ? nil : location
+            return servers.server(id) != nil
         case .local(let url):
             let parts = url.standardizedFileURL.pathComponents
             if parts.count > 2, parts[1] == "Volumes" {
                 let mountPoint = "/Volumes/" + parts[2]
-                guard MountInfo.mounted(at: mountPoint) != nil else { return nil }
+                guard MountInfo.mounted(at: mountPoint) != nil else { return false }
                 // A share is opened as is (a missing folder shows its own message);
                 // a local drive is quick to check.
-                if VolumeKinds.isNetwork(URL(fileURLWithPath: mountPoint)) { return location }
+                if VolumeKinds.isNetwork(URL(fileURLWithPath: mountPoint)) { return true }
             }
-            return FileManager.default.fileExists(atPath: url.path) ? location : nil
+            return FileManager.default.fileExists(atPath: url.path)
         }
     }
 }
