@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.20</title>
-      <pubDate>Mon, 28 Sep 2026 16:16:53 +0000</pubDate>
-      <sparkle:version>23</sparkle:version>
-      <sparkle:shortVersionString>0.2.20</sparkle:shortVersionString>
+      <title>Blit 0.2.21</title>
+      <pubDate>Tue, 29 Sep 2026 03:47:18 +0000</pubDate>
+      <sparkle:version>24</sparkle:version>
+      <sparkle:shortVersionString>0.2.21</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Dropping files onto a sidebar favorite now moves them into it (only folders can be added as favorites, at a favorite's edge). The folder highlight clears after a drop in the list, and the full HUD steps back to the strip once everything has transferred and verified.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.20.zip" type="application/octet-stream" sparkle:edSignature="jRlKnOnTpGLv4Nu1zA53vlEOsJMbcCcfGR6WeGHGuQ0PkleiRj0LmIqkm1j5glpSbbyTE7lAzImf/8YQFgW2Cg==" length="5528311" />
+      <description><![CDATA[<p>Two panes by default, as in ForkLift: F5 copies and F6 moves the selection to the other pane (also in the right-click menu), ⌘U swaps them, and each pane remembers its folder. View › Columns shows or hides Date Modified, Size, Status and Kind. Dragging files to Finder, the Desktop or another app now hands over the file itself.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.21.zip" type="application/octet-stream" sparkle:edSignature="LSWAfYwsoZlenb/SXz29/Wnn5SjWsM2ngCkFiopAxARGlEolLKieDV/ALnAfBjD6MWjbh8ekzePfqL5nq9eQCg==" length="5549838" />
     </item>
   </channel>
 </rss>
