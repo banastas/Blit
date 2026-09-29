@@ -17,6 +17,10 @@ extension BrowserModel {
     @MainActor static weak var activeWindow: NSWindow?
     /// Tells the window a pane was clicked or right-clicked (to make it active).
     @MainActor static var onInteraction: ((BrowserModel) -> Void)?
+    /// The other pane of a two-pane window (nil with one pane), and swapping
+    /// the two panes' folders (set by ContentView).
+    @MainActor static var oppositePane: ((BrowserModel) -> BrowserModel?)?
+    @MainActor static var swapPanes: (() -> Void)?
 
     /// What the Quick Look panel holds: just the file shown. Moving between
     /// files goes through the list's selection (↑/↓), so the two stay in step.

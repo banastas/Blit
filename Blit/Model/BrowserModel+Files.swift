@@ -74,6 +74,27 @@ extension BrowserModel {
         drop(items.map(\.location), into: folder, name: name, copy: !move)
     }
 
+    /// Copy (F5) or move (F6) the selection into the folder the other pane shows.
+    func sendToOtherPane(move: Bool) {
+        guard !selection.isEmpty, let other = BrowserModel.oppositePane?(self), let there = other.current,
+              there != current else { return }
+        send(selectedItems, to: there, name: other.title, move: move)
+    }
+
+    /// Whether F5 / F6 have somewhere to go: a selection and another pane
+    /// showing a different folder.
+    var canSendToOtherPane: Bool {
+        guard !selection.isEmpty, let other = BrowserModel.oppositePane?(self), let there = other.current else { return false }
+        return there != current
+    }
+
+    /// Opens the selected folder in the other pane.
+    func openSelectionInOtherPane() {
+        guard selection.count == 1, let item = selectedItems.first, item.isDirectory,
+              let other = BrowserModel.oppositePane?(self) else { return }
+        other.open(item.location)
+    }
+
     /// Copy To / Move To › Other Folder…: pick any local folder.
     func sendToChosenFolder(_ items: [FileItem], move: Bool) {
         let panel = NSOpenPanel()

@@ -18,7 +18,7 @@ struct ContentView: View {
     /// (click, right-click, the header, Tab) moves the keyboard here too, so
     /// arrows and ⌘⌫ always agree on the pane the user is looking at.
     @FocusState private var focusedPane: PaneFocus?
-    @AppStorage("showSecondPane") private var showSecondPane = false
+    @AppStorage("showSecondPane") private var showSecondPane = true
     @State private var nasShare: VolumeLocation?
     @State private var showPalette = false
     @FocusState private var searchFocused: Bool
@@ -103,7 +103,12 @@ struct ContentView: View {
         }
         .onChange(of: showSecondPane) { _, shown in
             if shown { openSecondPaneIfNeeded() } else { secondActive = false }
+            Panes.shared.twoPanes = shown
         }
+        .onChange(of: secondBrowser == nil) { Panes.shared.second = secondBrowser }
+        // Each pane's folder, for next launch.
+        .onChange(of: browser?.current) { _, location in PaneMemory.save(location, pane: 0) }
+        .onChange(of: secondBrowser?.current) { _, location in PaneMemory.save(location, pane: 1) }
         .onAppear(perform: start)
         .background(alignment: .topLeading) {
             WindowReader { BrowserModel.activeWindow = $0 }
@@ -324,6 +329,11 @@ struct ContentView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
+            // The active pane (where the sidebar, ⌘K, F5 and F6 act) carries an
+            // accent line under its header; the other a plain divider.
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(isActive ? Color.accentColor : Color.clear).frame(height: 2)
+            }
             .contentShape(Rectangle())
             .onTapGesture {
                 // Activating from the header also hands the pane the keyboard,
@@ -345,7 +355,8 @@ struct ContentView: View {
             wireRefresh(browser, second)
         }
         guard let secondBrowser, secondBrowser.current == nil else { return }
-        let start = sidebar.favorites.dropFirst().first(where: sidebar.isAvailable)?.location
+        let start = PaneMemory.restore(pane: 1, servers: servers)
+            ?? sidebar.favorites.dropFirst().first(where: sidebar.isAvailable)?.location
             ?? sidebar.networkShares.first.map { .local($0.url) }
             ?? .local(FileManager.default.homeDirectoryForCurrentUser)
         // A tick later: the pane's table is being created in this same update.
@@ -397,7 +408,17 @@ struct ContentView: View {
 
     private func start() {
         if browser == nil { browser = BrowserModel(servers: servers, connections: connections, operations: operations) }
+        // Two panes by default (0.2.22): switched on once for existing installs too.
+        if !TransferManager.isIsolated, !UserDefaults.standard.bool(forKey: "twoPanesByDefault") {
+            UserDefaults.standard.set(true, forKey: "twoPanesByDefault")
+            showSecondPane = true
+        }
         if showSecondPane { openSecondPaneIfNeeded() }
+        Panes.shared.first = browser
+        Panes.shared.second = secondBrowser
+        Panes.shared.twoPanes = showSecondPane
+        BrowserModel.oppositePane = { Panes.shared.other(than: $0) }
+        BrowserModel.swapPanes = { Panes.shared.swap() }
         BrowserModel.active = active
         BrowserModel.onInteraction = { model in activate(model) }
         // Copy To ▸ / Move To ▸: favorite folders (NAS first), then NAS shares.
@@ -436,6 +457,7 @@ struct ContentView: View {
         UITestHarness.runSidebarDropTestIfRequested(sidebar: sidebar)
         UITestHarness.runAutoCollapseTestIfRequested(transfers: transfers)
         UITestHarness.runDragOutTestIfRequested()
+        UITestHarness.runTwoPaneTestIfRequested()
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)
@@ -455,7 +477,8 @@ struct ContentView: View {
         #endif
         wireRefresh(browser, secondBrowser)
         if selection == nil {
-            selection = sidebar.favorites.first(where: sidebar.isAvailable)?.location
+            selection = PaneMemory.restore(pane: 0, servers: servers)
+                ?? sidebar.favorites.first(where: sidebar.isAvailable)?.location
                 ?? sidebar.drives.first(where: { !$0.isInternal }).map { .local($0.url) }
                 ?? .local(FileManager.default.homeDirectoryForCurrentUser)
         }

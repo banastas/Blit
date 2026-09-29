@@ -21,7 +21,6 @@ struct FileListView: View {
     @FocusState private var tableFocused: Bool
     @AppStorage("showPathBar") private var showPathBar = true
     /// Column widths, order and visibility (right-click a column header), kept per window.
-    @SceneStorage("fileColumns") private var columns = TableColumnCustomization<FileItem>()
 
     var body: some View {
         Group {
@@ -117,7 +116,8 @@ struct FileListView: View {
 
     private var tableContent: some View {
         Table(of: FileItem.self, selection: $browser.selection, sortOrder: $browser.sortOrder,
-              columnCustomization: $columns) {
+              columnCustomization: Binding(get: { ColumnSettings.shared.columns },
+                                           set: { ColumnSettings.shared.columns = $0 })) {
             TableColumn("Name", value: \.name) { item in
                 HStack(spacing: 4) {
                     if item.depth > 0 { Spacer().frame(width: CGFloat(item.depth) * 16) }
@@ -309,6 +309,14 @@ struct FileListView: View {
             Button("New Folder") { browser.newFolder() }
             Button(items.count == 1 ? "Rename" : "Rename \(items.count) Items…") { browser.beginRename(items) }
             sendMenus(items)
+            // The other pane of a two-pane window (F5 / F6 from the keyboard).
+            if let other = BrowserModel.oppositePane?(browser), let there = other.current, there != browser.current {
+                Button("Copy to “\(other.title)”") { browser.send(items, to: there, name: other.title, move: false) }
+                Button("Move to “\(other.title)”") { browser.send(items, to: there, name: other.title, move: true) }
+                if items.count == 1, items[0].isDirectory {
+                    Button("Open in Other Pane") { other.open(items[0].location) }
+                }
+            }
             if urls.count == items.count {
                 Button("Duplicate") { browser.duplicate(items) }
             }
@@ -427,6 +435,16 @@ struct FileListView: View {
     /// the Desktop take); every row carries Blit's payload, which Blit's own
     /// drop targets read first.
     private func dragProvider(for item: FileItem) -> NSItemProvider {
+        // Grabbing a row that isn't selected drags just that row, as in Finder.
+        // (The table also asks for the rows still selected from before, which
+        // then went along: a file dragged onto a favorite took a folder with it.)
+        #if DEBUG
+        UITestHarness.dropTrail.append("provider for \(item.name) · grabbed \(itemUnderPointer()?.name ?? "none") · selection \(browser.selectedItems.map(\.name))")
+        #endif
+        if let grabbed = itemUnderPointer(), !browser.selection.contains(grabbed.id) {
+            guard grabbed.id == item.id else { return NSItemProvider() }
+            browser.selection = [grabbed.id]
+        }
         let payload = payload(for: item)
         DragContents.started(payload)   // runs when the drag begins
         let provider = NSItemProvider()

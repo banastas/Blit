@@ -1810,6 +1810,114 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitTwoPaneTest <log>`: two panes on temporary folders, driven by real
+    /// key presses from scripts/ui-keys.swift: F5 copies the selection to the
+    /// other pane, F6 moves it, ⌘U swaps the panes; View › Columns hides Size in
+    /// both lists.
+    static func runTwoPaneTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTwoPaneTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-two-pane-test")
+            try? fm.removeItem(at: root)
+            let left = root.appendingPathComponent("Left"), right = root.appendingPathComponent("Right")
+            for folder in [left, right] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            for file in ["copy-me.bin", "move-me.bin"] { fm.createFile(atPath: left.appendingPathComponent(file).path, contents: Data("x".utf8)) }
+            guard let first = BrowserModel.active, let window = BrowserModel.activeWindow else { return lines.append("no browser") }
+            guard let second = BrowserModel.oppositePane?(first) else { return lines.append("no second pane (showSecondPane off?)") }
+            first.open(.local(left))
+            second.open(.local(right))
+            for _ in 0..<30 where first.rows.count < 2 { try? await Task.sleep(for: .milliseconds(200)) }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.setFrame(NSRect(x: 120, y: 120, width: 1200, height: 700), display: true)
+            try? await Task.sleep(for: .seconds(1))
+            // The helper clicks empty space in the left list (brings this copy
+            // forward, and makes the left pane the active one) before any key.
+            var tables: [NSTableView] = []
+            func collect(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                view.subviews.forEach(collect)
+            }
+            if let content = window.contentView { collect(content) }
+            guard let leftTable = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) else {
+                return lines.append("no tables")
+            }
+            let below = leftTable.rect(ofRow: max(0, leftTable.numberOfRows - 1))
+            let seen = leftTable.visibleRect
+            let spot = window.convertPoint(toScreen: leftTable.convert(NSPoint(x: seen.midX, y: below.maxY + 60), to: nil))
+            try? JSONSerialization.data(withJSONObject: [spot.x, (NSScreen.screens.first?.frame.height ?? 0) - spot.y])
+                .write(to: URL(fileURLWithPath: logPath + ".click"))
+            for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".clicked") { try? await Task.sleep(for: .milliseconds(100)) }
+            BrowserModel.onInteraction?(first)   // the left pane is the active one
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("frontmost is this test copy: \(NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier) · frontmost \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?") · click at \(Int(spot.x)),\(Int(spot.y)) · window \(window.frame) · window on screen \(window.isOnActiveSpace && window.isVisible) · key \(window.isKeyWindow)")
+            func contents(_ url: URL) -> [String] { ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).sorted() }
+            // A real click on a row selects it (the menus follow real selections).
+            @MainActor func rowPoint(_ name: String) -> [Int] {
+                guard let row = first.rows.firstIndex(where: { $0.name == name }) else { return [] }
+                let r = leftTable.rect(ofRow: row)
+                // On the date, not the name: a click on a selected name starts a rename.
+                let seen = leftTable.visibleRect   // the list scrolls sideways in a narrow pane
+                let p = window.convertPoint(toScreen: leftTable.convert(NSPoint(x: seen.minX + seen.width * 0.8, y: r.midY), to: nil))
+                return [Int(p.x), Int((NSScreen.screens.first?.frame.height ?? 0) - p.y)]
+            }
+            @MainActor func press(_ index: Int, _ key: Int, command: Bool = false, clicking name: String? = nil) async {
+                var click: [Int] = []
+                if let name { click = rowPoint(name) }
+                lines.append("step \(index): click \(click) · rows \(first.rows.map(\.name)) · table rows \(leftTable.numberOfRows)")
+                try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+                try? JSONSerialization.data(withJSONObject: [key, command ? 1 : 0] + click).write(to: URL(fileURLWithPath: logPath + ".keys-\(index)"))
+                for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".sent-\(index)") && !fm.fileExists(atPath: logPath + ".aborted") {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                try? await Task.sleep(for: .seconds(2))
+            }
+            // 1. F5 (key code 96) copies copy-me.bin to the right pane.
+            @MainActor func findItem(_ title: String, in menu: NSMenu?) -> NSMenuItem? {
+                for item in menu?.items ?? [] {
+                    if item.title == title { return item }
+                    if let found = findItem(title, in: item.submenu) { return found }
+                }
+                return nil
+            }
+            await press(0, 96, clicking: "copy-me.bin")
+            NSApp.mainMenu?.update()
+            lines.append("after the click: Copy to Other Pane enabled \(findItem("Copy to Other Pane", in: NSApp.mainMenu)?.isEnabled ?? false) · Get Info enabled \(findItem("Get Info", in: NSApp.mainMenu)?.isEnabled ?? false) · selection \(first.selectedItems.map(\.name)) · pane can send \(first.canSendToOtherPane)")
+            lines.append("F5: left \(contents(left)) · right \(contents(right))")
+            // 2. F6 (97) moves move-me.bin.
+            await press(1, 97, clicking: "move-me.bin")
+            for _ in 0..<20 where contents(left).contains("move-me.bin") { try? await Task.sleep(for: .milliseconds(200)) }
+            lines.append("F6: left \(contents(left)) · right \(contents(right))")
+            // 3. ⌘U (key code 32) swaps the panes' folders.
+            await press(2, 32, command: true)
+            lines.append("⌘U: left pane shows \(first.current?.lastComponent ?? "?") · right pane shows \(second.current?.lastComponent ?? "?")")
+            // 4. View › Columns: hide Size, in both panes.
+            @MainActor func visibleColumns() -> [Int] {
+                var tables: [NSTableView] = []
+                func collect(_ view: NSView) {
+                    if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                    view.subviews.forEach(collect)
+                }
+                if let content = window.contentView { collect(content) }
+                return tables.map { $0.tableColumns.filter { !$0.isHidden }.count }
+            }
+            let before = visibleColumns()
+            ColumnSettings.shared.toggle("size")
+            try? await Task.sleep(for: .seconds(1))
+            let after = visibleColumns()
+            ColumnSettings.shared.toggle("size")
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("Columns › Size: visible columns per pane \(before) → hidden \(after) → shown again \(visibleColumns())")
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

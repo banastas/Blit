@@ -252,6 +252,9 @@ private struct TransferTarget: ViewModifier {
                     case .into:
                         Task {
                             let sources = await DropReader.locations(from: providers)
+                            #if DEBUG
+                            UITestHarness.dropTrail.append("received \(providers.count) items: \(sources.map(\.lastComponent))")
+                            #endif
                             if !sources.isEmpty { onTransfer(sources, location, name) }
                         }
                     case .above: onInsert?(providers, false)

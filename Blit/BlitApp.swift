@@ -244,7 +244,7 @@ struct BrowserCommands: Commands {
     let transfers: TransferManager
     @FocusedValue(\.browser) private var browser
     @FocusedValue(\.transferDetails) private var details
-    @AppStorage("showSecondPane") private var showSecondPane = false
+    @AppStorage("showSecondPane") private var showSecondPane = true
     @AppStorage("showPathBar") private var showPathBar = true
     @AppStorage("showIconPreviews") private var showIconPreviews = true
 
@@ -274,6 +274,16 @@ struct BrowserCommands: Commands {
             .disabled(browser == nil)
             Button(showSecondPane ? "Hide Second Pane" : "Show Second Pane") { showSecondPane.toggle() }
                 .keyboardShortcut("2", modifiers: [.command, .option])
+            Button("Swap Panes") { BrowserModel.swapPanes?() }
+                .keyboardShortcut("u")
+                .disabled(!showSecondPane)
+            // The same switches as right-clicking a column header, easier to find.
+            Menu("Columns") {
+                ForEach(ColumnSettings.optional, id: \.id) { column in
+                    Toggle(column.title, isOn: Binding(get: { ColumnSettings.shared.isShown(column.id) },
+                                                       set: { _ in ColumnSettings.shared.toggle(column.id) }))
+                }
+            }
             Divider()
             // The full HUD from the keyboard; Escape also collapses it.
             Button(details?.isExpanded == true ? "Hide Transfer Details" : "Show Transfer Details") {
@@ -314,6 +324,18 @@ struct FileCommands: Commands {
                 onFiles { $0.beginRename($0.selectedItems) }
             }
             .disabled(browser?.selection.isEmpty ?? true)
+            // To the folder the other pane shows, as in two-pane file managers.
+            Button("Copy to Other Pane") { onFiles { $0.sendToOtherPane(move: false) } }
+                .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!)), modifiers: [])
+                .disabled(!(browser?.canSendToOtherPane ?? false))
+            Button("Move to Other Pane") { onFiles { $0.sendToOtherPane(move: true) } }
+                .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF6FunctionKey)!)), modifiers: [])
+                .disabled(!(browser?.canSendToOtherPane ?? false))
+            Button("Open in Other Pane") { onFiles { $0.openSelectionInOtherPane() } }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                .disabled(!(browser.map { $0.selection.count == 1 && $0.selectedItems.first?.isDirectory == true } ?? false)
+                          || browser.flatMap { BrowserModel.oppositePane?($0) } == nil)
+            Divider()
             Button("Duplicate") { onFiles { $0.duplicate($0.selectedItems) } }
                 .disabled(browser.map { $0.selection.isEmpty || $0.current?.localURL == nil } ?? true)
             Button(browser.map { $0.deleteTitle(for: $0.selectedItems) } ?? "Move to Trash") {
