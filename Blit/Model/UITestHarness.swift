@@ -2601,12 +2601,18 @@ enum UITestHarness {
     }
 
     /// `-BlitRenderCard <png>`: the 1200 × 630 link-preview card (Open Graph,
-    /// X): the pixel icon, name and line, over the full HUD with the demo transfer.
+    /// X): the pixel icon, name and line, over the full HUD with the demo
+    /// transfer. `-BlitRenderCardSize 1280x720` renders the YouTube thumbnail:
+    /// the same layout, a little larger.
     static func renderCardIfRequested(transfers: TransferManager) {
         guard let path = UserDefaults.standard.string(forKey: "BlitRenderCard") else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
             let job = demoJob(destination: URL(fileURLWithPath: "/tmp"))
+            let size = (UserDefaults.standard.string(forKey: "BlitRenderCardSize") ?? "1200x630")
+                .split(separator: "x").compactMap { Double($0) }
+            let width = size.count == 2 ? size[0] : 1200, height = size.count == 2 ? size[1] : 630
+            let big = height > 630   // the thumbnail: larger type, read small on a phone
             let art = ["......##......", "......##......", "......##......", "......##......",
                        "..##########..", "...########...", "....######....", ".....####.....",
                        "......##......", "..............", "..............", "##.##.##.##.::"]
@@ -2619,26 +2625,26 @@ enum UITestHarness {
                     }
                 }
             }
-            .frame(width: 70, height: 60)
-            let content = VStack(alignment: .leading, spacing: 26) {
+            .frame(width: big ? 84 : 70, height: big ? 72 : 60)
+            let content = VStack(alignment: .leading, spacing: big ? 34 : 26) {
                 HStack(alignment: .center, spacing: 24) {
                     RoundedRectangle(cornerRadius: 22).fill(Color(white: 0.07))
                         .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(HUDColor.border, lineWidth: 1))
                         .overlay(icon)
-                        .frame(width: 104, height: 104)
+                        .frame(width: big ? 124 : 104, height: big ? 124 : 104)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .firstTextBaseline, spacing: 18) {
-                            Text("BLIT").font(HUDFont.label(56)).foregroundStyle(HUDColor.bright)
-                            Text("Big files, moved fast, proven intact.").font(HUDFont.terminal(34)).foregroundStyle(HUDColor.bright)
+                            Text("BLIT").font(HUDFont.label(big ? 68 : 56)).foregroundStyle(HUDColor.bright)
+                            Text("Big files, moved fast, proven intact.").font(HUDFont.terminal(big ? 40 : 34)).foregroundStyle(HUDColor.bright)
                         }
                         Text("SFTP · DRIVES · NAS  —  EVERY FILE SHA-256 VERIFIED WHERE IT LANDS")
-                            .font(HUDFont.label(12)).foregroundStyle(HUDColor.dim)
+                            .font(HUDFont.label(big ? 14 : 12)).foregroundStyle(HUDColor.dim)
                     }
                 }
-                TransferHUD(job: job).environment(transfers).frame(width: 1088)
+                TransferHUD(job: job).environment(transfers).frame(width: width - 112)
             }
             .padding(.horizontal, 56)
-            .frame(width: 1200, height: 630, alignment: .center)
+            .frame(width: width, height: height, alignment: .center)
             .background(HUDColor.background)
             .environment(\.colorScheme, .dark)
             let renderer = ImageRenderer(content: content)
