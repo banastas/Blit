@@ -2738,7 +2738,10 @@ enum UITestHarness {
             let rect = tables[0].rect(ofRow: row)
             let from = cg(tables[0], NSPoint(x: rect.minX + 90, y: rect.midY))
             let seen = tables[1].visibleRect
-            let to = cg(tables[1], NSPoint(x: seen.midX, y: seen.minY + seen.height * 0.6))
+            var to = cg(tables[1], NSPoint(x: seen.midX, y: seen.minY + seen.height * 0.6))
+            // -BlitDragOutEnd "x,y": onto another app instead (a Finder window the test opened).
+            if let custom = UserDefaults.standard.string(forKey: "BlitDragOutEnd")?.split(separator: ",").compactMap({ Double($0) }),
+               custom.count == 2 { to = custom }
             lines.append("frontmost is this test copy: \(NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier) · dragging \(name) (\(file.size ?? -1) bytes, depth \(file.depth)) from \(server.displayName)")
             UITestHarness.dropTrail = []
             longest = 0
