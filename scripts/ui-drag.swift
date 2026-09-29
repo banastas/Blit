@@ -1,7 +1,8 @@
 // Posts real mouse drags for Blit's UI tests (DropTest, SidebarDropTest,
 // DragOutTest), only into an isolated test copy's window. Needs Accessibility
 // for the process that runs it. Usage: ui-drag <log> <count> <test copy pid>
-// [--allow-end-outside] (DragOutTest ends its drag over Finder). Before each
+// [--allow-end-outside] (DragOutTest ends its drag over Finder) [--straight]
+// (no sideways wiggle, for a drag that selects rows). Before each
 // drag it checks that the test copy's window is the one under the start point
 // (and the end point, unless allowed), and stops if not: never into another
 // app the user has in front. For each drag N
@@ -17,6 +18,9 @@ guard CommandLine.arguments.count > 3, let pid = pid_t(CommandLine.arguments[3])
     print("usage: ui-drag <log> <count> <test copy pid> [--allow-end-outside]"); exit(64)
 }
 let endMayBeOutside = CommandLine.arguments.contains("--allow-end-outside")
+/// --straight: no sideways wiggle (it helps file drags start; a drag meant to
+/// select rows moves straight down, as a person's would).
+let straight = CommandLine.arguments.contains("--straight")
 let fm = FileManager.default
 
 func waitFor(_ path: String, _ seconds: Double) -> Bool {
@@ -46,7 +50,7 @@ for index in 0..<count {
     let steps = 30
     for i in 1...steps {
         let t = Double(i) / Double(steps)
-        post(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * t + (i < steps ? 3 : 0), y: from.y + (to.y - from.y) * t))
+        post(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * t + (i < steps && !straight ? 3 : 0), y: from.y + (to.y - from.y) * t))
         usleep(25_000)
     }
     post(.leftMouseDragged, to); usleep(600_000)

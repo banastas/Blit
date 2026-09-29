@@ -2412,12 +2412,12 @@ enum UITestHarness {
             for row in 1...3 { post(.leftMouseDragged, point(row: row, column: dateColumn)) }
             post(.leftMouseUp, point(row: 3, column: dateColumn))
             try? await Task.sleep(for: .seconds(1.5))
-            lines.append("drag down from the date: selected \(browser.selectedItems.map(\.name).sorted()) · vertical drag moves files \(table.verticalMotionCanBeginDrag)")
+            lines.append("press on the date: pressed off the name \(RowDragRule.pressedOffName)")
             // A press on a name sets the table up for a file drag again.
             post(.leftMouseDown, point(row: 4, column: nameColumn, x: nameRect.minX + 40))
             post(.leftMouseUp, point(row: 4, column: nameColumn, x: nameRect.minX + 40))
             try? await Task.sleep(for: .seconds(1))
-            lines.append("press on a name: selected \(browser.selectedItems.map(\.name)) · vertical drag moves files \(table.verticalMotionCanBeginDrag)")
+            lines.append("press on a name: pressed off the name \(RowDragRule.pressedOffName)")
             lines.append("done")
         }
     }

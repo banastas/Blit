@@ -486,7 +486,10 @@ struct FileListView: View {
     /// A local row carries its file as a plain file URL (what Finder, Books and
     /// the Desktop take); every row carries Blit's payload, which Blit's own
     /// drop targets read first.
-    private func dragProvider(for item: FileItem) -> NSItemProvider {
+    private func dragProvider(for item: FileItem) -> NSItemProvider? {
+        // Finder's rule: pressed off the name, the drag selects rows instead
+        // (with no provider the table goes on selecting as the pointer moves).
+        if RowDragRule.pressedOffName { return nil }
         #if DEBUG
         UITestHarness.dropTrail.append("provider for \(item.name) · grabbed \(itemUnderPointer()?.name ?? "none") · selection \(browser.selectedItems.map(\.name))")
         #endif
@@ -701,6 +704,8 @@ enum EmptySpaceMenu {
         if event.type == .leftMouseDown, !event.modifierFlags.contains(.control) {
             if let window = event.window, let content = window.contentView, let table = table(at: event.locationInWindow, in: content) {
                 RowDragRule.prepare(for: event.locationInWindow, in: table, browser: browser(at: event.locationInWindow, in: window))
+            } else {
+                RowDragRule.prepare(for: .zero, in: nil, browser: nil)
             }
             return false
         }
@@ -740,14 +745,17 @@ enum EmptySpaceMenu {
 
 /// Finder's rule for a drag that starts on a row: from the file's icon or
 /// name it moves the files; from the rest of the row (the blank part of the
-/// Name column, the date, the size) moving up or down selects rows as it
-/// goes. AppKit decides at mouse-down, so each press sets it for its table.
+/// Name column, the date, the size) it selects rows as it goes. Each press
+/// records which it was; the rows' drag provider reads it when a drag starts.
+/// (AppKit's verticalMotionCanBeginDrag has no effect on SwiftUI's table.)
 @MainActor
 enum RowDragRule {
-    static func prepare(for point: NSPoint, in table: NSTableView, browser: BrowserModel?) {
+    static private(set) var pressedOffName = false
+
+    static func prepare(for point: NSPoint, in table: NSTableView?, browser: BrowserModel?) {
+        guard let table else { pressedOffName = false; return }
         let local = table.convert(point, from: nil)
-        guard table.row(at: local) >= 0 else { return }
-        table.verticalMotionCanBeginDrag = isOnName(local, in: table, browser: browser)
+        pressedOffName = table.row(at: local) >= 0 && !isOnName(local, in: table, browser: browser)
     }
 
     /// Whether `local` (table coordinates) is on a row's icon or name. The
