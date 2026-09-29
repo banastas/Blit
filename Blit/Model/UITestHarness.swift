@@ -2683,34 +2683,48 @@ enum UITestHarness {
             let local = fm.temporaryDirectory.appendingPathComponent("blit-remote-drag")
             try? fm.removeItem(at: local)
             try? fm.createDirectory(at: local, withIntermediateDirectories: true)
-            tab.first.open(server.startLocation)
-            second.open(.local(local))
-            for _ in 0..<100 where tab.first.rows.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+            // -BlitRemoteDragReversed: the server on the right and the local folder on
+            // the left, dragged right to left (the user's layout).
+            let reversed = UserDefaults.standard.bool(forKey: "BlitRemoteDragReversed")
+            let serverPane = reversed ? second : tab.first, localPane = reversed ? tab.first : second
+            // -BlitRemoteDragLocalSource: a local folder in the server's place (is it the server, or the other pane?).
+            if UserDefaults.standard.bool(forKey: "BlitRemoteDragLocalSource") {
+                let source = fm.temporaryDirectory.appendingPathComponent("blit-remote-drag-source")
+                try? fm.removeItem(at: source)
+                try? fm.createDirectory(at: source.appendingPathComponent("Folder"), withIntermediateDirectories: true)
+                for name in ["a.nfo", "b.mkv", "c.mkv"] { fm.createFile(atPath: source.appendingPathComponent(name).path, contents: Data("x".utf8)) }
+                fm.createFile(atPath: source.appendingPathComponent("Folder/inner.nfo").path, contents: Data("x".utf8))
+                serverPane.open(.local(source))
+            } else {
+                serverPane.open(server.startLocation)
+            }
+            localPane.open(.local(local))
+            for _ in 0..<100 where serverPane.rows.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
             // -BlitRemoteDragChild: a file inside an expanded server folder instead
             // (the user's freeze: the file came from a folder opened in place).
             if UserDefaults.standard.bool(forKey: "BlitRemoteDragChild") {
-                for folder in tab.first.rows.filter(\.isDirectory).prefix(8) {
-                    tab.first.toggleExpanded(folder)
-                    for _ in 0..<50 where tab.first.loadingChildren.contains(folder.location) || !tab.first.expanded.contains(folder.location) {
+                for folder in serverPane.rows.filter(\.isDirectory).prefix(8) {
+                    serverPane.toggleExpanded(folder)
+                    for _ in 0..<50 where serverPane.loadingChildren.contains(folder.location) || !serverPane.expanded.contains(folder.location) {
                         try? await Task.sleep(for: .milliseconds(200))
                     }
                     try? await Task.sleep(for: .milliseconds(300))
-                    if tab.first.rows.contains(where: { $0.depth == 1 && !$0.isDirectory }) { break }
-                    tab.first.toggleExpanded(folder)
+                    if serverPane.rows.contains(where: { $0.depth == 1 && !$0.isDirectory }) { break }
+                    serverPane.toggleExpanded(folder)
                 }
             }
             let childOnly = UserDefaults.standard.bool(forKey: "BlitRemoteDragChild")
             // The smallest file at the top of the server folder, with a namesake here.
-            guard let file = tab.first.rows.filter({ !$0.isDirectory && (!childOnly || $0.depth == 1) })
+            guard let file = serverPane.rows.filter({ !$0.isDirectory && (!childOnly || $0.depth == 1) })
                     .min(by: { ($0.size ?? .max) < ($1.size ?? .max) }) else {
-                return lines.append("no file on the server (\(tab.first.rows.count) rows, error \(tab.first.error ?? "none"))")
+                return lines.append("no file on the server (\(serverPane.rows.count) rows, error \(serverPane.error ?? "none"))")
             }
             let name = ConflictPrompt.name(for: file.location)
             // -BlitRemoteDragTwice: the first drag downloads the file for real, the
             // second drags it again onto its verified copy (the user's freeze).
             let twice = UserDefaults.standard.bool(forKey: "BlitRemoteDragTwice")
             if !twice { fm.createFile(atPath: local.appendingPathComponent(name).path, contents: Data("x".utf8)) }
-            second.reload()
+            localPane.reload()
             // -BlitRemoteDragRealPrompt: the real Replace / Keep Both sheet (answered
             // Stop below, if it appears), as the user saw it.
             let realPrompt = UserDefaults.standard.bool(forKey: "BlitRemoteDragRealPrompt")
@@ -2730,15 +2744,16 @@ enum UITestHarness {
             }
             if let content = window.contentView { collect(content) }
             tables.sort { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
-            guard tables.count == 2, let row = tab.first.rows.firstIndex(where: { $0.id == file.id }) else { return lines.append("tables \(tables.count)") }
+            guard tables.count == 2, let row = serverPane.rows.firstIndex(where: { $0.id == file.id }) else { return lines.append("tables \(tables.count)") }
             let height = NSScreen.screens.first?.frame.height ?? 0
             @MainActor func cg(_ table: NSTableView, _ p: NSPoint) -> [Double] {
                 let s = window.convertPoint(toScreen: table.convert(p, to: nil)); return [s.x, height - s.y]
             }
-            let rect = tables[0].rect(ofRow: row)
-            let from = cg(tables[0], NSPoint(x: rect.minX + 90, y: rect.midY))
-            let seen = tables[1].visibleRect
-            var to = cg(tables[1], NSPoint(x: seen.midX, y: seen.minY + seen.height * 0.6))
+            let serverTable = tables[reversed ? 1 : 0], localTable = tables[reversed ? 0 : 1]
+            let rect = serverTable.rect(ofRow: row)
+            let from = cg(serverTable, NSPoint(x: rect.minX + 90, y: rect.midY))
+            let seen = localTable.visibleRect
+            var to = cg(localTable, NSPoint(x: seen.midX, y: seen.minY + seen.height * 0.6))
             // -BlitDragOutEnd "x,y": onto another app instead (a Finder window the test opened).
             if let custom = UserDefaults.standard.string(forKey: "BlitDragOutEnd")?.split(separator: ",").compactMap({ Double($0) }),
                custom.count == 2 { to = custom }
@@ -2765,7 +2780,7 @@ enum UITestHarness {
                 }
                 lines.append("first drag: \(transfers?.jobs.last.map { "\($0.status) · \($0.filesVerified)/\($0.fileCount) verified" } ?? "no job") · file here \(fm.fileExists(atPath: local.appendingPathComponent(name).path))")
                 try? await Task.sleep(for: .seconds(2))
-                second.reload()
+                localPane.reload()
                 try? await Task.sleep(for: .seconds(1))
                 UITestHarness.dropTrail = []
                 longest = 0

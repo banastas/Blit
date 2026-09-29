@@ -15,15 +15,18 @@ struct FileListView: View {
     /// the pane header and a right-click hand this list the keyboard.
     var paneFocus: FocusState<PaneFocus?>.Binding? = nil
     var paneTag: PaneFocus? = nil
-    @State private var isTargeted = false
     /// This pane's columns (widths, order); which are shown comes from
     /// ColumnSettings, shared with the other pane and View › Columns.
     @State private var columns = TableColumnCustomization<FileItem>()
     /// Size stepped out because this pane is too narrow (not the user's choice:
     /// never saved, never shared with the other pane).
     @State private var sizeSqueezed = false
-    /// The folder row a drag is over (it lights up and takes the drop).
-    @State private var dropFolder: BrowseLocation?
+    /// Where a drag over this list would drop (the folder row lights up, or the
+    /// whole list outlines). An object of its own, read only by the outline and
+    /// the rows' marks: as state of this view, every change rebuilt the list and
+    /// its drop handler mid-drag, and a quick drop let go just then was lost and
+    /// left the drag stuck (the window took no clicks until force quit).
+    @State private var dropHighlight = DropHighlight()
     @FocusState private var tableFocused: Bool
     @AppStorage("showPathBar") private var showPathBar = true
     /// Column widths, order and visibility (right-click a column header), kept per window.
@@ -187,16 +190,8 @@ struct FileListView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 // The folder a drag will drop into, as in the sidebar.
-                .background {
-                    if dropFolder == item.location {
-                        RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.22)).padding(-2)
-                    }
-                }
-                .overlay {
-                    if dropFolder == item.location {
-                        PixelMarchingAnts(cell: 1.5).padding(.horizontal, -1)
-                    }
-                }
+                .background { DropFolderMark(highlight: dropHighlight, location: item.location, part: .fill) }
+                .overlay { DropFolderMark(highlight: dropHighlight, location: item.location, part: .outline) }
             }
             .width(min: 110, ideal: 280)
             .customizationID("name")
@@ -244,23 +239,19 @@ struct FileListView: View {
             itemUnderPointer: { itemUnderPointer() },
             selection: browser.selection,
             onTarget: { folder, targeted in
-                if dropFolder != folder { dropFolder = folder }
-                if isTargeted != targeted { isTargeted = targeted }
+                dropHighlight.set(folder: folder, targeted: targeted)
             },
             onDrop: { providers, item, copy in
                 perform(providers, onto: item, copy: copy)
                 // A drag update can still arrive after the drop and light the
                 // folder again: clear once more when the drag has settled.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    dropFolder = nil
-                    isTargeted = false
+                    dropHighlight.set(folder: nil, targeted: false)
                 }
             }))
         .overlay {
             // The whole list outlines only when the drop goes into this folder.
-            if isTargeted, dropFolder == nil {
-                PixelMarchingAnts(cell: 2).padding(3)
-            }
+            DropListOutline(highlight: dropHighlight)
         }
         .contextMenu(forSelectionType: FileItem.ID.self) { locations in
             menu(for: browser.items(for: locations))
@@ -491,26 +482,26 @@ struct FileListView: View {
         // (with no provider the table goes on selecting as the pointer moves).
         if RowDragRule.pressedOffName { return nil }
         #if DEBUG
-        UITestHarness.dropTrail.append("provider for \(item.name) · grabbed \(itemUnderPointer()?.name ?? "none") · selection \(browser.selectedItems.map(\.name))")
+        UITestHarness.dropTrail.append("provider for \(item.name) · grabbed \((RowDragRule.pressedItem(in: browser) ?? itemUnderPointer())?.name ?? "none") · selection \(browser.selectedItems.map(\.name)) · button down \(NSEvent.pressedMouseButtons & 1 == 1)")
         #endif
         // What's dragged, worked out without touching the selection (changing
         // it while the drag starts spoiled the drag for Finder): grabbing a row
         // that isn't selected drags just that row, as in Finder; otherwise the
         // selection goes. The table also asks for rows still selected from
         // before; those don't come along.
-        let grabbed = itemUnderPointer()
-        let dragged: [FileItem]
-        if let grabbed, !browser.selection.contains(grabbed.id) {
-            dragged = [grabbed]
-        } else {
-            dragged = browser.selection.contains(item.id) ? browser.selectedItems : [item]
-        }
-        guard dragged.contains(where: { $0.id == item.id }) else { return NSItemProvider() }
+        let grabbed = RowDragRule.pressedItem(in: browser) ?? itemUnderPointer() ?? item
+        let dragged = browser.selection.contains(grabbed.id) ? browser.selectedItems : [grabbed]
+        // The table asks about the rows it thinks are dragged: the one under the
+        // pointer when the drag began (a quick flick has already left the row
+        // pressed for another) and any still selected. Each is answered with one
+        // of the rows really dragged, the same one every time it's asked, and
+        // any beyond them with nothing.
+        guard let carried = RowDragRule.carried(for: item.id, from: dragged) else { return NSItemProvider() }
         let payload = TransferPayload(locations: dragged.map(\.location), folders: dragged.filter(\.isDirectory).map(\.location),
-                                      primary: item.location)
+                                      primary: carried.location)
         DragContents.started(payload)   // runs when the drag begins
         let provider = NSItemProvider()
-        if let url = item.location.localURL {
+        if let url = carried.location.localURL {
             provider.registerObject(url as NSURL, visibility: .all)
             provider.suggestedName = url.lastPathComponent
         }
@@ -525,6 +516,47 @@ struct FileListView: View {
             if payload.locations.allSatisfy({ $0.serverID != nil }) { DragContents.keepOnlyPayload(data) }
         }
         return provider
+    }
+}
+
+/// Where a drag over a file list would drop.
+@MainActor
+@Observable
+final class DropHighlight {
+    private(set) var folder: BrowseLocation?
+    private(set) var listTargeted = false
+
+    func set(folder: BrowseLocation?, targeted: Bool) {
+        if self.folder != folder { self.folder = folder }
+        if listTargeted != targeted { listTargeted = targeted }
+    }
+}
+
+/// The whole list's drop outline (a view of its own, so only it redraws).
+private struct DropListOutline: View {
+    let highlight: DropHighlight
+
+    var body: some View {
+        if highlight.listTargeted, highlight.folder == nil {
+            PixelMarchingAnts(cell: 2).padding(3)
+        }
+    }
+}
+
+/// A folder row's drop mark: the fill behind it, or the marching outline.
+private struct DropFolderMark: View {
+    enum Part { case fill, outline }
+    let highlight: DropHighlight
+    let location: BrowseLocation
+    let part: Part
+
+    var body: some View {
+        if highlight.folder == location {
+            switch part {
+            case .fill: RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.22)).padding(-2)
+            case .outline: PixelMarchingAnts(cell: 1.5).padding(.horizontal, -1)
+            }
+        }
     }
 }
 
@@ -755,11 +787,43 @@ enum EmptySpaceMenu {
 @MainActor
 enum RowDragRule {
     static private(set) var pressedOffName = false
+    /// The row pressed, and in which list: a drag takes it, not the row under
+    /// the pointer once the drag has begun (a quick flick is rows further on
+    /// by then, and dragged the wrong file or folder).
+    static private(set) var pressed: (browser: ObjectIdentifier, item: FileItem.ID)?
 
     static func prepare(for point: NSPoint, in table: NSTableView?, browser: BrowserModel?) {
-        guard let table else { pressedOffName = false; return }
+        answers = [:]
+        guard let table else { pressedOffName = false; pressed = nil; return }
         let local = table.convert(point, from: nil)
-        pressedOffName = table.row(at: local) >= 0 && !isOnName(local, in: table, browser: browser)
+        let row = table.row(at: local)
+        pressedOffName = row >= 0 && !isOnName(local, in: table, browser: browser)
+        if let browser, browser.rows.indices.contains(row) {
+            pressed = (ObjectIdentifier(browser), browser.rows[row].id)
+        } else {
+            pressed = nil
+        }
+    }
+
+    /// Which dragged row each row the table asks about hands over (reset by
+    /// each press).
+    static private var answers: [FileItem.ID: FileItem.ID] = [:]
+
+    /// The dragged row that `requested` hands over: itself when it's one of
+    /// them, otherwise the first not yet handed over; nil when all have been.
+    static func carried(for requested: FileItem.ID, from dragged: [FileItem]) -> FileItem? {
+        if let answer = answers[requested] { return dragged.first { $0.id == answer } }
+        let taken = Set(answers.values)
+        let choice = dragged.first(where: { $0.id == requested && !taken.contains($0.id) })
+            ?? dragged.first(where: { !taken.contains($0.id) })
+        if let choice { answers[requested] = choice.id }
+        return choice
+    }
+
+    /// The row pressed in `browser`'s list, if the last press was there.
+    static func pressedItem(in browser: BrowserModel) -> FileItem? {
+        guard let pressed, pressed.browser == ObjectIdentifier(browser) else { return nil }
+        return browser.rows.first { $0.id == pressed.item }
     }
 
     /// Whether `local` (table coordinates) is on a row's icon or name. The

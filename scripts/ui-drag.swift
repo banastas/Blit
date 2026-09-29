@@ -21,6 +21,9 @@ let endMayBeOutside = CommandLine.arguments.contains("--allow-end-outside")
 /// --straight: no sideways wiggle (it helps file drags start; a drag meant to
 /// select rows moves straight down, as a person's would).
 let straight = CommandLine.arguments.contains("--straight")
+/// --fast: a quick flick, as a person drags (tests drag slowly; the user's
+/// drags that froze Blit lasted 78–650 ms): 6 steps, released at once.
+let fast = CommandLine.arguments.contains("--fast")
 let fm = FileManager.default
 
 func waitFor(_ path: String, _ seconds: Double) -> Bool {
@@ -46,23 +49,23 @@ for index in 0..<count {
         exit(2)
     }
     post(.mouseMoved, from); usleep(200_000)
-    post(.leftMouseDown, from); usleep(250_000)
-    let steps = 30
+    post(.leftMouseDown, from); usleep(fast ? 60_000 : 250_000)
+    let steps = fast ? 6 : 30
     for i in 1...steps {
         let t = Double(i) / Double(steps)
         post(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * t + (i < steps && !straight ? 3 : 0), y: from.y + (to.y - from.y) * t))
-        usleep(25_000)
+        usleep(fast ? 15_000 : 25_000)
     }
-    post(.leftMouseDragged, to); usleep(600_000)
+    post(.leftMouseDragged, to); usleep(fast ? 40_000 : 600_000)
     fm.createFile(atPath: log + ".hover-\(index)", contents: nil)
-    if let wid = try? String(contentsOfFile: log + ".wid", encoding: .utf8) {
+    if !fast, let wid = try? String(contentsOfFile: log + ".wid", encoding: .utf8) {
         let shot = Process()
         shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         shot.arguments = ["-x", "-o", "-l", wid.trimmingCharacters(in: .whitespacesAndNewlines), log + "-screen-\(index).png"]
         try? shot.run()
         shot.waitUntilExit()
     }
-    usleep(900_000)
+    if !fast { usleep(900_000) }
     post(.leftMouseUp, to)
     print("drag \(index + 1) posted")
 }
