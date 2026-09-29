@@ -35,7 +35,11 @@ extension TransferJob {
             if path.hasPrefix(root + "/") {
                 var relative = String(path.dropFirst(root.count + 1))
                 if relative.hasSuffix(".blitpart") { relative.removeLast(".blitpart".count) }
-                return relative
+                // Only the job's own items: files already in the destination
+                // folder aren't part of it (they showed "queued" during a
+                // download into their folder).
+                let top = relative.split(separator: "/").first.map(String.init) ?? relative
+                if sources.isEmpty || sources.contains(where: { $0.lastComponent == top }) { return relative }
             }
         }
         for source in sources {
