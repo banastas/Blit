@@ -16,6 +16,9 @@ struct FileListView: View {
     var paneFocus: FocusState<PaneFocus?>.Binding? = nil
     var paneTag: PaneFocus? = nil
     @State private var isTargeted = false
+    /// This pane's columns (widths, order); which are shown comes from
+    /// ColumnSettings, shared with the other pane and View › Columns.
+    @State private var columns = TableColumnCustomization<FileItem>()
     /// The folder row a drag is over (it lights up and takes the drop).
     @State private var dropFolder: BrowseLocation?
     @FocusState private var tableFocused: Bool
@@ -103,6 +106,28 @@ struct FileListView: View {
                     Task { proxy.scrollTo(first.id) }
                 }
         }
+        // Shown / hidden columns follow the shared settings; hiding one from a
+        // header's right-click menu updates them for both panes.
+        .onAppear {
+            applyColumnVisibility()
+            // The second pane appearing: start the two at the same width.
+            if paneTag == .second {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    if let anchor = EmptySpaceMenu.anchorView(for: browser) { FitColumns.centreDivider(near: anchor) }
+                }
+            }
+        }
+        .onChange(of: ColumnSettings.shared.hidden) { applyColumnVisibility() }
+        .onChange(of: columns) {
+            for column in ColumnSettings.optional {
+                let shown = columns[visibility: column.id] != .hidden
+                if shown != ColumnSettings.shared.isShown(column.id) { ColumnSettings.shared.set(column.id, shown: shown) }
+            }
+        }
+        // Fit the columns to the pane, whenever the pane changes size.
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, _ in
+            DispatchQueue.main.async { FitColumns.apply(for: browser) }
+        }
         // SwiftUI's Table shows no menu for right-clicks below the last row;
         // EmptySpaceMenu handles those (New Folder, Paste, Refresh).
         .background {
@@ -116,8 +141,7 @@ struct FileListView: View {
 
     private var tableContent: some View {
         Table(of: FileItem.self, selection: $browser.selection, sortOrder: $browser.sortOrder,
-              columnCustomization: Binding(get: { ColumnSettings.shared.columns },
-                                           set: { ColumnSettings.shared.columns = $0 })) {
+              columnCustomization: $columns) {
             TableColumn("Name", value: \.name) { item in
                 HStack(spacing: 4) {
                     if item.depth > 0 { Spacer().frame(width: CGFloat(item.depth) * 16) }
@@ -127,7 +151,9 @@ struct FileListView: View {
                             if browser.renaming == item.location {
                                 RenameField(browser: browser, item: item)
                             } else {
-                                Text(item.name).lineLimit(1)
+                                // One line, always: long release names lose their middle,
+                                // keeping the end (year, group, extension) in view.
+                                Text(item.name).lineLimit(1).truncationMode(.middle)
                             }
                             if browser.renaming != item.location, !item.isDirectory, let url = item.location.localURL,
                                let verified = VerifiedIndex.shared.entry(for: url, size: item.size) {
@@ -141,6 +167,14 @@ struct FileListView: View {
                                     .foregroundStyle(.secondary)
                                     .help(partialSummary(partial))
                                     .accessibilityLabel("Partial download")
+                            }
+                            // With the Status column hidden (the default), the status is a
+                            // small tag after the name, there only while it has something to say.
+                            if browser.renaming != item.location, !ColumnSettings.shared.isShown("status"),
+                               let status = browser.operations.transfers.status(for: item) {
+                                StatusCell(status: status)
+                                    .font(.caption)
+                                    .fixedSize()
                             }
                         }
                     } icon: {
@@ -160,25 +194,24 @@ struct FileListView: View {
                     }
                 }
             }
-            .width(min: 180, ideal: 360)
+            .width(min: 150, ideal: 280)
             .customizationID("name")
             .disabledCustomizationBehavior(.visibility)
 
-            TableColumn("Date Modified", value: \.modified) { item in
-                Text(item.modified, format: .dateTime.year().month(.abbreviated).day().hour().minute())
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+            TableColumn("Modified", value: \.modified) { item in
+                AdaptiveDate(date: item.modified)
             }
-            .width(min: 120, ideal: 160)
+            .width(min: 64, ideal: 132)
             .customizationID("modified")
 
             TableColumn("Size", value: \.size) { item in
                 Text(item.isDirectory ? "—" : item.size.formatted(.byteCount(style: .file)))
+                    .lineLimit(1)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .width(min: 60, ideal: 80)
+            .width(min: 56, ideal: 76)
             .customizationID("size")
 
             // Where the row stands in a transfer in the strip (PRD R2.6).
@@ -189,9 +222,9 @@ struct FileListView: View {
             .customizationID("status")
 
             TableColumn("Kind", value: \.kind) { item in
-                Text(item.kind).foregroundStyle(.secondary).lineLimit(1)
+                Text(item.kind).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             }
-            .width(min: 80, ideal: 140)
+            .width(min: 70, ideal: 120)
             .customizationID("kind")
         } rows: {
             ForEach(browser.rows) { item in
@@ -379,6 +412,14 @@ struct FileListView: View {
             }
         }
         return .handled
+    }
+
+    private func applyColumnVisibility() {
+        for column in ColumnSettings.optional {
+            let wanted: Visibility = ColumnSettings.shared.isShown(column.id) ? .visible : .hidden
+            if (columns[visibility: column.id] == .hidden) != (wanted == .hidden) { columns[visibility: column.id] = wanted }
+        }
+        DispatchQueue.main.async { FitColumns.apply(for: browser) }
     }
 
     /// The row under the pointer, during a drag.
@@ -606,6 +647,11 @@ enum EmptySpaceMenu {
         return nil
     }
 
+    /// The view covering `browser`'s file list.
+    static func anchorView(for browser: BrowserModel) -> NSView? {
+        anchors.first(where: { $0.browser === browser && $0.view?.window != nil })?.view
+    }
+
     /// The browser whose file list covers `point` in `window`.
     static func browser(at point: NSPoint, in window: NSWindow) -> BrowserModel? {
         anchors.first(where: { anchor in
@@ -771,6 +817,159 @@ private struct RenameField: NSViewRepresentable {
 }
 
 /// A Status cell: glyph plus word, never color alone (red only for failures).
+/// A narrow pane squeezes the Name column first (down to its minimum), so
+/// the other columns keep their width and everything fits without scrolling
+/// sideways; the date then picks a shorter form. (By default the table kept
+/// every column at its ideal width and scrolled.)
+@MainActor
+enum FitColumns {
+    /// Fits `browser`'s list to its pane (on appearing and whenever the pane
+    /// changes size).
+    static func apply(for browser: BrowserModel) {
+        guard let anchor = EmptySpaceMenu.anchorView(for: browser) else { return }
+        apply(near: anchor)
+    }
+
+    static func apply(near anchor: NSView) {
+        // The anchor covers this list: its table is the one under the anchor's
+        // centre (with two panes the window holds two).
+        guard let window = anchor.window, let content = window.contentView else { return }
+        let frame = anchor.convert(anchor.bounds, to: nil)
+        let centre = NSPoint(x: frame.midX, y: frame.midY)
+        var tables: [NSTableView] = []
+        collect(content, into: &tables)
+        guard let table = tables.first(where: { ($0.enclosingScrollView ?? $0).convert(($0.enclosingScrollView ?? $0).bounds, to: nil).contains(centre) })
+        else { return }
+        table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        watch(table)
+        fit(table)
+    }
+
+    /// Refits whenever the list's visible area changes size (a pane resized,
+    /// the window resized, the sidebar shown or hidden).
+    private static var watched = Set<ObjectIdentifier>()
+    private static func watch(_ table: NSTableView) {
+        guard let clip = table.enclosingScrollView?.contentView, watched.insert(ObjectIdentifier(table)).inserted else { return }
+        clip.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: clip, queue: .main) { [weak table] _ in
+            MainActor.assumeIsolated { if let table { fit(table) } }
+        }
+    }
+
+    /// Every column but Name has a set width; Name takes the rest. Only if
+    /// that would push Name under its minimum does the date give up width
+    /// (and switch to a shorter form).
+    private static let widths: [String: CGFloat] = ["Modified": 132, "Size": 76, "Status": 100, "Kind": 120]
+
+    private static func fit(_ table: NSTableView) {
+        let columns = table.tableColumns.filter { !$0.isHidden }
+        guard let name = columns.first else { return }
+        // A little room at the end, so sizes don't sit under the overlay
+        // scroller, and none of the part the floating sidebar covers (the first
+        // pane's list runs underneath it).
+        let available = (table.enclosingScrollView?.contentView.bounds.width ?? table.bounds.width) - 12
+            - sidebarOverlap(table)
+        let spacing = table.intercellSpacing.width * CGFloat(columns.count)
+        for column in columns.dropFirst() {
+            if let width = widths[column.title], abs(column.width - width) > 0.5 { column.width = width }
+        }
+        var others = columns.dropFirst().reduce(CGFloat(0)) { $0 + $1.width } + spacing
+        let overflow = others + name.minWidth - available
+        if overflow > 0, let date = columns.first(where: { $0.title == "Modified" }) {
+            let give = min(overflow, date.width - date.minWidth)
+            if give > 0 {
+                date.width -= give
+                others -= give
+            }
+        }
+        let target = max(name.minWidth, available - others)
+        if abs(name.width - target) > 0.5 { name.width = target }
+    }
+
+    /// How much of the table's width the sidebar covers (0 when it's hidden or
+    /// beside it rather than over it).
+    private static func sidebarOverlap(_ table: NSTableView) -> CGFloat {
+        guard let window = table.window, let content = window.contentView, let scroll = table.enclosingScrollView else { return 0 }
+        var sidebar: NSView?
+        func find(_ view: NSView) {
+            if sidebar != nil { return }
+            if let outline = view as? NSOutlineView, outline.headerView == nil { sidebar = outline.enclosingScrollView ?? outline; return }
+            view.subviews.forEach(find)
+        }
+        find(content)
+        guard let sidebar, !sidebar.isHiddenOrHasHiddenAncestor else { return 0 }
+        let listFrame = scroll.convert(scroll.bounds, to: nil)
+        let sideFrame = sidebar.convert(sidebar.bounds, to: nil)
+        return max(0, min(listFrame.maxX, sideFrame.maxX) - max(listFrame.minX, sideFrame.minX))
+    }
+
+    /// Puts the divider between the two panes in the middle (once, when the
+    /// second pane appears; after that it's where the user drags it).
+    static func centreDivider(near anchor: NSView) {
+        var view: NSView? = anchor
+        while let current = view {
+            if let split = current as? NSSplitView, split.isVertical, split.subviews.count == 2 {
+                split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+                return
+            }
+            view = current.superview
+        }
+    }
+
+    private static func collect(_ view: NSView, into tables: inout [NSTableView]) {
+        if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+        for sub in view.subviews { collect(sub, into: &tables) }
+    }
+}
+
+/// A date that always fits its column on one line: the first of these that
+/// fits wins, from "Sep 28, 2026 at 20:00" down to "Today 20:00", "Sep 18" or
+/// "2025-11-16", and at the narrowest "9/18" or "2025".
+struct AdaptiveDate: View {
+    let date: Date
+
+    /// The widest each form gets, so every row picks the same form (a short
+    /// date fitting a longer form would make the column uneven).
+    private static let widest = ["Sep 28, 2026 at 20:00", "Sep 28 at 20:00", "Yesterday", "12/28"]
+
+    var body: some View {
+        let forms = Self.forms(date)
+        ViewThatFits(in: .horizontal) {
+            ForEach(0..<4, id: \.self) { level in
+                ZStack(alignment: .leading) {
+                    Text(Self.widest[level]).lineLimit(1).hidden()
+                    Text(forms[level]).lineLimit(1)
+                }
+            }
+        }
+        .monospacedDigit()
+        .foregroundStyle(.secondary)
+        .help(forms[0])
+    }
+
+    static func forms(_ date: Date) -> [String] {
+        let calendar = Calendar.current
+        let full = date.formatted(.dateTime.year().month(.abbreviated).day().hour().minute())
+        let thisYear = calendar.isDate(date, equalTo: .now, toGranularity: .year)
+        let time = date.formatted(.dateTime.hour().minute())
+        let medium = thisYear ? date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+                              : date.formatted(.dateTime.year().month(.abbreviated).day())
+        let short: String
+        if calendar.isDateInToday(date) {
+            short = "Today \(time)"
+        } else if calendar.isDateInYesterday(date) {
+            short = "Yesterday"
+        } else if thisYear {
+            short = date.formatted(.dateTime.month(.abbreviated).day())
+        } else {
+            short = date.formatted(.iso8601.year().month().day())
+        }
+        let tiny = calendar.isDateInToday(date) ? time
+            : thisYear ? date.formatted(.dateTime.month(.defaultDigits).day()) : date.formatted(.dateTime.year())
+        return [full, medium, short, tiny]
+    }
+}
+
 private struct StatusCell: View {
     let status: FileStatus?
 

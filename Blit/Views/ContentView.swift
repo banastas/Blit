@@ -345,7 +345,8 @@ struct ContentView: View {
             FileListView(browser: model, onFocus: activate, paneFocus: $focusedPane, paneTag: tag)
                 .simultaneousGesture(TapGesture().onEnded(activate))
         }
-        .frame(minWidth: 280)
+        // Both panes start the same width (the divider still moves).
+        .frame(minWidth: 280, idealWidth: 10_000, maxWidth: .infinity)
     }
 
     private func openSecondPaneIfNeeded() {
@@ -458,6 +459,7 @@ struct ContentView: View {
         UITestHarness.runAutoCollapseTestIfRequested(transfers: transfers)
         UITestHarness.runDragOutTestIfRequested()
         UITestHarness.runTwoPaneTestIfRequested()
+        UITestHarness.runLayoutShotIfRequested()
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)

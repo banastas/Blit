@@ -6,36 +6,44 @@ import Foundation
 import Observation
 import SwiftUI
 
-/// The file lists' columns (shown, hidden, widths, order), shared by both
-/// panes and View › Columns, and saved. (They lived in scene storage, which
-/// the View menu couldn't reach.)
+/// Which optional columns the file lists show, shared by both panes and
+/// View › Columns, and saved. Widths stay with each pane: shared widths made
+/// the two panes' fitting overwrite each other.
 @MainActor
 @Observable
 final class ColumnSettings {
     static let shared = ColumnSettings()
-    private static let key = "fileColumns"
+    private static let key = "hiddenColumns"
 
-    var columns: TableColumnCustomization<FileItem> {
+    /// Column ids that are hidden.
+    private(set) var hidden: Set<String> {
         didSet {
-            guard !TransferManager.isIsolated, let data = try? JSONEncoder().encode(columns) else { return }
-            UserDefaults.standard.set(data, forKey: Self.key)
+            guard !TransferManager.isIsolated else { return }
+            UserDefaults.standard.set(Array(hidden).sorted(), forKey: Self.key)
         }
     }
 
     private init() {
-        columns = UserDefaults.standard.data(forKey: Self.key)
-            .flatMap { try? JSONDecoder().decode(TableColumnCustomization<FileItem>.self, from: $0) } ?? TableColumnCustomization()
+        if let saved = UserDefaults.standard.stringArray(forKey: Self.key) {
+            hidden = Set(saved)
+        } else {
+            // Two-pane defaults (0.2.22): Status becomes a tag after the name and
+            // Kind waits in View › Columns, so both panes fit on one line.
+            hidden = ["status", "kind"]
+        }
     }
 
     /// The columns that can be hidden (Name always shows), for View › Columns.
     static let optional: [(id: String, title: String)] = [
-        ("modified", "Date Modified"), ("size", "Size"), ("status", "Status"), ("kind", "Kind"),
+        ("modified", "Modified"), ("size", "Size"), ("status", "Status"), ("kind", "Kind"),
     ]
 
-    func isShown(_ id: String) -> Bool { columns[visibility: id] != .hidden }
+    func isShown(_ id: String) -> Bool { !hidden.contains(id) }
 
-    func toggle(_ id: String) {
-        columns[visibility: id] = isShown(id) ? .hidden : .visible
+    func toggle(_ id: String) { set(id, shown: !isShown(id)) }
+
+    func set(_ id: String, shown: Bool) {
+        if shown { hidden.remove(id) } else { hidden.insert(id) }
     }
 }
 

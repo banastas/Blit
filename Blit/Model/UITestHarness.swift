@@ -1918,6 +1918,40 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitLayoutShot <log> -BlitLayoutLeft <path> -BlitLayoutRight <path>
+    /// [-BlitLayoutWidth 1440]`: opens the two panes on real folders at a typical
+    /// window size for a design review, then writes the window number to
+    /// <log>.wid so a screenshot of just this window can be taken from outside.
+    static func runLayoutShotIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitLayoutShot"),
+              let left = UserDefaults.standard.string(forKey: "BlitLayoutLeft"),
+              let right = UserDefaults.standard.string(forKey: "BlitLayoutRight") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard let first = BrowserModel.active, let window = BrowserModel.activeWindow,
+                  let second = BrowserModel.oppositePane?(first) else { return }
+            first.open(.local(URL(fileURLWithPath: left)))
+            second.open(.local(URL(fileURLWithPath: right)))
+            let width = UserDefaults.standard.double(forKey: "BlitLayoutWidth")
+            window.setFrame(NSRect(x: 100, y: 100, width: width > 0 ? width : 1440, height: 860), display: true)
+            try? await Task.sleep(for: .seconds(3))
+            if let row = first.rows.first(where: { !$0.isDirectory }) ?? first.rows.first { first.selection = [row.id] }
+            try? await Task.sleep(for: .seconds(1))
+            var tables: [NSTableView] = []
+            func collect(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                view.subviews.forEach(collect)
+            }
+            if let content = window.contentView { collect(content) }
+            let widths = tables.map { table in
+                "visible \(Int(table.enclosingScrollView?.contentView.bounds.width ?? 0)): " +
+                table.tableColumns.filter { !$0.isHidden }.map { "\($0.title) \(Int($0.width))" }.joined(separator: ", ")
+            }
+            try? widths.joined(separator: "\n").write(toFile: logPath + ".log", atomically: true, encoding: .utf8)
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }
