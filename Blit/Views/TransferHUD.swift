@@ -18,20 +18,16 @@ struct TransferHUD: View {
                 linkPanel.frame(width: 210)
             }
             .fixedSize(horizontal: false, vertical: true)
-            // The log sets this row's height; the WARNING panel takes exactly
-            // that height (an overlay), so a failure never makes the HUD taller.
+            // The last log lines, unboxed. With failures, the WARNING block
+            // takes the right end at the same height (the full list is a click
+            // away), so a failure never makes the HUD taller.
             HStack(alignment: .top, spacing: 10) {
-                logPanel.frame(maxWidth: .infinity)
+                logStrip.frame(maxWidth: .infinity)
                 if !job.failures.isEmpty {
-                    Color.clear.frame(width: 260)
+                    warningBlock.frame(width: 300)
                 }
             }
-            .fixedSize(horizontal: false, vertical: true)
-            .overlay(alignment: .topTrailing) {
-                if !job.failures.isEmpty {
-                    warningPanel.frame(width: 260).frame(maxHeight: .infinity)
-                }
-            }
+            .frame(height: Self.lineHeight * CGFloat(Self.logLines) + 12)
             // Shown once there's more than one job, at a fixed height (three
             // rows, then it scrolls), so jobs coming and going don't resize it.
             if transfers.transferJobs.count > 1 || transfers.queuePaused {
@@ -135,19 +131,19 @@ struct TransferHUD: View {
         HUDPanel("Throughput · 60 s") {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 if job.isVerifyingOnly {
-                    Text("SHA256").font(HUDFont.terminal(40))
+                    Text("SHA256").font(HUDFont.terminal(32))
                     if job.hashRate > 0.5 {
                         Text(String(format: "%.1f MB/S", job.hashRate)).font(HUDFont.terminal(18)).foregroundStyle(HUDColor.dim)
                     }
                 } else if !job.isActive, job.allAlreadyPresent {
-                    Text("PRESENT").font(HUDFont.terminal(40))
+                    Text("PRESENT").font(HUDFont.terminal(32))
                 } else {
-                    Text(String(format: "%.1f", job.isActive ? job.rate : averageRate)).font(HUDFont.terminal(40))
+                    Text(String(format: "%.1f", job.isActive ? job.rate : averageRate)).font(HUDFont.terminal(32))
                     Text("MB/S").font(HUDFont.terminal(18)).foregroundStyle(HUDColor.dim)
                 }
             }
             PixelHistogram(samples: Array(job.history.suffix(60)), scale: job.histogramScale, columns: 60)
-                .frame(height: 64)
+                .frame(height: 44)
             // While only checksums remain the bars show the hash rate, so the
             // peak must match their scale, not the download peak.
             HUDRow(String(format: "PEAK %.1f", job.isVerifyingOnly ? job.histogramScale : job.peakRate), eta)
@@ -156,30 +152,43 @@ struct TransferHUD: View {
 
     private var linkPanel: some View {
         HUDPanel("Link data") {
-            HUDRow("CONN", "\(job.connections)")
-            HUDRow("LINK", job.link.isEmpty ? "—" : job.link)
-            if let route = job.routeWarning {
-                // An advisory (PRD R1.7), not a failure: the word carries it.
-                HUDRow("ROUTE", route.uppercased())
+            // Only rows with something to say, in a fixed number of slots so
+            // the panel keeps its height: the essentials always, the rest when
+            // they apply (a resume, a hash-cache hit, files already there).
+            let rows = linkRows
+            ForEach(0..<Self.linkSlots, id: \.self) { slot in
+                if slot < rows.count {
+                    HUDRow(rows[slot].0, rows[slot].1)
+                } else {
+                    Color.clear.frame(height: Self.lineHeight)
+                }
             }
-            // The same rows for every job ("—" where they don't apply), so the
-            // panel keeps its height.
-            HUDRow("RTT", isDownload ? job.rttMilliseconds.map { "\(Int($0.rounded())) MS" } ?? "—" : "—")
-            HUDRow("WINDOW", isDownload ? "\((SSHTuning().maximumPacketSize * 64) >> 20) MB · RCVBUF \(SSHTuning().receiveBufferBytes >> 20) MB" : "—")
-            HUDRow("HASH CACHE", isDownload && job.filesVerified > 0 ? "\(job.hashCacheHits)/\(job.filesVerified)" : "—")
-            HUDRow("VERIFY", job.verificationMethod)
-            HUDRow("EXISTS", job.existsRule.hudLabel)
-            HUDRow("RESUMED", job.resumedBytes > 0 ? TransferJob.bytes(job.resumedBytes) : "—")
-            HUDRow("PRESENT", "\(job.filesAlreadyPresent)")
-            HUDRow("ELAPSED", elapsed)
         }
     }
 
-    /// Six lines at a fixed height each (a line with a pixel glyph would
-    /// otherwise be taller), padded while the log is shorter.
-    private var logPanel: some View {
+    static let linkSlots = 6
+
+    /// The Link data rows worth showing now, most important first.
+    private var linkRows: [(String, String)] {
+        var rows: [(String, String)] = [("CONN", "\(job.connections)"), ("LINK", job.link.isEmpty ? "—" : job.link)]
+        if let route = job.routeWarning {
+            rows.append(("ROUTE", route.uppercased()))   // an advisory (PRD R1.7), not a failure
+        }
+        if isDownload, let rtt = job.rttMilliseconds { rows.append(("RTT", "\(Int(rtt.rounded())) MS")) }
+        rows.append(("VERIFY", job.verificationMethod))
+        if job.resumedBytes > 0 { rows.append(("RESUMED", TransferJob.bytes(job.resumedBytes))) }
+        if job.filesAlreadyPresent > 0 { rows.append(("PRESENT", "\(job.filesAlreadyPresent)")) }
+        if isDownload, job.hashCacheHits > 0 { rows.append(("HASH CACHE", "\(job.hashCacheHits)/\(job.filesVerified)")) }
+        rows.append(("EXISTS", job.existsRule.hudLabel))
+        // Elapsed always ends the panel.
+        return Array(rows.prefix(Self.linkSlots - 1)) + [("ELAPSED", elapsed)]
+    }
+
+    /// The last log lines at a fixed height each (a line with a pixel glyph
+    /// would otherwise be taller), padded while the log is shorter.
+    private var logStrip: some View {
         let lines = Array(job.log.suffix(Self.logLines))
-        return HUDPanel("Log") {
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(0..<Self.logLines, id: \.self) { slot in
                 let index = slot - (Self.logLines - lines.count)
                 Group {
@@ -198,104 +207,102 @@ struct TransferHUD: View {
             }
         }
         .font(HUDFont.terminal(16))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .overlay(alignment: .top) { Rectangle().fill(HUDColor.border).frame(height: 0.5) }
     }
 
-    static let logLines = 6
+    static let logLines = 2
     static let lineHeight: CGFloat = 18
-    /// Lines in the Item panel's detail area (connections and server hashing).
-    static let detailLines = 6
-
-    private enum DetailLine: Identifiable {
-        case label(String)
-        case bar(key: String, name: String?, fraction: Double, value: String)
-        case more(String)
-        var id: String {
-            switch self {
-            case .label(let t): "l" + t
-            case .bar(let k, let n, _, _): "b" + k + (n ?? "")
-            case .more(let t): "m" + t
-            }
-        }
-    }
-
-    /// Connections (or streams) and files the server is hashing, in a fixed
-    /// number of lines; what doesn't fit is summed up in a last "+N MORE" line.
-    private var detailLines: [DetailLine] {
-        let showConnections = !job.connectionRates.isEmpty && job.isActive && !job.isVerifyingOnly
-        let hashing = job.isActive ? job.hashing : []
-        // Each group needs a label plus a line per row. When both don't fit,
-        // hashing keeps two lines (label and one file) and connections the rest.
-        let needConnections = showConnections ? job.connectionRates.count + 1 : 0
-        let needHashing = hashing.isEmpty ? 0 : hashing.count + 1
-        let hashingLines = needConnections + needHashing <= Self.detailLines ? needHashing
-            : min(needHashing, max(2, Self.detailLines - needConnections))
-        let connectionLines = Self.detailLines - hashingLines
-        var lines: [DetailLine] = []
-        if showConnections {
-            let rates = job.connectionRates
-            let top = max(rates.max() ?? 1, 1)
-            let rows = rates.enumerated().map { index, rate in
-                DetailLine.bar(key: "\(isDownload ? "C" : "S")\(index + 1)", name: nil, fraction: rate / top,
-                               value: String(format: "%.1f", rate))
-            }
-            lines += Self.group(isDownload ? "CONNECTIONS" : "STREAMS", rows, lines: connectionLines) { shown in
-                String(format: "+%d MORE · %.1f MB/S", rates.count - shown, rates.dropFirst(shown).reduce(0, +))
-            }
-        }
-        if !hashing.isEmpty {
-            let rows = hashing.map { file in
-                DetailLine.bar(key: "", name: (file.name as NSString).lastPathComponent.uppercased(), fraction: file.fraction,
-                               value: "\(Int((file.fraction * 100).rounded()))%")
-            }
-            lines += Self.group("SERVER SHA256", rows, lines: hashingLines) { shown in "+\(hashing.count - shown) MORE FILES" }
-        }
-        return lines
-    }
-
-    /// A label and its rows in `lines` lines; when they don't fit, the last
-    /// line says what's hidden.
-    private static func group(_ label: String, _ rows: [DetailLine], lines: Int,
-                              more: (_ shown: Int) -> String) -> [DetailLine] {
-        guard rows.count > lines - 1 else { return [.label(label)] + rows }
-        if lines <= 2 {
-            // No room for a separate "more" line: the count goes in the label.
-            return [.label("\(label) · +\(rows.count - 1) MORE")] + rows.prefix(1)
-        }
-        let shown = lines - 2
-        return [.label(label)] + rows.prefix(shown) + [.more(more(shown))]
-    }
-
+    /// The Item panel's detail area: one line of per-connection meters (or
+    /// streams, for a copy) and one line for the files the server is hashing.
+    /// Two lines at a fixed height, whatever the job, so the HUD keeps its size.
     private var detailSlot: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(detailLines) { line in
-                Group {
-                    switch line {
-                    case .label(let text):
-                        Text(text).font(HUDFont.label()).foregroundStyle(HUDColor.dim)
-                    case .more(let text):
-                        Text(text).font(HUDFont.label()).foregroundStyle(HUDColor.dim)
-                    case .bar(let key, let name, let fraction, let value):
-                        HStack(spacing: 6) {
-                            if let name {
-                                Text(name).lineLimit(1).truncationMode(.middle)
-                                    .frame(width: 140, alignment: .leading).foregroundStyle(HUDColor.dim)
-                            } else {
-                                Text(key).foregroundStyle(HUDColor.dim).frame(width: 22, alignment: .leading)
-                            }
-                            GeometryReader { geo in
-                                PixelCells(fraction: fraction, count: max(8, Int(geo.size.width / 6)), height: 6)
-                            }
-                            .frame(height: 6)
-                            Text(value).frame(width: 40, alignment: .trailing)
-                        }
-                        .font(HUDFont.terminal(16))
+            connectionsLine
+                .frame(maxWidth: .infinity, minHeight: Self.lineHeight, maxHeight: Self.lineHeight, alignment: .leading)
+            hashingLine
+                .frame(maxWidth: .infinity, minHeight: Self.lineHeight, maxHeight: Self.lineHeight, alignment: .leading)
+        }
+        .font(HUDFont.terminal(15))
+        .padding(.top, 4)
+    }
+
+    /// Up to this many connections get a meter; more are summed after them.
+    static let meters = 4
+
+    @ViewBuilder private var connectionsLine: some View {
+        let rates = job.connectionRates
+        if !rates.isEmpty, job.isActive, !job.isVerifyingOnly {
+            let top = max(rates.max() ?? 1, 1)
+            HStack(spacing: 10) {
+                Text(isDownload ? "CONN" : "STREAMS").font(HUDFont.label()).foregroundStyle(HUDColor.dim)
+                ForEach(Array(rates.prefix(Self.meters).enumerated()), id: \.offset) { _, rate in
+                    HStack(spacing: 4) {
+                        PixelCells(fraction: rate / top, count: 8, height: 6).frame(width: 52, height: 6)
+                        Text(String(format: "%.1f", rate)).foregroundStyle(HUDColor.dim)
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: Self.lineHeight, maxHeight: Self.lineHeight, alignment: .leading)
+                if rates.count > Self.meters {
+                    Text(String(format: "+%d · %.1f", rates.count - Self.meters, rates.dropFirst(Self.meters).reduce(0, +)))
+                        .foregroundStyle(HUDColor.dim)
+                }
             }
+        } else {
+            Color.clear
         }
-        .frame(height: Self.lineHeight * CGFloat(Self.detailLines), alignment: .top)
-        .padding(.top, 4)
+    }
+
+    @ViewBuilder private var hashingLine: some View {
+        let hashing = job.isActive ? job.hashing : []
+        if !hashing.isEmpty {
+            let fraction = hashing.reduce(0) { $0 + $1.fraction } / Double(hashing.count)
+            HStack(spacing: 6) {
+                Text("SERVER SHA256 · \(hashing.count == 1 ? (hashing[0].name as NSString).lastPathComponent.uppercased() : "\(hashing.count) FILES")")
+                    .font(HUDFont.label()).foregroundStyle(HUDColor.dim)
+                    .lineLimit(1).truncationMode(.middle)
+                GeometryReader { geo in
+                    PixelCells(fraction: fraction, count: max(8, Int(geo.size.width / 6)), height: 6)
+                }
+                .frame(height: 6)
+                Text("\(Int((fraction * 100).rounded()))%").frame(width: 40, alignment: .trailing)
+            }
+        } else {
+            Color.clear
+        }
+    }
+
+    @State private var showsFailures = false
+
+    /// The failures, compact: the count and the first reason at the log's
+    /// height; a click lists them all.
+    private var warningBlock: some View {
+        Button { showsFailures = true } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    hudText("✕", glyphSize: 11)
+                    Text("WARNING · \(job.failures.count == 1 ? "1 FAILURE" : "\(job.failures.count) FAILURES")").font(HUDFont.label())
+                    Spacer()
+                    Text("ALL ›").font(HUDFont.label())
+                }
+                .frame(height: Self.lineHeight)
+                Text((job.failures.first ?? "").uppercased())
+                    .font(HUDFont.terminal(15))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, minHeight: Self.lineHeight, maxHeight: Self.lineHeight, alignment: .leading)
+            }
+            .foregroundStyle(HUDColor.onFailure)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(HUDColor.failure)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(job.failures.joined(separator: "\n"))
+        .popover(isPresented: $showsFailures, arrowEdge: .top) {
+            warningPanel.frame(width: 420, height: 260)
+        }
     }
 
     private var warningPanel: some View {
