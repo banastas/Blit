@@ -2502,30 +2502,10 @@ enum UITestHarness {
     /// images: a demo sidebar, three tabs, the demo transfer in the full HUD.
     /// Writes `<log>.wid` and waits for `<log>.shot` (the shell captures it).
     static func runDemoShotIfRequested(sidebar: SidebarModel, transfers: TransferManager) {
-        guard let logPath = UserDefaults.standard.string(forKey: "BlitDemoShot"),
-              let ssdPath = UserDefaults.standard.string(forKey: "BlitDemoSSD"),
-              let archivePath = UserDefaults.standard.string(forKey: "BlitDemoArchive") else { return }
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitDemoShot") else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
-            let ssd = URL(fileURLWithPath: ssdPath), archive = URL(fileURLWithPath: archivePath)
-            let incoming = ssd.appendingPathComponent("Incoming"), projects = archive.appendingPathComponent("Projects")
-            let color = ssd.appendingPathComponent("Grading"), films = archive.appendingPathComponent("Films")
-            let nas = { (name: String) in VolumeLocation(url: URL(fileURLWithPath: "/Volumes/\(name)"), name: name, isInternal: false, host: "Studio NAS") }
-            sidebar.showDemo(
-                drives: [VolumeLocation(url: URL(fileURLWithPath: "/"), name: "Macintosh HD", isInternal: true),
-                         VolumeLocation(url: ssd, name: ssd.lastPathComponent, isInternal: false),
-                         VolumeLocation(url: archive, name: archive.lastPathComponent, isInternal: false)],
-                devices: [NetworkDevice(name: "Studio NAS", model: "Xserve", shares: [nas("Media"), nas("Projects")])],
-                favorites: [.local(incoming), .local(projects), .local(color), .local(films)])
-            guard let window = BrowserModel.activeWindow, let tab = PaneTabs.shared.current, let second = tab.second else { return }
-            window.setFrame(NSRect(x: 80, y: 60, width: 1440, height: 900), display: true)
-            tab.first.open(.local(incoming))
-            second.open(.local(projects))
-            try? await Task.sleep(for: .seconds(1))
-            // Two more tabs, not shown (their folders open only when shown).
-            PaneTabs.shared.debugAppend(first: .local(color), second: .local(films))
-            PaneTabs.shared.debugAppend(first: .local(films), second: .local(URL(fileURLWithPath: "/Volumes/Media")), name: "Delivery")
-            try? await Task.sleep(for: .seconds(1))
+            guard let (window, tab, incoming) = await demoSetUp(sidebar: sidebar) else { return }
             transfers.debugAppend([demoJob(destination: incoming)])
             transfers.isExpanded = true
             if let row = tab.first.rows.first(where: { $0.name == "Interview_A-cam.mov" }) { tab.first.selection = [row.id] }
@@ -2536,6 +2516,86 @@ enum UITestHarness {
             try? await Task.sleep(for: .seconds(1.5))
             try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
             for _ in 0..<300 where !FileManager.default.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+            try? "done\n".write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// The demo window (-BlitDemoSSD <volume> -BlitDemoArchive <volume>): made-up
+    /// folders on two scratch disk images, a demo sidebar (none of the Mac's
+    /// real drives, shares or devices) and three tabs, the first showing
+    /// Incoming beside Projects. Returns the window, that tab and Incoming.
+    static func demoSetUp(sidebar: SidebarModel) async -> (NSWindow, PaneTab, URL)? {
+        guard let ssdPath = UserDefaults.standard.string(forKey: "BlitDemoSSD"),
+              let archivePath = UserDefaults.standard.string(forKey: "BlitDemoArchive") else { return nil }
+        let ssd = URL(fileURLWithPath: ssdPath), archive = URL(fileURLWithPath: archivePath)
+        let incoming = ssd.appendingPathComponent("Incoming"), projects = archive.appendingPathComponent("Projects")
+        let color = ssd.appendingPathComponent("Grading"), films = archive.appendingPathComponent("Films")
+        let nas = { (name: String) in VolumeLocation(url: URL(fileURLWithPath: "/Volumes/\(name)"), name: name, isInternal: false, host: "Studio NAS") }
+        sidebar.showDemo(
+            drives: [VolumeLocation(url: URL(fileURLWithPath: "/"), name: "Macintosh HD", isInternal: true),
+                     VolumeLocation(url: ssd, name: ssd.lastPathComponent, isInternal: false),
+                     VolumeLocation(url: archive, name: archive.lastPathComponent, isInternal: false)],
+            devices: [NetworkDevice(name: "Studio NAS", model: "Xserve", shares: [nas("Media"), nas("Projects")])],
+            favorites: [.local(incoming), .local(projects), .local(color), .local(films)])
+        guard let window = BrowserModel.activeWindow, let tab = PaneTabs.shared.current, let second = tab.second else { return nil }
+        window.setFrame(NSRect(x: 80, y: 60, width: 1440, height: 900), display: true)
+        tab.first.open(.local(incoming))
+        second.open(.local(projects))
+        try? await Task.sleep(for: .seconds(1))
+        // Two more tabs, not shown (their folders open only when shown).
+        PaneTabs.shared.debugAppend(first: .local(color), second: .local(films))
+        PaneTabs.shared.debugAppend(first: .local(films), second: .local(URL(fileURLWithPath: "/Volumes/Media")), name: "Delivery")
+        try? await Task.sleep(for: .seconds(1))
+        return (window, tab, incoming)
+    }
+
+    /// `-BlitDemoVideo <log>` with the demo volumes: the demo for Lemon
+    /// Squeezy's review, a real transfer on camera. Writes `<log>.frame` (the
+    /// window, CG coordinates) and waits for `<log>.recording`, then: a look
+    /// at another tab, back, SHOOT_2026-09 selected and sent to the other pane
+    /// (F5's command: a real, SHA-256-verified copy between the two volumes
+    /// in the full HUD), and the copied folder opened, every file ✓.
+    /// Writes `<log>` when it's over.
+    static func runDemoVideoIfRequested(sidebar: SidebarModel, transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitDemoVideo") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath + ".steps", atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard let (window, tab, _) = await demoSetUp(sidebar: sidebar), let second = tab.second else { return lines.append("no demo") }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(for: .seconds(1.5))
+            let frame = window.frame, height = NSScreen.screens.first?.frame.height ?? 0
+            try? "\(Int(frame.minX)),\(Int(height - frame.maxY)),\(Int(frame.width)),\(Int(frame.height))"
+                .write(toFile: logPath + ".frame", atomically: true, encoding: .utf8)
+            for _ in 0..<300 where !FileManager.default.fileExists(atPath: logPath + ".recording") { try? await Task.sleep(for: .milliseconds(100)) }
+            try? await Task.sleep(for: .seconds(2.5))
+            PaneTabs.shared.select(index: 1)                      // another pair
+            lines.append("tab 2")
+            try? await Task.sleep(for: .seconds(2.5))
+            PaneTabs.shared.select(index: 0)                      // back
+            lines.append("tab 1")
+            try? await Task.sleep(for: .seconds(2))
+            guard let shoot = tab.first.rows.first(where: { $0.name == "SHOOT_2026-09" }) else { return lines.append("no shoot folder") }
+            tab.first.selection = [shoot.id]
+            BrowserModel.onInteraction?(tab.first)
+            try? await Task.sleep(for: .seconds(1.5))
+            tab.first.sendToOtherPane(move: false)                // F5
+            lines.append("F5")
+            for _ in 0..<1200 {
+                try? await Task.sleep(for: .milliseconds(100))
+                if let job = transfers.jobs.last, !job.isOperation, job.status == .finished { break }
+            }
+            lines.append("copy: \(transfers.jobs.last.map { "\($0.status) · \($0.filesVerified)/\($0.fileCount) verified" } ?? "none")")
+            try? await Task.sleep(for: .seconds(3))
+            if let copied = second.rows.first(where: { $0.name == "SHOOT_2026-09" }) {
+                second.selection = [copied.id]
+                second.toggleExpanded(copied)
+            }
+            try? await Task.sleep(for: .seconds(5))
+            lines.append("done")
             try? "done\n".write(toFile: logPath, atomically: true, encoding: .utf8)
         }
     }
