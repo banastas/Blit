@@ -406,6 +406,27 @@ What it means:
 4. **Freshly completed downloads are the fast case.** A file the seedbox just finished writing is likely still in its page cache (65–93 MB/s measured on cached files). Fetching new downloads promptly is worth more than any client-side tuning; see open question 10.
 5. **Every M1/M0 figure above 36 MB/s was from a cached file,** including the 86 MB/s `dd` in M0.
 
+### Head to head: Blit, lftp, rclone (2026-09-29)
+
+Measured with [`scripts/sftp-compare.sh`](scripts/sftp-compare.sh): one 2,380 MB file from the seedbox (148 ms away) through the SFTP endpoint, whole-file downloads with login included, after an untimed warm-up read so every method found the file in the server's cache. One run each, on a shared server, so differences of a few MB/s are within noise.
+
+| Method | MB/s |
+|---|---:|
+| lftp 4.9, 8 connections, 32 KB × 64 in flight | 71.3 |
+| rclone 1.75, defaults (4 streams) | 39.3 |
+| rclone, 3 streams, 255 KB chunks × 64 | 26.7 |
+| rclone, 8 streams, 255 KB chunks × 64 | 54.8 |
+| **Blit, 3 connections** | **75.4** |
+| Blit, 3 connections, SHA-256 checked against the server | 65.8 |
+| Blit, 4 connections | 72.5 |
+
+What it shows:
+
+1. **Blit matches lftp's best with 3 connections instead of 8,** and lftp doesn't verify anything. Checked end to end against the server's SHA-256, Blit still gets 65.8 MB/s.
+2. **Blit is 1.4× rclone's best and 2.8× rclone at the same 3 connections.** rclone got slower with larger chunks (26.7 MB/s at 255 KB), consistent with the endpoint's 32 KB cap on read replies (see [What the numbers mean](#what-the-numbers-mean)).
+3. **4 connections were no faster than 3** here, matching the M1 result that 3–4 connections reach the server's ceiling.
+4. The M1 spike's 89–93 MB/s (2026-09-24) came from a different day and file; the server is shared, so absolute speeds vary from day to day. The comparison between methods in one run is what counts.
+
 ### LAN
 
 - The Mac's 2.5 GbE USB adapter negotiates **1000baseT**, because the core switch has only gigabit ports. Every wired path is limited to about 113 MB/s.
