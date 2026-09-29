@@ -13,10 +13,21 @@ struct PaneTabBar: View {
     @State private var dragging: UUID?
     @State private var dragOffset: CGFloat = 0
     @State private var consumed: CGFloat = 0
-    @State private var tabWidth: CGFloat = 120
+    @State private var barWidth: CGFloat = 800
 
     private static let spacing: CGFloat = 4
     static let height: CGFloat = 33
+    /// Tabs are at most this wide and sit at the left: tabs as wide as the
+    /// panes lined up with them and read as the panes' headers. Many tabs
+    /// share the bar, down to the minimum.
+    private static let maxTabWidth: CGFloat = 220
+    private static let minTabWidth: CGFloat = 100
+
+    private var tabWidth: CGFloat {
+        let count = CGFloat(max(PaneTabs.shared.tabs.count, 1))
+        let room = barWidth - 16 - 24 - Self.spacing * count   // the side padding, the + button, the gaps
+        return min(Self.maxTabWidth, max(Self.minTabWidth, room / count))
+    }
 
     var body: some View {
         // Once a second, as the strip does: a transfer's byte count isn't observed.
@@ -30,7 +41,7 @@ struct PaneTabBar: View {
                 PaneTabItem(tab: tab, index: index, isSelected: tab.id == tabs.current?.id,
                             title: tab.title(twoPanes: twoPanes, servers: servers),
                             detail: detail(tab), activity: activity(tab))
-                    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, width in tabWidth = width }
+                    .frame(width: tabWidth)
                     #if DEBUG
                     .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { _, frame in
                         UITestHarness.tabFrames[tab.id] = frame
@@ -52,10 +63,14 @@ struct PaneTabBar: View {
             .foregroundStyle(.secondary)
             .help("New Tab (⌘T)")
             .accessibilityLabel("New tab")
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
         .padding(.top, 5)
         .frame(height: Self.height)
+        .frame(maxWidth: .infinity)
+        .clipped()
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, width in barWidth = width }
         .background(Color.black.opacity(0.10))
     }
 
@@ -184,7 +199,7 @@ private struct PaneTabItem: View {
         }
         .padding(.horizontal, 7)
         .frame(height: 26)
-        .frame(minWidth: 96, maxWidth: .infinity)
+        .frame(maxWidth: .infinity)
         .background {
             RoundedRectangle(cornerRadius: 7)
                 .fill(isSelected ? Color(nsColor: .controlBackgroundColor)
