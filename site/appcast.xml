@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.24</title>
-      <pubDate>Tue, 29 Sep 2026 05:28:46 +0000</pubDate>
-      <sparkle:version>27</sparkle:version>
-      <sparkle:shortVersionString>0.2.24</sparkle:shortVersionString>
+      <title>Blit 0.2.25</title>
+      <pubDate>Tue, 29 Sep 2026 05:47:45 +0000</pubDate>
+      <sparkle:version>28</sparkle:version>
+      <sparkle:shortVersionString>0.2.25</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Tabs are narrower and sit at the left, so they no longer look like headers for the panes below them.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.24.zip" type="application/octet-stream" sparkle:edSignature="ES267+2tpfUCmIO+FEptXTjX7Yk5wkDBKWrFhfRbYOsMuI+lnkpRWuDf2n5oV7BwHQEqW0eT9iK3gyr0R7clBA==" length="5662674" />
+      <description><![CDATA[<p>Right-clicking empty space in a list (below the files) shows New Folder, Paste and Refresh again, and ⌃-click works there too.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.25.zip" type="application/octet-stream" sparkle:edSignature="DQ/2uovQgnF2jccTUy342y83D1OhyEjZ0Yu/PRpbLL+B4zG1p71LyY/1RPne94s8ILw3QuQmgaSbT4jstyrdBg==" length="5662901" />
     </item>
   </channel>
 </rss>
