@@ -2128,6 +2128,107 @@ enum UITestHarness {
         }
     }
 
+    /// Where each tab sits in the tab bar (SwiftUI's global space: the
+    /// window's content, top-left origin), for the real-input tabs test.
+    static var tabFrames: [UUID: CGRect] = [:]
+
+    /// `-BlitTabsKeysTest <log>`: the tabs with real keys and clicks, sent by
+    /// scripts/ui-keys (steps 0–7) and ui-drag (one drag), both of which act
+    /// only while this copy's window is the one in front.
+    static func runTabsKeysTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTabsKeysTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-tabs-keys")
+            try? fm.removeItem(at: root)
+            let left = root.appendingPathComponent("Left"), right = root.appendingPathComponent("Right")
+            for folder in [left, right] {
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                fm.createFile(atPath: folder.appendingPathComponent("a.bin").path, contents: Data("x".utf8))
+            }
+            let tabs = PaneTabs.shared
+            guard let window = BrowserModel.activeWindow, let tab = tabs.current, let second = tab.second else {
+                return lines.append("no window or second pane")
+            }
+            tab.first.open(.local(left))
+            second.open(.local(right))
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.setFrame(NSRect(x: 120, y: 120, width: 1200, height: 700), display: true)
+            try? await Task.sleep(for: .seconds(1.5))
+            let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+            @MainActor func cg(_ point: NSPoint) -> [Int] {
+                let screen = window.convertPoint(toScreen: point)
+                return [Int(screen.x), Int(screenHeight - screen.y)]
+            }
+            @MainActor func tabPoint(_ index: Int) -> [Int] {
+                guard tabs.tabs.indices.contains(index), let frame = tabFrames[tabs.tabs[index].id],
+                      let content = window.contentView else { return [] }
+                // Right of the ⌘-number (hovering there shows the close button).
+                return cg(NSPoint(x: frame.midX + 20, y: content.bounds.height - frame.midY))
+            }
+            // Bring this copy forward with a click on the left list's empty space.
+            var tables: [NSTableView] = []
+            func collect(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                view.subviews.forEach(collect)
+            }
+            if let content = window.contentView { collect(content) }
+            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) else {
+                return lines.append("no tables")
+            }
+            let seen = table.visibleRect
+            try? JSONSerialization.data(withJSONObject: cg(table.convert(NSPoint(x: seen.midX, y: seen.maxY - 40), to: nil)))
+                .write(to: URL(fileURLWithPath: logPath + ".click"))
+            for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".clicked") { try? await Task.sleep(for: .milliseconds(100)) }
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+            @MainActor func step(_ index: Int, _ key: Int, _ modifiers: Int, click: [Int] = [], clicks: Int = 1) async {
+                var payload = [key, modifiers] + click
+                if clicks > 1 { payload.append(clicks) }
+                try? JSONSerialization.data(withJSONObject: payload).write(to: URL(fileURLWithPath: logPath + ".keys-\(index)"))
+                for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".sent-\(index)") && !fm.fileExists(atPath: logPath + ".aborted") {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            @MainActor func shown() -> Int { (tabs.selectedIndex ?? -1) + 1 }
+            lines.append("frontmost is this test copy: \(NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier)")
+            await step(0, 17, 1)                                      // ⌘T
+            lines.append("⌘T: \(tabs.tabs.count) tabs · shows \(shown()) · \(tabs.current?.first.current?.lastComponent ?? "-") | \(tabs.current?.second?.current?.lastComponent ?? "-")")
+            await step(1, 18, 1)                                      // ⌘1
+            lines.append("⌘1: shows \(shown())")
+            await step(2, 48, 2)                                      // ⌃Tab
+            lines.append("⌃Tab: shows \(shown())")
+            await step(3, 48, 2 | 4)                                  // ⌃⇧Tab
+            lines.append("⌃⇧Tab: shows \(shown())")
+            await step(4, -1, 0, click: tabPoint(1))                  // click tab 2
+            lines.append("click on tab 2: shows \(shown())")
+            await step(5, -1, 0, click: tabPoint(0), clicks: 2)       // double-click tab 1
+            lines.append("double-click on tab 1: shows \(shown()) · renaming \(tabs.renamingID == tabs.tabs.first?.id)")
+            await step(6, 53, 0)                                      // Escape
+            lines.append("Escape: renaming \(tabs.renamingID != nil) · name \(tabs.tabs.first?.customName ?? "none")")
+            // Drag tab 1 past tab 2: the two trade places.
+            let firstID = tabs.tabs[0].id
+            let from = tabPoint(0), to = tabPoint(1)
+            if from.count == 2, to.count == 2 {
+                try? JSONSerialization.data(withJSONObject: [from[0], from[1], to[0] + 30, to[1]])
+                    .write(to: URL(fileURLWithPath: logPath + ".points-0"))
+                for _ in 0..<150 where !fm.fileExists(atPath: logPath + ".hover-0") && !fm.fileExists(atPath: logPath + ".aborted") {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                try? await Task.sleep(for: .seconds(2.5))   // ui-drag releases about a second after hovering
+            }
+            lines.append("drag tab 1 past tab 2: it's now tab \((tabs.tabs.firstIndex { $0.id == firstID } ?? -1) + 1) · shows \(shown())")
+            await step(7, 13, 1)                                      // ⌘W
+            lines.append("⌘W: \(tabs.tabs.count) tab · window open \(window.isVisible)")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

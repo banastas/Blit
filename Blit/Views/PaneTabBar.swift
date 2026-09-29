@@ -31,6 +31,11 @@ struct PaneTabBar: View {
                             title: tab.title(twoPanes: twoPanes, servers: servers),
                             detail: detail(tab), activity: activity(tab))
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, width in tabWidth = width }
+                    #if DEBUG
+                    .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { _, frame in
+                        UITestHarness.tabFrames[tab.id] = frame
+                    }
+                    #endif
                     .offset(x: dragging == tab.id ? dragOffset : 0)
                     .zIndex(dragging == tab.id ? 1 : 0)
                     .gesture(reorder(tab))

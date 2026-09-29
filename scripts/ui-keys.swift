@@ -4,9 +4,10 @@
 // <log>.click ([x, y], CG coordinates, inside the test window) to bring the
 // test copy forward, and before every key checks that the test copy is the
 // frontmost app, stopping if not (keys must never land in another app).
-// For step N it waits for <log>.keys-N ([keyCode, command 0/1], optionally
-// followed by [x, y] to click first, e.g. to select a row), presses the key,
-// then touches <log>.sent-N.
+// For step N it waits for <log>.keys-N ([keyCode, modifiers], optionally
+// followed by [x, y] to click first, e.g. to select a row, and a click count
+// of 2 for a double-click), presses the key, then touches <log>.sent-N.
+// Modifiers add up: 1 ⌘, 2 ⌃, 4 ⇧. A key code of -1 only clicks.
 import AppKit
 import CoreGraphics
 import Foundation
@@ -26,7 +27,9 @@ func waitFor(_ path: String, _ seconds: Double) -> Bool {
 }
 
 func mouse(_ type: CGEventType, _ p: CGPoint) {
-    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+    let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)
+    event?.flags = []
+    event?.post(tap: .cghidEventTap)
 }
 
 func testCopyIsFrontmost() -> Bool { NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
@@ -47,7 +50,7 @@ fm.createFile(atPath: log + ".clicked", contents: nil)
 for index in 0..<count {
     guard waitFor(log + ".keys-\(index)", 40), let data = fm.contents(atPath: log + ".keys-\(index)"),
           let k = try? JSONSerialization.jsonObject(with: data) as? [Int], k.count >= 2 else { print("no key \(index)"); exit(1) }
-    if k.count == 4 {
+    if k.count >= 4 {
         let target = CGPoint(x: k[2], y: k[3])
         guard testCopyOwnsPoint(target, pid: pid) else {
             print("the test copy's window isn't the one under the click point; stopping before key \(index + 1)")
@@ -55,8 +58,17 @@ for index in 0..<count {
             exit(2)
         }
         mouse(.mouseMoved, target); usleep(150_000)
-        mouse(.leftMouseDown, target); usleep(80_000)
-        mouse(.leftMouseUp, target); usleep(700_000)
+        for click in 1...(k.count >= 5 ? max(1, k[4]) : 1) {
+            for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: target, mouseButton: .left)
+                event?.setIntegerValueField(.mouseEventClickState, value: Int64(click))
+                event?.flags = []   // not the ⌃ or ⇧ of an earlier key (a ⌃-click opens the context menu)
+                event?.post(tap: .cghidEventTap)
+                usleep(60_000)
+            }
+            usleep(60_000)
+        }
+        usleep(700_000)
         if let wid = try? String(contentsOfFile: log + ".wid", encoding: .utf8) {
             let shot = Process()
             shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -70,7 +82,15 @@ for index in 0..<count {
         fm.createFile(atPath: log + ".aborted", contents: nil)
         exit(2)
     }
-    let flags: CGEventFlags = k[1] == 1 ? .maskCommand : []
+    guard k[0] >= 0 else {
+        fm.createFile(atPath: log + ".sent-\(index)", contents: nil)
+        print("click \(index + 1) sent")
+        continue
+    }
+    var flags: CGEventFlags = []
+    if k[1] & 1 != 0 { flags.insert(.maskCommand) }
+    if k[1] & 2 != 0 { flags.insert(.maskControl) }
+    if k[1] & 4 != 0 { flags.insert(.maskShift) }
     for down in [true, false] {
         let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(k[0]), keyDown: down)
         event?.flags = flags
