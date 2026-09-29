@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.27</title>
-      <pubDate>Tue, 29 Sep 2026 16:05:39 +0000</pubDate>
-      <sparkle:version>30</sparkle:version>
-      <sparkle:shortVersionString>0.2.27</sparkle:shortVersionString>
+      <title>Blit 0.2.28</title>
+      <pubDate>Tue, 29 Sep 2026 22:31:32 +0000</pubDate>
+      <sparkle:version>31</sparkle:version>
+      <sparkle:shortVersionString>0.2.28</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>While a transfer runs into a folder, only the files it's moving show a status after their names; the files already there no longer say queued.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.27.zip" type="application/octet-stream" sparkle:edSignature="od2osIwLt3+BYjZlsBLp5i5YC9tBHF7gp4NBCg9B7numeg5hyD+jv4rUhy4cXltSpaqyqYSdO7DDp0HFrjNvDA==" length="5664289" />
+      <description><![CDATA[<p>Dragging a seedbox file is more robust: Finder and other apps now refuse it instead of receiving a stray data file. The tab bar no longer checks folders on disk while a transfer runs, so a sleeping NAS can't stall the window.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.28.zip" type="application/octet-stream" sparkle:edSignature="4FWzaH0jY1o/voIgYa3cI2isRGOGwQDiji1UKhue1OIurh50IJEyAFQjrArUKJJheuzYgNMQQ4+wxfck5mgpDg==" length="5667486" />
     </item>
   </channel>
 </rss>
