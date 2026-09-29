@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.26</title>
-      <pubDate>Tue, 29 Sep 2026 06:23:40 +0000</pubDate>
-      <sparkle:version>29</sparkle:version>
-      <sparkle:shortVersionString>0.2.26</sparkle:shortVersionString>
+      <title>Blit 0.2.27</title>
+      <pubDate>Tue, 29 Sep 2026 16:05:39 +0000</pubDate>
+      <sparkle:version>30</sparkle:version>
+      <sparkle:shortVersionString>0.2.27</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Select several files by dragging: press on the date, size or blank part of a row and drag up or down, as in Finder. A drag that starts on a file's icon or name still moves the files.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.26.zip" type="application/octet-stream" sparkle:edSignature="0Z3U2bX9VeZi2cZggmV1LOGj8LlimDqCtqE4hreZrusTUvpkJlZf2XC4k7kxte7FfWu4lGOY0zEoeZ0Qq29pDQ==" length="5663683" />
+      <description><![CDATA[<p>While a transfer runs into a folder, only the files it's moving show a status after their names; the files already there no longer say queued.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.27.zip" type="application/octet-stream" sparkle:edSignature="od2osIwLt3+BYjZlsBLp5i5YC9tBHF7gp4NBCg9B7numeg5hyD+jv4rUhy4cXltSpaqyqYSdO7DDp0HFrjNvDA==" length="5664289" />
     </item>
   </channel>
 </rss>
