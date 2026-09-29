@@ -487,17 +487,24 @@ struct FileListView: View {
     /// the Desktop take); every row carries Blit's payload, which Blit's own
     /// drop targets read first.
     private func dragProvider(for item: FileItem) -> NSItemProvider {
-        // Grabbing a row that isn't selected drags just that row, as in Finder.
-        // (The table also asks for the rows still selected from before, which
-        // then went along: a file dragged onto a favorite took a folder with it.)
         #if DEBUG
         UITestHarness.dropTrail.append("provider for \(item.name) · grabbed \(itemUnderPointer()?.name ?? "none") · selection \(browser.selectedItems.map(\.name))")
         #endif
-        if let grabbed = itemUnderPointer(), !browser.selection.contains(grabbed.id) {
-            guard grabbed.id == item.id else { return NSItemProvider() }
-            browser.selection = [grabbed.id]
+        // What's dragged, worked out without touching the selection (changing
+        // it while the drag starts spoiled the drag for Finder): grabbing a row
+        // that isn't selected drags just that row, as in Finder; otherwise the
+        // selection goes. The table also asks for rows still selected from
+        // before; those don't come along.
+        let grabbed = itemUnderPointer()
+        let dragged: [FileItem]
+        if let grabbed, !browser.selection.contains(grabbed.id) {
+            dragged = [grabbed]
+        } else {
+            dragged = browser.selection.contains(item.id) ? browser.selectedItems : [item]
         }
-        let payload = payload(for: item)
+        guard dragged.contains(where: { $0.id == item.id }) else { return NSItemProvider() }
+        let payload = TransferPayload(locations: dragged.map(\.location), folders: dragged.filter(\.isDirectory).map(\.location),
+                                      primary: item.location)
         DragContents.started(payload)   // runs when the drag begins
         let provider = NSItemProvider()
         if let url = item.location.localURL {
