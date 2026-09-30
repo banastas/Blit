@@ -238,17 +238,8 @@ struct FileListView: View {
         .onDrop(of: [.blitLocations, .fileURL], delegate: ListDropDelegate(
             itemUnderPointer: { itemUnderPointer() },
             selection: browser.selection,
-            onTarget: { folder, targeted in
-                dropHighlight.set(folder: folder, targeted: targeted)
-            },
-            onDrop: { providers, item, copy in
-                perform(providers, onto: item, copy: copy)
-                // A drag update can still arrive after the drop and light the
-                // folder again: clear once more when the drag has settled.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    dropHighlight.set(folder: nil, targeted: false)
-                }
-            }))
+            highlight: dropHighlight,
+            onDrop: { providers, item, copy in perform(providers, onto: item, copy: copy) }))
         .overlay {
             // The whole list outlines only when the drop goes into this folder.
             DropListOutline(highlight: dropHighlight)
@@ -519,16 +510,82 @@ struct FileListView: View {
     }
 }
 
-/// Where a drag over a file list would drop.
+/// Where a drag over a file list would drop, shown only while it's over it.
 @MainActor
 @Observable
 final class DropHighlight {
     private(set) var folder: BrowseLocation?
     private(set) var listTargeted = false
+    /// A drop happened and no drag has come in since. macOS can send one more
+    /// "drag moved" after the drop; it once lit the outline again after the
+    /// clear, and nothing cleared it (it stayed, through pane switches).
+    @ObservationIgnored private var dropTime: Date?
+    /// Safety net: a drop target means something only while a button is held.
+    @ObservationIgnored private var watchdog: Timer?
+    @ObservationIgnored private var idleChecks = 0
 
-    func set(folder: BrowseLocation?, targeted: Bool) {
+    #if DEBUG
+    /// Every list's highlight, for the drag tests.
+    static let all = NSHashTable<DropHighlight>.weakObjects()
+    static var anyShowing: Bool { all.allObjects.contains { $0.listTargeted || $0.folder != nil } }
+    init() { Self.all.add(self) }
+    #endif
+
+    /// A drag came into the list.
+    func entered(folder: BrowseLocation?) {
+        dropTime = nil
+        show(folder)
+    }
+
+    /// It moved over the list (ignored once it has dropped).
+    func moved(folder: BrowseLocation?) {
+        if let dropTime {
+            #if DEBUG
+            UITestHarness.dropTrail.append("late update ignored +\(Int(Date().timeIntervalSince(dropTime) * 1000)) ms")
+            #endif
+            return
+        }
+        show(folder)
+    }
+
+    func exited() { clear() }
+
+    func dropped() {
+        dropTime = Date()
+        clear()
+    }
+
+    private func show(_ folder: BrowseLocation?) {
         if self.folder != folder { self.folder = folder }
-        if listTargeted != targeted { listTargeted = targeted }
+        if !listTargeted { listTargeted = true }
+        startWatchdog()
+    }
+
+    private func clear() {
+        if folder != nil { folder = nil }
+        if listTargeted { listTargeted = false }
+        watchdog?.invalidate()
+        watchdog = nil
+    }
+
+    /// Clears the highlight if no mouse button has been down for half a second.
+    private func startWatchdog() {
+        idleChecks = 0
+        guard watchdog == nil else { return }
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.idleChecks = NSEvent.pressedMouseButtons == 0 ? self.idleChecks + 1 : 0
+                if self.idleChecks >= 2 {
+                    #if DEBUG
+                    UITestHarness.dropTrail.append("highlight cleared: no button down")
+                    #endif
+                    self.clear()
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        watchdog = timer
     }
 }
 
@@ -566,7 +623,7 @@ private struct DropFolderMark: View {
 private struct ListDropDelegate: DropDelegate {
     let itemUnderPointer: () -> FileItem?
     let selection: Set<FileItem.ID>
-    let onTarget: (BrowseLocation?, Bool) -> Void
+    let highlight: DropHighlight
     let onDrop: ([NSItemProvider], FileItem?, Bool) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -581,14 +638,14 @@ private struct ListDropDelegate: DropDelegate {
         #if DEBUG
         UITestHarness.dropTrail.append("entered")
         #endif
-        update(info)
+        highlight.entered(folder: folder(info))
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         #if DEBUG
         UITestHarness.dropTrail.append("updated")
         #endif
-        update(info)
+        highlight.moved(folder: folder(info))
         return DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
     }
 
@@ -596,7 +653,7 @@ private struct ListDropDelegate: DropDelegate {
         #if DEBUG
         UITestHarness.dropTrail.append("exited")
         #endif
-        onTarget(nil, false)
+        highlight.exited()
     }
 
     func performDrop(info: DropInfo) -> Bool {
@@ -605,18 +662,18 @@ private struct ListDropDelegate: DropDelegate {
         #endif
         let item = itemUnderPointer()
         let copy = NSEvent.modifierFlags.contains(.option)
-        onTarget(nil, false)
+        highlight.dropped()
         onDrop(info.itemProviders(for: [.blitLocations, .fileURL]), item, copy)
         return true
     }
 
-    private func update(_ info: DropInfo) {
-        // A folder being dragged from this list can't take itself.
+    /// The folder row the drag is over, if it would take the drop (a folder
+    /// being dragged from this list can't take itself).
+    private func folder(_ info: DropInfo) -> BrowseLocation? {
         let dragged = info.hasItemsConforming(to: [.blitLocations])
-        let folder = itemUnderPointer().flatMap { item in
+        return itemUnderPointer().flatMap { item in
             item.isDirectory && !(dragged && selection.contains(item.id)) ? item.location : nil
         }
-        onTarget(folder, true)
     }
 }
 

@@ -2796,7 +2796,9 @@ enum UITestHarness {
             lines.append("after release: stall \(String(format: "%.1f", longest)) s · drop performed \(UITestHarness.dropTrail.contains { $0.hasPrefix("perform") }) · asked \(ConflictPrompt.lastAsked.map { "\($0.count) conflict(s)" } ?? "no") · trail \(UITestHarness.dropTrail.filter { !$0.hasPrefix("updated") })")
             for second in 1...10 {
                 try? await Task.sleep(for: .seconds(1))
-                if second % 5 == 0 { lines.append("heartbeat +\(second) s · longest stall \(String(format: "%.1f", longest)) s") }
+                if second % 5 == 0 {
+                    lines.append("heartbeat +\(second) s · longest stall \(String(format: "%.1f", longest)) s · a drop highlight showing \(DropHighlight.anyShowing) · \(UITestHarness.dropTrail.filter { $0.hasPrefix("late") || $0.hasPrefix("highlight") })")
+                }
             }
             ConflictPrompt.testAnswer = nil
             lines.append("done")
