@@ -49,6 +49,8 @@ final class PaneTab: Identifiable {
             return servers.server(location.serverID)?.displayName ?? "Server"
         }
         if case .local(let url) = location, url.path == "/" { return "Macintosh HD" }
+        if case .local(let url) = location, let cloud = CloudFolders.folder(containing: url),
+           cloud.url.path == url.standardizedFileURL.path { return cloud.name }
         return location.lastComponent
     }
 }

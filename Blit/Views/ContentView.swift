@@ -290,6 +290,9 @@ struct ContentView: View {
         for drive in sidebar.drives {
             add(.local(drive.url), drive.name, drive.url.path, drive.isInternal ? "internaldrive" : "externaldrive", .drive)
         }
+        for folder in sidebar.cloudFolders {
+            add(.local(folder.url), folder.name, folder.host ?? folder.name, folder.symbol, .drive)
+        }
         for share in sidebar.networkShares {
             add(.local(share.url), share.name, "\(share.host ?? "Network") · \(share.url.path)", "externaldrive.connected.to.line.below", .nas)
         }
@@ -431,6 +434,7 @@ struct ContentView: View {
             sidebar.favorites.contains { $0.location == location }
                 || servers.browsable.contains { $0.startLocation == location }
                 || sidebar.drives.contains { BrowseLocation.local($0.url) == location }
+                || sidebar.cloudFolders.contains { BrowseLocation.local($0.url) == location }
                 || sidebar.networkShares.contains { BrowseLocation.local($0.url) == location }
         } ?? false
         selection = listed ? location : nil
@@ -439,6 +443,7 @@ struct ContentView: View {
     private func paneSymbol(_ model: BrowserModel) -> String {
         guard let current = model.current else { return "folder" }
         if current.serverID != nil { return "server.rack" }
+        if let url = current.localURL, let cloud = CloudFolders.folder(containing: url) { return cloud.symbol }
         if let url = current.localURL, VolumeKinds.isNetwork(url) { return "externaldrive.connected.to.line.below" }
         return "folder"
     }
@@ -450,6 +455,7 @@ struct ContentView: View {
         guard let current = model.current else { return nil }
         if case .remote(let id, _) = current { return servers.server(id)?.displayName ?? "Server" }
         guard let url = current.localURL else { return nil }
+        if let cloud = CloudFolders.folder(containing: url) { return cloud.name }
         let root = FreeSpace.volumeRoot(of: url)
         let volumeName = (root as NSString).lastPathComponent
         if VolumeKinds.isNetwork(url) {
@@ -600,6 +606,7 @@ struct ContentView: View {
         UITestHarness.runRowDragTestIfRequested()
         UITestHarness.runRowDragRealTestIfRequested()
         UITestHarness.runRemoteDragTestIfRequested(servers: servers, transfers: transfers)
+        UITestHarness.runCloudTestIfRequested(operations: operations, transfers: transfers)
         UITestHarness.renderProductImageIfRequested(transfers: transfers)
         UITestHarness.renderCardIfRequested(transfers: transfers)
         UITestHarness.runDemoShotIfRequested(sidebar: sidebar, transfers: transfers)

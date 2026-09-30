@@ -37,9 +37,17 @@ struct VolumeLocation: Identifiable, Hashable {
     var url: URL
     var name: String
     var isInternal: Bool
-    /// For network shares: the device serving it ("d1ll1N9eR"), from the mount.
+    /// For network shares: the device serving it ("d1ll1N9eR"), from the mount;
+    /// for a cloud folder, the account.
     var host: String?
+    /// iCloud Drive or a File Provider app's folder (CloudFolders), not a disk.
+    var isCloud = false
     var id: URL { url }
+
+    var symbol: String {
+        if isCloud { return url == CloudFolders.iCloudDrive ? "icloud" : "cloud" }
+        return isInternal ? "internaldrive" : "externaldrive"
+    }
 }
 
 /// A device on the network and the shares mounted from it.
@@ -67,6 +75,8 @@ final class SidebarModel {
     private(set) var favorites: [Favorite] = []
     private(set) var drives: [VolumeLocation] = []
     private(set) var networkShares: [VolumeLocation] = []
+    /// iCloud Drive and File Provider folders (Proton Drive…), listed with the drives.
+    private(set) var cloudFolders: [VolumeLocation] = []
     /// Network shares grouped by the device serving them.
     private(set) var networkDevices: [NetworkDevice] = []
     @ObservationIgnored private var models: [String: String] = [:]
@@ -81,7 +91,7 @@ final class SidebarModel {
         // available favorite, first external drive) sees the volumes; later
         // refreshes run off the main thread.
         let (local, network) = Self.scanVolumes()
-        apply(local: local, network: network, scan: volumeScan)
+        apply(local: local, network: network, cloud: CloudFolders.scan(), scan: volumeScan)
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didMountNotification, NSWorkspace.didUnmountNotification, NSWorkspace.didRenameVolumeNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -105,7 +115,8 @@ final class SidebarModel {
         let scan = volumeScan
         Task.detached(priority: .userInitiated) { [weak self] in
             let (local, network) = SidebarModel.scanVolumes()
-            await self?.apply(local: local, network: network, scan: scan)
+            let cloud = CloudFolders.scan()
+            await self?.apply(local: local, network: network, cloud: cloud, scan: scan)
         }
     }
 
@@ -135,14 +146,18 @@ final class SidebarModel {
     func showDemo(drives: [VolumeLocation], devices: [NetworkDevice], favorites: [BrowseLocation]) {
         volumeScan = .max
         self.drives = drives
+        cloudFolders = []   // the Mac's own iCloud and File Provider folders stay out of the picture
+        CloudFolders.roots = []
         networkDevices = devices
         networkShares = devices.flatMap(\.shares)
         self.favorites = favorites.map(Favorite.init(location:))
     }
     #endif
 
-    private func apply(local: [VolumeLocation], network: [VolumeLocation], scan: Int) {
+    private func apply(local: [VolumeLocation], network: [VolumeLocation], cloud: [VolumeLocation], scan: Int) {
         guard scan == volumeScan, volumeScan != .max else { return }
+        if cloudFolders != cloud { cloudFolders = cloud }
+        CloudFolders.roots = cloud
         // Boot volume first, then alphabetical.
         drives = local.sorted { ($0.url.path == "/" ? 0 : 1, $0.name) < ($1.url.path == "/" ? 0 : 1, $1.name) }
         networkShares = network.sorted { $0.name < $1.name }
@@ -194,7 +209,7 @@ final class SidebarModel {
 
     /// The volume a URL lives on, for the favorite's badge ("Media", "SSD").
     func volumeName(for url: URL) -> String? {
-        let all = drives + networkShares
+        let all = drives + networkShares + cloudFolders
         let match = all.filter { url.path == $0.url.path || url.path.hasPrefix($0.url.path == "/" ? "/" : $0.url.path + "/") }
             .max { $0.url.path.count < $1.url.path.count }
         return match?.name

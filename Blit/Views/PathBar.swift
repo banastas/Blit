@@ -60,6 +60,12 @@ struct PathBar: View {
         if let url = current.localURL, url.pathComponents.count >= 3, url.pathComponents[1] == "Volumes" {
             chain.removeAll { $0.0.localURL.map { $0.path == "/" || $0.path == "/Volumes" } ?? false }
         }
+        // A cloud folder starts at itself ("iCloud Drive › …"), not at Macintosh
+        // HD › Users › … › Library › Mobile Documents.
+        if let url = current.localURL, let cloud = CloudFolders.folder(containing: url),
+           let index = chain.firstIndex(where: { $0.0.localURL?.standardizedFileURL.path == cloud.url.path }) {
+            chain.removeSubrange((index + 1)...)
+        }
         return chain.reversed().map { location, isFolder in
             PathSegment(location: location, name: name(of: location), icon: icon(of: location, isFolder: isFolder),
                         isFolder: isFolder)
@@ -69,6 +75,9 @@ struct PathBar: View {
     private func name(of location: BrowseLocation) -> String {
         switch location {
         case .local(let url):
+            if let cloud = CloudFolders.folder(containing: url), cloud.url.path == url.standardizedFileURL.path {
+                return cloud.name
+            }
             let isVolume = url.path == "/" || url.deletingLastPathComponent().path == "/Volumes"
             if isVolume, let name = (try? url.resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName {
                 return name
@@ -187,7 +196,10 @@ private struct SelectionCount: View {
         let bytes = files.reduce(Int64(0)) { $0 + max($1.size, 0) }
         let folders = selected.count - files.count
         // The volume's free space: what you check before sending something over.
-        let free = browser.current?.localURL.flatMap { FreeSpace.shared.free(at: $0) }
+        // Not for a cloud folder: the Mac's free space would read as the cloud's.
+        let free = browser.current?.localURL.flatMap { url in
+            CloudFolders.folder(containing: url) == nil ? FreeSpace.shared.free(at: url) : nil
+        }
         let space = free.map { " · " + $0.formatted(.byteCount(style: .file)) + " free" } ?? ""
         Group {
             if selected.isEmpty {

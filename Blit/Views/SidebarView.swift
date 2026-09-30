@@ -96,10 +96,11 @@ struct SidebarView: View {
             }
 
             Section("Drives") {
-                ForEach(sidebar.drives) { drive in
-                    Label(drive.name, systemImage: drive.isInternal ? "internaldrive" : "externaldrive")
+                ForEach(sidebar.drives + sidebar.cloudFolders) { drive in
+                    Label(drive.name, systemImage: drive.symbol)
                         .transferTarget(.local(drive.url), name: drive.name, onTransfer: onTransfer)
                         .tag(SidebarRow.place(.local(drive.url)))
+                        .help(drive.isCloud ? (drive.host.map { "\(drive.name) · \($0)" } ?? drive.name) : drive.name)
                 }
             }
 
@@ -239,14 +240,15 @@ private struct TransferTarget: ViewModifier {
     let name: String
     let onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
     var onInsert: (([NSItemProvider], _ below: Bool) -> Void)?
-    @State private var zone: DropZone?
+    /// Where a drag over the row would drop (its own object: see DragHover).
+    @State private var hover = DragHover<DropZone>()
 
     func body(content: Content) -> some View {
         content
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .onDrop(of: [.blitLocations, .fileURL], delegate: RowDropDelegate(
-                takesFavorites: onInsert != nil, zone: $zone,
+                takesFavorites: onInsert != nil, hover: hover,
                 onDrop: { providers, zone in
                     switch zone {
                     case .into:
@@ -263,31 +265,40 @@ private struct TransferTarget: ViewModifier {
                 }))
             // Drawn inside the row: a sidebar row clips anything past its edges,
             // which hid the old outline (drawn 3 pt outside) entirely.
-            .background {
-                if zone == .into {
-                    RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.22)).padding(-2)
-                }
+            .background { SidebarDropMark(hover: hover, part: .fill) }
+            .overlay { SidebarDropMark(hover: hover, part: .outline) }
+            .overlay { SidebarDropMark(hover: hover, part: .line) }
+    }
+}
+
+/// A sidebar row's drop mark: the fill and marching outline for a drop into
+/// it, or Finder's line at its edge for "add as a favorite here".
+private struct SidebarDropMark: View {
+    enum Part { case fill, outline, line }
+    let hover: DragHover<DropZone>
+    let part: Part
+
+    var body: some View {
+        switch (part, hover.value) {
+        case (.fill, .into?):
+            RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.22)).padding(-2)
+        case (.outline, .into?):
+            PixelMarchingAnts(cell: 1.5).padding(.horizontal, -1).padding(.vertical, 0)
+        case (.line, let zone?) where zone != .into:
+            HStack(spacing: 0) {
+                // The text colour: macOS paints the row blue under a drag,
+                // which hid an accent-coloured line.
+                Circle().strokeBorder(Color.primary, lineWidth: 2).frame(width: 7, height: 7)
+                Rectangle().fill(Color.primary).frame(height: 2)
             }
-            .overlay {
-                if zone == .into {
-                    PixelMarchingAnts(cell: 1.5).padding(.horizontal, -1).padding(.vertical, 0)
-                }
-            }
-            // "Add as a favorite here": a line at the edge, as in Finder.
-            .overlay(alignment: zone == .below ? .bottom : .top) {
-                if zone == .above || zone == .below {
-                    HStack(spacing: 0) {
-                        // The text colour: macOS paints the row blue under a drag,
-                        // which hid an accent-coloured line.
-                        Circle().strokeBorder(Color.primary, lineWidth: 2).frame(width: 7, height: 7)
-                        Rectangle().fill(Color.primary).frame(height: 2)
-                    }
-                    // In the gap between rows, clear of the icon and name.
-                    .offset(y: zone == .below ? 4 : -4)
-                    .padding(.horizontal, -2)
-                    .allowsHitTesting(false)
-                }
-            }
+            // In the gap between rows, clear of the icon and name.
+            .offset(y: zone == .below ? 4 : -4)
+            .padding(.horizontal, -2)
+            .frame(maxHeight: .infinity, alignment: zone == .below ? .bottom : .top)
+            .allowsHitTesting(false)
+        default:
+            EmptyView()
+        }
     }
 }
 
@@ -295,7 +306,7 @@ enum DropZone { case above, into, below }
 
 private struct RowDropDelegate: DropDelegate {
     let takesFavorites: Bool
-    @Binding var zone: DropZone?
+    let hover: DragHover<DropZone>
     let onDrop: ([NSItemProvider], DropZone) -> Void
 
     func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.blitLocations, .fileURL]) }
@@ -332,26 +343,22 @@ private struct RowDropDelegate: DropDelegate {
         return nil
     }
 
-    func dropEntered(info: DropInfo) { zone = zone(for: info) }
+    func dropEntered(info: DropInfo) { hover.entered(zone(for: info)) }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        let now = zone(for: info)
-        if zone != now { zone = now }
+        hover.moved(zone(for: info))
         return DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
     }
 
-    func dropExited(info: DropInfo) { zone = nil }
+    func dropExited(info: DropInfo) { hover.exited() }
 
     func performDrop(info: DropInfo) -> Bool {
         let landed = zone(for: info)
         #if DEBUG
         UITestHarness.dropTrail.append("row drop at \(Self.pointerFractionInSidebarRow().map { String(format: "%.2f", $0) } ?? "?") → \(landed)")
         #endif
-        zone = nil
+        hover.dropped()
         onDrop(info.itemProviders(for: [.blitLocations, .fileURL]), landed)
-        // A late drag update can light the row again after the drop.
-        let binding = $zone
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { binding.wrappedValue = nil }
         return true
     }
 }
@@ -392,13 +399,13 @@ private struct FavoriteRow: View {
     /// The drive or share itself, when the favorite is a volume's top level.
     private var volume: VolumeLocation? {
         guard let url = favorite.location.localURL?.standardizedFileURL else { return nil }
-        return (sidebar.drives + sidebar.networkShares).first { $0.url.standardizedFileURL.path == url.path }
+        return (sidebar.drives + sidebar.networkShares + sidebar.cloudFolders).first { $0.url.standardizedFileURL.path == url.path }
     }
 
     private var symbol: String {
         guard let volume else { return "folder" }
         if sidebar.networkShares.contains(volume) { return "externaldrive.connected.to.line.below" }
-        return volume.isInternal ? "internaldrive" : "externaldrive"
+        return volume.symbol
     }
 
     /// The volume or server it lives on.

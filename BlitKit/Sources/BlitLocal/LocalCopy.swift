@@ -392,7 +392,11 @@ public func copy(
                         try FileManager.default.createDirectory(atPath: (final as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
                         events(.fileStarted(file))
                         var verification: CopyVerification?
-                        if options.allowClone, destinationDevice != nil, deviceID(file.path) == destinationDevice {
+                        // Not a file that's only in the cloud (iCloud Drive, Proton Drive…):
+                        // a clone of its placeholder would copy no data. Reading it
+                        // below downloads it.
+                        if options.allowClone, destinationDevice != nil, deviceID(file.path) == destinationDevice,
+                           !isDataless(file.path) {
                             // Same volume: APFS clone (PRD R3.8). Other file systems
                             // (SMB, HFS+, exFAT) can't clone; they fall through to a copy.
                             unlink(part)
@@ -485,6 +489,14 @@ private func checkUnchanged(_ file: LocalFile, part: String) throws {
     guard copied == file.size else {
         throw CopyMismatch(description: "copy is \(copied ?? 0) bytes, expected \(file.size)")
     }
+}
+
+/// Whether the file at `path` is only in the cloud: a File Provider placeholder
+/// (iCloud Drive, Proton Drive…) whose data hasn't been downloaded.
+func isDataless(_ path: String) -> Bool {
+    var info = stat()
+    guard lstat(path, &info) == 0 else { return false }
+    return info.st_flags & 0x4000_0000 != 0   // SF_DATALESS
 }
 
 private func deviceID(_ path: String) -> dev_t? {

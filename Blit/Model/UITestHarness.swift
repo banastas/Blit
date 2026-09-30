@@ -10,6 +10,7 @@ import AVFoundation
 import BlitLocal
 import BlitRemote
 import BlitSFTP
+import CryptoKit
 import SwiftUI
 
 @MainActor
@@ -1700,7 +1701,7 @@ enum UITestHarness {
                     ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).isEmpty ? nil : "\(name): \(((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).sorted())"
                 }
                 lines.append("   trail \(UITestHarness.dropTrail)")
-                lines.append("drag \(index + 1) (\(step.label)): stall \(String(format: "%.1f", longest)) s · favorites \(favorites) · \(places.joined(separator: " · "))")
+                lines.append("drag \(index + 1) (\(step.label)): stall \(String(format: "%.1f", longest)) s · favorites \(favorites) · \(places.joined(separator: " · ")) · still lit \(DragHoverRegistry.anyShowing) · \(UITestHarness.dropTrail.filter { $0.hasPrefix("late") || $0.hasPrefix("highlight") })")
             }
             try? fm.removeItem(at: root)
             lines.append("done")
@@ -2797,10 +2798,106 @@ enum UITestHarness {
             for second in 1...10 {
                 try? await Task.sleep(for: .seconds(1))
                 if second % 5 == 0 {
-                    lines.append("heartbeat +\(second) s · longest stall \(String(format: "%.1f", longest)) s · a drop highlight showing \(DropHighlight.anyShowing) · \(UITestHarness.dropTrail.filter { $0.hasPrefix("late") || $0.hasPrefix("highlight") })")
+                    lines.append("heartbeat +\(second) s · longest stall \(String(format: "%.1f", longest)) s · a drop highlight showing \(DragHoverRegistry.anyShowing) · \(UITestHarness.dropTrail.filter { $0.hasPrefix("late") || $0.hasPrefix("highlight") })")
                 }
             }
             ConflictPrompt.testAnswer = nil
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitCloudTest <log>`: iCloud Drive and File Provider folders (Proton
+    /// Drive…) with real files, in a folder "Blit test" in each (removed after):
+    /// the pane's title, a verified copy in, the copy made online-only ("Remove
+    /// Download"), then copied back out (a clone would copy the placeholder, so
+    /// Blit reads it, which downloads it) and moved out, each checked by SHA-256.
+    static func runCloudTestIfRequested(operations: FileOperations, transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitCloudTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let local = fm.temporaryDirectory.appendingPathComponent("blit-cloud-test")
+            try? fm.removeItem(at: local)
+            try? fm.createDirectory(at: local.appendingPathComponent("back"), withIntermediateDirectories: true)
+            // Two files of random data (a clone of a placeholder would read as zeros or fail).
+            var names: [String] = []
+            for name in ["copy-me.bin", "move-me.bin"] {
+                var bytes = [UInt8](repeating: 0, count: 3 << 20)
+                for i in bytes.indices { bytes[i] = UInt8.random(in: 0...255) }
+                fm.createFile(atPath: local.appendingPathComponent(name).path, contents: Data(bytes))
+                names.append(name)
+            }
+            func sha(_ url: URL) async -> String {
+                await Task.detached {
+                    guard let data = try? Data(contentsOf: url) else { return "unreadable" }
+                    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined().prefix(12).description
+                }.value
+            }
+            @MainActor func waitForJobs() async -> String {
+                for _ in 0..<600 {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    let busy = transfers.jobs.contains { $0.isActive || $0.status == .queued || $0.status == .preparing }
+                    if !busy { break }
+                }
+                return transfers.jobs.last.map { "\($0.status) · \($0.filesVerified)/\($0.fileCount) verified" } ?? "no job"
+            }
+            let originals = [await sha(local.appendingPathComponent(names[0])), await sha(local.appendingPathComponent(names[1]))]
+            lines.append("cloud folders: \(CloudFolders.roots.map(\.name))")
+            for cloud in CloudFolders.roots {
+                let test = cloud.url.appendingPathComponent("Blit test")
+                lines.append("== \(cloud.name)")
+                // The first access may ask the user for permission: wait for it.
+                var created = false
+                for _ in 0..<120 {
+                    if (try? fm.createDirectory(at: test, withIntermediateDirectories: true)) != nil { created = true; break }
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+                guard created else { lines.append("couldn't create \(test.lastPathComponent) (permission?)"); continue }
+                if let browser = PaneTabs.shared.current?.first {
+                    browser.open(.local(cloud.url))
+                    try? await Task.sleep(for: .seconds(1.5))
+                    lines.append("pane title \(browser.title) · rows \(browser.rows.count)")
+                }
+                // 1. A copy in (same disk: a clone).
+                let result1 = await operations.place(names.map { .local(local.appendingPathComponent($0)) }, into: .local(test),
+                                                     destinationName: "Blit test", mode: .copy)
+                let state1 = await waitForJobs()
+                let in0 = await sha(test.appendingPathComponent(names[0])), in1 = await sha(test.appendingPathComponent(names[1]))
+                lines.append("copy in: \(state1) · \(result1 ?? "no message") · hashes match \(in0 == originals[0] && in1 == originals[1])")
+                // 2. Online-only: "Remove Download" (the provider has to have uploaded them first).
+                var evicted: [Bool] = []
+                for name in names {
+                    let url = test.appendingPathComponent(name)
+                    var done = false
+                    for _ in 0..<60 {
+                        do { try fm.evictUbiquitousItem(at: url) } catch {}
+                        try? await Task.sleep(for: .milliseconds(500))
+                        if CloudFolders.isDataless(url.path) { done = true; break }
+                    }
+                    evicted.append(done)
+                }
+                lines.append("made online-only: \(evicted)")
+                // 3. Copy the first back out, and move the second out.
+                let result3 = await operations.place([.local(test.appendingPathComponent(names[0]))], into: .local(local.appendingPathComponent("back")),
+                                                     destinationName: "back", mode: .copy)
+                let state3 = await waitForJobs()
+                let out0 = await sha(local.appendingPathComponent("back/\(names[0])"))
+                lines.append("copy out: \(state3) · \(result3 ?? "no message") · data intact \(out0 == originals[0])")
+                try? fm.removeItem(at: local.appendingPathComponent("back/\(names[1])"))
+                let result4 = await operations.place([.local(test.appendingPathComponent(names[1]))], into: .local(local.appendingPathComponent("back")),
+                                                     destinationName: "back", mode: .move)
+                let state4 = await waitForJobs()
+                let out1 = await sha(local.appendingPathComponent("back/\(names[1])"))
+                lines.append("move out: \(state4) · \(result4 ?? "no message") · data intact \(out1 == originals[1]) · gone from \(cloud.name) \(!fm.fileExists(atPath: test.appendingPathComponent(names[1]).path))")
+                // Tidy up: the test folder and the copies brought back.
+                do { try fm.removeItem(at: test); lines.append("removed Blit test from \(cloud.name)") }
+                catch { lines.append("couldn't remove Blit test: \(error.localizedDescription)") }
+                for name in names { try? fm.removeItem(at: local.appendingPathComponent("back/\(name)")) }
+            }
+            try? fm.removeItem(at: local)
             lines.append("done")
         }
     }

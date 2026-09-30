@@ -1751,6 +1751,12 @@ final class TransferManager {
         options.skipExistingSameSize = true
         options.existsRule = job.existsRule
         options.verify = job.verifies
+        // A move removes each source only once its copy is verified by SHA-256,
+        // and a clone isn't hashed: a move never clones. (Moves within one disk
+        // are renames and don't come here; a file only in the cloud does, and
+        // its provider can download it again in the meantime, which let it
+        // clone and stay behind.)
+        options.allowClone = !job.deleteSources
         if !job.verifies { job.note("VERIFY OFF · FILES ARE SIZE-CHECKED ONLY (SETTINGS › VERIFY FILES)") }
         let stopFlag = job.stopFlag
         options.shouldStop = { stopFlag.isSet }

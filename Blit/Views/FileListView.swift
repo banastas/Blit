@@ -26,7 +26,7 @@ struct FileListView: View {
     /// the rows' marks: as state of this view, every change rebuilt the list and
     /// its drop handler mid-drag, and a quick drop let go just then was lost and
     /// left the drag stuck (the window took no clicks until force quit).
-    @State private var dropHighlight = DropHighlight()
+    @State private var dropHighlight = DragHover<ListDrop>()
     @FocusState private var tableFocused: Bool
     @AppStorage("showPathBar") private var showPathBar = true
     /// Column widths, order and visibility (right-click a column header), kept per window.
@@ -510,91 +510,18 @@ struct FileListView: View {
     }
 }
 
-/// Where a drag over a file list would drop, shown only while it's over it.
-@MainActor
-@Observable
-final class DropHighlight {
-    private(set) var folder: BrowseLocation?
-    private(set) var listTargeted = false
-    /// A drop happened and no drag has come in since. macOS can send one more
-    /// "drag moved" after the drop; it once lit the outline again after the
-    /// clear, and nothing cleared it (it stayed, through pane switches).
-    @ObservationIgnored private var dropTime: Date?
-    /// Safety net: a drop target means something only while a button is held.
-    @ObservationIgnored private var watchdog: Timer?
-    @ObservationIgnored private var idleChecks = 0
-
-    #if DEBUG
-    /// Every list's highlight, for the drag tests.
-    static let all = NSHashTable<DropHighlight>.weakObjects()
-    static var anyShowing: Bool { all.allObjects.contains { $0.listTargeted || $0.folder != nil } }
-    init() { Self.all.add(self) }
-    #endif
-
-    /// A drag came into the list.
-    func entered(folder: BrowseLocation?) {
-        dropTime = nil
-        show(folder)
-    }
-
-    /// It moved over the list (ignored once it has dropped).
-    func moved(folder: BrowseLocation?) {
-        if let dropTime {
-            #if DEBUG
-            UITestHarness.dropTrail.append("late update ignored +\(Int(Date().timeIntervalSince(dropTime) * 1000)) ms")
-            #endif
-            return
-        }
-        show(folder)
-    }
-
-    func exited() { clear() }
-
-    func dropped() {
-        dropTime = Date()
-        clear()
-    }
-
-    private func show(_ folder: BrowseLocation?) {
-        if self.folder != folder { self.folder = folder }
-        if !listTargeted { listTargeted = true }
-        startWatchdog()
-    }
-
-    private func clear() {
-        if folder != nil { folder = nil }
-        if listTargeted { listTargeted = false }
-        watchdog?.invalidate()
-        watchdog = nil
-    }
-
-    /// Clears the highlight if no mouse button has been down for half a second.
-    private func startWatchdog() {
-        idleChecks = 0
-        guard watchdog == nil else { return }
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.idleChecks = NSEvent.pressedMouseButtons == 0 ? self.idleChecks + 1 : 0
-                if self.idleChecks >= 2 {
-                    #if DEBUG
-                    UITestHarness.dropTrail.append("highlight cleared: no button down")
-                    #endif
-                    self.clear()
-                }
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        watchdog = timer
-    }
+/// Where a drop on a file list would go: the list's own folder, or a folder row.
+enum ListDrop: Equatable {
+    case list
+    case folder(BrowseLocation)
 }
 
 /// The whole list's drop outline (a view of its own, so only it redraws).
 private struct DropListOutline: View {
-    let highlight: DropHighlight
+    let highlight: DragHover<ListDrop>
 
     var body: some View {
-        if highlight.listTargeted, highlight.folder == nil {
+        if highlight.value == .list {
             PixelMarchingAnts(cell: 2).padding(3)
         }
     }
@@ -603,12 +530,12 @@ private struct DropListOutline: View {
 /// A folder row's drop mark: the fill behind it, or the marching outline.
 private struct DropFolderMark: View {
     enum Part { case fill, outline }
-    let highlight: DropHighlight
+    let highlight: DragHover<ListDrop>
     let location: BrowseLocation
     let part: Part
 
     var body: some View {
-        if highlight.folder == location {
+        if highlight.value == .folder(location) {
             switch part {
             case .fill: RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(0.22)).padding(-2)
             case .outline: PixelMarchingAnts(cell: 1.5).padding(.horizontal, -1)
@@ -623,7 +550,7 @@ private struct DropFolderMark: View {
 private struct ListDropDelegate: DropDelegate {
     let itemUnderPointer: () -> FileItem?
     let selection: Set<FileItem.ID>
-    let highlight: DropHighlight
+    let highlight: DragHover<ListDrop>
     let onDrop: ([NSItemProvider], FileItem?, Bool) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -638,14 +565,14 @@ private struct ListDropDelegate: DropDelegate {
         #if DEBUG
         UITestHarness.dropTrail.append("entered")
         #endif
-        highlight.entered(folder: folder(info))
+        highlight.entered(target(info))
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         #if DEBUG
         UITestHarness.dropTrail.append("updated")
         #endif
-        highlight.moved(folder: folder(info))
+        highlight.moved(target(info))
         return DropProposal(operation: NSEvent.modifierFlags.contains(.option) ? .copy : .move)
     }
 
@@ -667,13 +594,15 @@ private struct ListDropDelegate: DropDelegate {
         return true
     }
 
-    /// The folder row the drag is over, if it would take the drop (a folder
-    /// being dragged from this list can't take itself).
-    private func folder(_ info: DropInfo) -> BrowseLocation? {
+    /// Where the drop would go: the folder row the drag is over, if it would
+    /// take it (a folder being dragged from this list can't take itself), or
+    /// the list's own folder.
+    private func target(_ info: DropInfo) -> ListDrop {
         let dragged = info.hasItemsConforming(to: [.blitLocations])
-        return itemUnderPointer().flatMap { item in
+        let folder = itemUnderPointer().flatMap { item in
             item.isDirectory && !(dragged && selection.contains(item.id)) ? item.location : nil
         }
+        return folder.map(ListDrop.folder) ?? .list
     }
 }
 

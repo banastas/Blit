@@ -233,7 +233,10 @@ final class FileOperations {
             let volume = Self.volumeID(folder)
             let sameVolume = local.filter { url in
                 guard let volume, let other = Self.volumeID(url) else { return false }
-                return other.isEqual(volume)
+                // A file only in the cloud (iCloud Drive, Proton Drive…) goes as a
+                // verified copy: renaming its placeholder out of the provider's
+                // folder can fail, and reading it downloads it.
+                return other.isEqual(volume) && !CloudFolders.isDataless(url.path)
             }
             local.removeAll { url in sameVolume.contains(url) }
             if !sameVolume.isEmpty {
