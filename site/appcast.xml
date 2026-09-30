@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.29</title>
-      <pubDate>Tue, 29 Sep 2026 23:41:25 +0000</pubDate>
-      <sparkle:version>32</sparkle:version>
-      <sparkle:shortVersionString>0.2.29</sparkle:shortVersionString>
+      <title>Blit 0.2.30</title>
+      <pubDate>Wed, 30 Sep 2026 00:13:26 +0000</pubDate>
+      <sparkle:version>33</sparkle:version>
+      <sparkle:shortVersionString>0.2.30</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Fixes the freeze when you quickly drag a file from one pane to the other: the drop now always lands, and the window keeps responding. A quick drag also always takes the file you pressed, not one it passed over.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.29.zip" type="application/octet-stream" sparkle:edSignature="noxEjZ404UPblg4qOGzs8lRZlsQLy4lOolA1lPiSfHttVK+kueWGcYqzClDv+99PwADIqT2ctQ6aYTrmoqxXAg==" length="5671591" />
+      <description><![CDATA[<p>The dashed drop outline no longer stays on a list after you drop files onto it.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.30.zip" type="application/octet-stream" sparkle:edSignature="Eoc2TiXde/oNMFIYekOaudmeI5+9BHEDSUycO+wgSXNSy0KIDHAPhrk/7d61KIMdQCfWfPdoYZG4CW4oU+ZrBA==" length="5671840" />
     </item>
   </channel>
 </rss>
