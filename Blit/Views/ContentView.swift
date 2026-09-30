@@ -592,6 +592,7 @@ struct ContentView: View {
         UITestHarness.runNotificationTextTestIfRequested()
         UITestHarness.runTrashTestIfRequested(transfers: transfers)
         UITestHarness.runOpenWithTestIfRequested()
+        UITestHarness.runOpenWithMenuTestIfRequested()
         UITestHarness.runMediaExtensionTestIfRequested()
         UITestHarness.runDropTestIfRequested()
         UITestHarness.runSidebarDropTestIfRequested(sidebar: sidebar)

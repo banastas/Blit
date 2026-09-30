@@ -2902,6 +2902,76 @@ enum UITestHarness {
         }
     }
 
+    /// The Open With submenu the menu test saw.
+    static var openWithSubmenu: NSMenu?
+
+    /// `-BlitOpenWithMenuTest <log>`: right-click (posted to this copy's own
+    /// queue: the pointer never moves) a video file and read the Open With
+    /// submenu: each app's title and whether it shows an icon.
+    static func runOpenWithMenuTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitOpenWithMenuTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let folder = fm.temporaryDirectory.appendingPathComponent("blit-open-with-menu")
+            try? fm.removeItem(at: folder)
+            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            fm.createFile(atPath: folder.appendingPathComponent("clip.mp4").path, contents: Data(count: 1024))
+            guard let window = BrowserModel.activeWindow, let browser = PaneTabs.shared.current?.first else { return lines.append("no window") }
+            browser.open(.local(folder))
+            try? await Task.sleep(for: .seconds(1.5))
+            var tables: [NSTableView] = []
+            func collect(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                view.subviews.forEach(collect)
+            }
+            if let content = window.contentView { collect(content) }
+            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }),
+                  let row = browser.rows.firstIndex(where: { $0.name == "clip.mp4" }) else { return lines.append("no row") }
+            var described: [String] = []
+            let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { note in
+                nonisolated(unsafe) let menu = note.object as? NSMenu
+                MainActor.assumeIsolated {
+                    guard let items = menu?.items, described.isEmpty else { return }
+                    let openWith = items.first { $0.title == "Open With" }
+                    UITestHarness.openWithSubmenu = openWith?.submenu
+                    described = openWith?.submenu?.items.map { item in
+                        item.isSeparatorItem ? "—" : "\(item.title)\(item.image.map { " [icon \(Int($0.size.width))×\(Int($0.size.height))]" } ?? " [no icon]")"
+                    } ?? ["no Open With item (menu: \(items.map(\.title)))"]
+                    let timer = Timer(timeInterval: 0.3, repeats: false) { _ in MainActor.assumeIsolated { menu?.cancelTrackingWithoutAnimation() } }
+                    RunLoop.main.add(timer, forMode: .eventTracking)
+                }
+            }
+            defer { NotificationCenter.default.removeObserver(observer) }
+            let rect = table.rect(ofRow: row)
+            let point = table.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+            if let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                NSApp.postEvent(event, atStart: false)
+            }
+            try? await Task.sleep(for: .seconds(2))
+            lines += described.isEmpty ? ["no menu opened"] : described
+            // A picture: the same submenu shown on its own (the shell photographs
+            // this copy's menu window when <log>.menu appears, then writes <log>.shot).
+            if let submenu = UITestHarness.openWithSubmenu {
+                let copy = submenu.copy() as! NSMenu
+                Task { @MainActor in
+                    for _ in 0..<60 where !fm.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+                    copy.cancelTrackingWithoutAnimation()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    try? "ready".write(toFile: logPath + ".menu", atomically: true, encoding: .utf8)
+                }
+                copy.popUp(positioning: nil, at: NSPoint(x: 200, y: 400), in: window.contentView)
+            }
+            try? fm.removeItem(at: folder)
+            lines.append("done")
+        }
+    }
+
     /// `-BlitLaneTest <log>`: the copy-waits-for-download rule of the two lanes.
     static func runLaneTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitLaneTest") else { return }

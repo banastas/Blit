@@ -96,6 +96,8 @@ struct OpenWithMenu: View {
             OpenWith.open(urls, with: app.url, onProblem: onProblem)
         } label: {
             Label { Text(title) } icon: { Image(nsImage: app.icon) }
+                // Menus drop a label's icon unless asked for both, as Finder shows them.
+                .labelStyle(.titleAndIcon)
         }
     }
 }
