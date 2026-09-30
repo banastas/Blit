@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.30</title>
-      <pubDate>Wed, 30 Sep 2026 00:13:26 +0000</pubDate>
-      <sparkle:version>33</sparkle:version>
-      <sparkle:shortVersionString>0.2.30</sparkle:shortVersionString>
+      <title>Blit 0.2.31</title>
+      <pubDate>Wed, 30 Sep 2026 22:54:02 +0000</pubDate>
+      <sparkle:version>34</sparkle:version>
+      <sparkle:shortVersionString>0.2.31</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>The dashed drop outline no longer stays on a list after you drop files onto it.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.30.zip" type="application/octet-stream" sparkle:edSignature="Eoc2TiXde/oNMFIYekOaudmeI5+9BHEDSUycO+wgSXNSy0KIDHAPhrk/7d61KIMdQCfWfPdoYZG4CW4oU+ZrBA==" length="5671840" />
+      <description><![CDATA[<p>iCloud Drive and Proton Drive (and Dropbox, Google Drive or OneDrive, if you use them) now appear under Drives. Files that are only in the cloud are downloaded and verified when you copy or move them out. The line shown when adding a favorite no longer stays behind after a drop.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.31.zip" type="application/octet-stream" sparkle:edSignature="l/Y1au9OHwLvZY3Bx1H4zgYSGTJwj3GaUcisI0R4TVN8V38Ws2aGnMkKkYO2UQqRI83rLDMzch4ToYTiKDu+Ag==" length="5686027" />
     </item>
   </channel>
 </rss>
