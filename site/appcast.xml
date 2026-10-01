@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.34</title>
-      <pubDate>Thu, 01 Oct 2026 05:40:02 +0000</pubDate>
-      <sparkle:version>37</sparkle:version>
-      <sparkle:shortVersionString>0.2.34</sparkle:shortVersionString>
+      <title>Blit 0.2.35</title>
+      <pubDate>Thu, 01 Oct 2026 14:21:39 +0000</pubDate>
+      <sparkle:version>38</sparkle:version>
+      <sparkle:shortVersionString>0.2.35</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Copying to a busy NAS no longer freezes the window: file lists no longer check each file on the disk as they draw.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.34.zip" type="application/octet-stream" sparkle:edSignature="WxSqsga10+sg9jpt5XCkY3ytlddQqCt1RO6Rj6+9QF6qfp2KJaAG9tGPhitA/Jvs4UTbqQe0MjNRiIlGl8n/AQ==" length="5716630" />
+      <description><![CDATA[<p>If a NAS share is stuck on Wi-Fi while your Mac has a wired connection to the NAS, Blit now reconnects it over the cable before a transfer starts, and the transfer details show which link each share really uses.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.35.zip" type="application/octet-stream" sparkle:edSignature="2Um57s94MLdc2VVt4ltV/ghWJxZgehBuyxC6pUWVUR50yZIYL/6pz2BuLVUQ1PEMVD93+CUttthWCHqophoZDw==" length="5748783" />
     </item>
   </channel>
 </rss>
