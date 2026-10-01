@@ -551,7 +551,8 @@ blit/
 │   ├── sftp-probe.sh     quick per-method SFTP speed probe (20 s each)
 │   ├── sftp-bench.sh     longer parallel-file / chunked-file benchmark with checksums
 │   ├── make-icon.swift   renders the pixel-art app icon (Blit/AppIcon.icon)
-│   └── release.sh        Developer ID build, notarization, stapling, optional install
+│   ├── acknowledgements.py  writes Blit/Resources/Acknowledgements.txt (third-party notices) from the resolved packages
+│   └── release.sh        Developer ID build, notarization, stapling, optional install (runs acknowledgements.py first)
 ├── spike/                M1 throwaway: SwiftNIO SSH + minimal pipelined SFTP client
 │   ├── Package.swift
 │   ├── Sources/blit-spike/main.swift

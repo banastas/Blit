@@ -3,6 +3,9 @@
 import SwiftUI
 
 struct AboutView: View {
+    @Environment(\.openWindow) private var openWindow
+    @State private var hovering = false
+
     private var version: String {
         let info = Bundle.main.infoDictionary
         let short = info?["CFBundleShortVersionString"] as? String ?? "?"
@@ -31,9 +34,17 @@ struct AboutView: View {
                 .overlay(Rectangle().stroke(style: StrokeStyle(lineWidth: 1, dash: [3, 3])).foregroundStyle(HUDColor.off))
                 .padding(.vertical, 4)
             Text(version).font(HUDFont.terminal(20))
-            Text("SILKSCREEN · VT323 · SIL OPEN FONT LICENSE 1.1")
-                .font(HUDFont.terminal(14))
-                .foregroundStyle(HUDColor.dim)
+            // The open-source software Blit ships, with its notices and licenses
+            // (the fonts' among them).
+            Button { openWindow(id: "acknowledgements") } label: {
+                Text("ACKNOWLEDGEMENTS ›")
+                    .font(HUDFont.terminal(16))
+                    .foregroundStyle(hovering ? HUDColor.bright : HUDColor.dim)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("The open-source software in Blit, with its copyright notices and licenses")
         }
         .foregroundStyle(HUDColor.bright)
         .padding(.horizontal, 28)

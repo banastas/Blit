@@ -11,6 +11,8 @@
 #   scripts/release.sh                 # build, notarize, staple → build/release/
 #   INSTALL=1 scripts/release.sh       # …then replace /Applications/Blit.app
 #   SKIP_NOTARIZE=1 scripts/release.sh # sign and export only
+#   (Every run first writes Blit/Resources/Acknowledgements.txt, the third-party
+#   notices, with scripts/acknowledgements.py.)
 #   PUBLISH=1 INSTALL=1 NOTES="What changed" scripts/release.sh
 #                                      # …then publish it as an update: sign the zip for
 #                                      # Sparkle, put it on the site (site/downloads/),
@@ -29,6 +31,14 @@ export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
+
+# Third-party notices from the packages this build resolves (shown from About
+# Blit): written before archiving, so the app always carries the current ones.
+echo "==> Acknowledgements"
+scripts/acknowledgements.py
+if [[ -n "$(git status --porcelain -- Blit/Resources/Acknowledgements.txt)" ]]; then
+  echo "    Blit/Resources/Acknowledgements.txt is new or changed (a dependency changed?): review and commit it"
+fi
 
 echo "==> Archiving (Release)"
 xcodebuild -project Blit.xcodeproj -scheme Blit -configuration Release \

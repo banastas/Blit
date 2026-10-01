@@ -593,6 +593,11 @@ struct ContentView: View {
         UITestHarness.runTrashTestIfRequested(transfers: transfers)
         UITestHarness.runOpenWithTestIfRequested()
         UITestHarness.runOpenWithMenuTestIfRequested()
+        // -BlitShowAcknowledgements: About Blit and its Acknowledgements window, for a picture.
+        if UserDefaults.standard.bool(forKey: "BlitShowAcknowledgements") {
+            openWindow(id: "about")
+            openWindow(id: "acknowledgements")
+        }
         UITestHarness.runMediaExtensionTestIfRequested()
         UITestHarness.runDropTestIfRequested()
         UITestHarness.runSidebarDropTestIfRequested(sidebar: sidebar)

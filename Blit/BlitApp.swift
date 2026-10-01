@@ -197,6 +197,15 @@ struct BlitApp: App {
         .windowStyle(.hiddenTitleBar)
         .restorationBehavior(.disabled)
         .commandsRemoved()
+
+        // Opened from About Blit: the third-party notices Blit ships.
+        Window("Acknowledgements", id: "acknowledgements") {
+            AcknowledgementsView()
+        }
+        .defaultSize(width: 820, height: 640)
+        .windowStyle(.hiddenTitleBar)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
     }
 }
 
