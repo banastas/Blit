@@ -584,8 +584,8 @@ final class FileOperations {
         switch (outer, inner) {
         case (.local(let a), .local(let b)):
             // Resolve symlinks: a link into the folder is still inside it.
-            let a = a.resolvingSymlinksInPath().standardizedFileURL.path
-            let b = b.resolvingSymlinksInPath().standardizedFileURL.path
+            let a = a.resolvingSymlinksInPath().lexicalPath
+            let b = b.resolvingSymlinksInPath().lexicalPath
             return a == b || b.hasPrefix(a == "/" ? "/" : a + "/")
         case (.remote(let s1, let a), .remote(let s2, let b)):
             guard s1 == s2, !a.isEmpty else { return false }
@@ -603,7 +603,7 @@ final class FileOperations {
     static func location(_ outer: BrowseLocation, textuallyContains inner: BrowseLocation) -> Bool {
         switch (outer, inner) {
         case (.local(let a), .local(let b)):
-            let a = a.standardizedFileURL.path, b = b.standardizedFileURL.path
+            let a = a.lexicalPath, b = b.lexicalPath
             return a == b || b.hasPrefix(a == "/" ? "/" : a + "/")
         default:
             return location(outer, contains: inner)   // remote paths never touch the disk
@@ -612,7 +612,7 @@ final class FileOperations {
 
     /// Same folder, ignoring how the URL was spelled.
     static func same(_ a: BrowseLocation, _ b: BrowseLocation) -> Bool {
-        if let x = a.localURL, let y = b.localURL { return x.standardizedFileURL.path == y.standardizedFileURL.path }
+        if let x = a.localURL, let y = b.localURL { return x.lexicalPath == y.lexicalPath }
         return a == b
     }
 
@@ -680,7 +680,7 @@ final class FileOperations {
     nonisolated private static func moveLocal(_ url: URL, into folder: URL) throws {
         let fm = FileManager.default
         let target = folder.appendingPathComponent(url.lastPathComponent)
-        if target.standardizedFileURL.path == url.deletingLastPathComponent().standardizedFileURL.path {
+        if target.lexicalPath == url.deletingLastPathComponent().lexicalPath {
             throw sameNameAsFolder(url.lastPathComponent, into: folder.lastPathComponent)
         }
         if fm.fileExists(atPath: target.path) {

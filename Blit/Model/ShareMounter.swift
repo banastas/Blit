@@ -31,7 +31,7 @@ enum ShareMounter {
     /// The known share (its mount point, "/Volumes/Media") that `path` is on,
     /// when that share isn't mounted right now.
     static func missingShare(containing path: String) -> String? {
-        let parts = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+        let parts = URL(filePath: path).lexicalComponents
         guard parts.count > 2, parts[1] == "Volumes" else { return nil }
         let mountPoint = "/Volumes/" + parts[2]
         guard known[mountPoint] != nil, !isMounted(mountPoint) else { return nil }

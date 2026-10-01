@@ -33,7 +33,7 @@ struct DestinationQuery: EntityQuery {
         var result: [DestinationEntity] = []
         var seen = Set<String>()
         func add(_ url: URL, _ name: String, _ detail: String) {
-            let path = url.standardizedFileURL.path
+            let path = url.lexicalPath
             guard seen.insert(path).inserted, FileManager.default.fileExists(atPath: path) else { return }
             result.append(DestinationEntity(id: path, name: name, detail: detail))
         }

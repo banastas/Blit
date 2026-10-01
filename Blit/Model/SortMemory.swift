@@ -77,7 +77,7 @@ enum SortMemory {
 
     private static func id(_ location: BrowseLocation) -> String {
         switch location {
-        case .local(let url): "local:" + url.standardizedFileURL.path
+        case .local(let url): "local:" + url.lexicalPath
         case .remote(let server, let path): "remote:\(server.uuidString):" + Data(path).base64EncodedString()
         }
     }

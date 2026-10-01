@@ -198,7 +198,7 @@ final class BrowserModel {
         }
         // A cloud folder's own top level is "iCloud Drive", not com~apple~CloudDocs.
         if let url = current.localURL, let cloud = CloudFolders.folder(containing: url),
-           cloud.url.path == url.standardizedFileURL.path { return cloud.name }
+           cloud.url.path == url.lexicalPath { return cloud.name }
         return current.lastComponent
     }
 

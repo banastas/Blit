@@ -161,9 +161,10 @@ final class SidebarModel {
         // Boot volume first, then alphabetical.
         drives = local.sorted { ($0.url.path == "/" ? 0 : 1, $0.name) < ($1.url.path == "/" ? 0 : 1, $1.name) }
         networkShares = network.sorted { $0.name < $1.name }
-        VolumeKinds.networkRoots = Set(networkShares.map { $0.url.standardizedFileURL.path })
+        VolumeKinds.networkRoots = Set(networkShares.map { $0.url.lexicalPath })
+        VolumeKinds.names = Dictionary((drives + networkShares).map { ($0.url.lexicalPath, $0.name) }, uniquingKeysWith: { first, _ in first })
         // Remember how each share was mounted, to reconnect it later (PRD R1.5).
-        for share in networkShares { ShareMounter.remember(mountPoint: share.url.standardizedFileURL.path) }
+        for share in networkShares { ShareMounter.remember(mountPoint: share.url.lexicalPath) }
         regroupDevices()
         if modelBrowser == nil, !networkShares.isEmpty { browseDeviceModels() }
     }
@@ -223,15 +224,15 @@ final class SidebarModel {
     /// file check on a dead SMB share would freeze the app.
     func isAvailable(_ favorite: Favorite) -> Bool {
         guard let url = favorite.location.localURL else { return true }
-        let parts = url.standardizedFileURL.pathComponents
+        let parts = url.lexicalComponents
         guard parts.count > 2, parts[1] == "Volumes" else { return true }   // on the startup disk
         let volume = "/Volumes/" + parts[2]
-        return (drives + networkShares).contains { $0.url.standardizedFileURL.path == volume }
+        return (drives + networkShares).contains { $0.url.lexicalPath == volume }
     }
 
     /// Adds folders (ignoring files and duplicates) at `index`, or at the end.
     func addFavorites(_ urls: [URL], at index: Int? = nil) {
-        let folders = urls.map(\.standardizedFileURL).filter { url in
+        let folders = urls.map { URL(filePath: $0.lexicalPath, directoryHint: $0.hasDirectoryPath ? .isDirectory : .notDirectory) }.filter { url in
             var isDirectory: ObjCBool = false
             return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
                 && !isFavorite(.local(url))
@@ -289,7 +290,7 @@ final class SidebarModel {
     func isFavorite(_ location: BrowseLocation) -> Bool {
         favorites.contains { favorite in
             if let a = favorite.location.localURL, let b = location.localURL {
-                return a.standardizedFileURL == b.standardizedFileURL
+                return a.lexicalPath == b.lexicalPath
             }
             return favorite.location == location
         }
@@ -318,10 +319,12 @@ final class SidebarModel {
 @MainActor
 enum VolumeKinds {
     static var networkRoots: Set<String> = []
+    /// Each mounted volume's name by its path, from the last scan (no disk access).
+    static var names: [String: String] = [:]
 
     /// True for a path on a network share (SMB), false for local volumes.
     static func isNetwork(_ url: URL) -> Bool {
-        let path = url.standardizedFileURL.path
+        let path = url.lexicalPath
         return networkRoots.contains { path == $0 || path.hasPrefix($0 + "/") }
     }
 }

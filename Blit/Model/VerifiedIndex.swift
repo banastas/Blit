@@ -51,7 +51,7 @@ final class VerifiedIndex {
     func record(_ record: TransferRecord) { apply(record) }
 
     private func apply(_ record: TransferRecord) {
-        let key = URL(fileURLWithPath: record.destination).standardizedFileURL.path
+        let key = URL(filePath: record.destination).lexicalPath
         switch (record.result, record.verification) {
         case ("ok", let method) where Self.strongMethods.contains(method):
             entries[key] = Entry(size: record.size, method: method, time: record.time, sha256: record.sha256, source: record.source)
@@ -65,19 +65,19 @@ final class VerifiedIndex {
     }
 
     func entry(for url: URL, size: Int64) -> Entry? {
-        guard let entry = entries[url.standardizedFileURL.path], Int64(entry.size) == size else { return nil }
+        guard let entry = entries[url.lexicalPath], Int64(entry.size) == size else { return nil }
         return entry
     }
 
     /// Drops badges for an item Blit deleted or trashed (and anything inside it).
     func removed(_ url: URL) {
-        let path = url.standardizedFileURL.path
+        let path = url.lexicalPath
         for key in entries.keys where key == path || key.hasPrefix(path + "/") { entries[key] = nil }
     }
 
     /// Keeps badges when Blit renames or moves items on a volume (this session).
     func moved(from old: URL, to new: URL) {
-        let from = old.standardizedFileURL.path, to = new.standardizedFileURL.path
+        let from = old.lexicalPath, to = new.lexicalPath
         for (key, entry) in entries where key == from || key.hasPrefix(from + "/") {
             entries[key] = nil
             entries[to + key.dropFirst(from.count)] = entry

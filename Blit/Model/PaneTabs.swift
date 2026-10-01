@@ -50,7 +50,7 @@ final class PaneTab: Identifiable {
         }
         if case .local(let url) = location, url.path == "/" { return "Macintosh HD" }
         if case .local(let url) = location, let cloud = CloudFolders.folder(containing: url),
-           cloud.url.path == url.standardizedFileURL.path { return cloud.name }
+           cloud.url.path == url.lexicalPath { return cloud.name }
         return location.lastComponent
     }
 }

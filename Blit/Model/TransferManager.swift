@@ -995,10 +995,10 @@ final class TransferManager {
     /// pack to the NAS while it's still downloading would copy half of it).
     func isBlocked(_ job: TransferJob) -> Bool {
         guard job.lane == .copy, let index = jobs.firstIndex(where: { $0 === job }) else { return false }
-        let sources = job.sources.compactMap { $0.localURL?.standardizedFileURL.path }
+        let sources = job.sources.compactMap { $0.localURL?.lexicalPath }
         return jobs[..<index].contains { earlier in
             guard earlier.lane == .download, earlier.status == .queued || earlier.isActive || earlier.status == .paused else { return false }
-            let destination = earlier.destination.standardizedFileURL.path
+            let destination = earlier.destination.lexicalPath
             return sources.contains { $0 == destination || $0.hasPrefix(destination + "/") || destination.hasPrefix($0 + "/") }
         }
     }
@@ -1059,7 +1059,7 @@ final class TransferManager {
     /// How a source root is recorded in `removedRoots`.
     nonisolated static func rootKey(_ location: BrowseLocation) -> String {
         switch location {
-        case .local(let url): url.standardizedFileURL.path
+        case .local(let url): url.lexicalPath
         case .remote(_, let bytes): String(decoding: bytes, as: UTF8.self)
         }
     }
@@ -1333,7 +1333,7 @@ final class TransferManager {
             // unmounted volume counts.
             for url in sources {
                 guard !fm.fileExists(atPath: url.path) else { continue }
-                let parts = url.standardizedFileURL.pathComponents
+                let parts = url.lexicalComponents
                 guard parts.count > 2, parts[1] == "Volumes", !fm.fileExists(atPath: "/Volumes/" + parts[2]) else { continue }
                 if !missing.contains(parts[2]) { missing.append(parts[2]) }
             }
@@ -1589,7 +1589,7 @@ final class TransferManager {
     /// For a move between drives: deletes the source files verified so far,
     /// then any source folders left empty (a lone .DS_Store counts as empty).
     private func removeVerifiedSources(_ job: TransferJob) async {
-        let roots = job.sources.compactMap { $0.localURL?.standardizedFileURL.path }
+        let roots = job.sources.compactMap { $0.localURL?.lexicalPath }
         let sources = job.verifiedSources.takeLocal()
         let destinationPath = job.destination.path
         let links = job.localSourceSymlinks

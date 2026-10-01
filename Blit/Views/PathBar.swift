@@ -63,7 +63,7 @@ struct PathBar: View {
         // A cloud folder starts at itself ("iCloud Drive › …"), not at Macintosh
         // HD › Users › … › Library › Mobile Documents.
         if let url = current.localURL, let cloud = CloudFolders.folder(containing: url),
-           let index = chain.firstIndex(where: { $0.0.localURL?.standardizedFileURL.path == cloud.url.path }) {
+           let index = chain.firstIndex(where: { $0.0.localURL?.lexicalPath == cloud.url.path }) {
             chain.removeSubrange((index + 1)...)
         }
         return chain.reversed().map { location, isFolder in
@@ -75,11 +75,14 @@ struct PathBar: View {
     private func name(of location: BrowseLocation) -> String {
         switch location {
         case .local(let url):
-            if let cloud = CloudFolders.folder(containing: url), cloud.url.path == url.standardizedFileURL.path {
+            if let cloud = CloudFolders.folder(containing: url), cloud.url.path == url.lexicalPath {
                 return cloud.name
             }
             let isVolume = url.path == "/" || url.deletingLastPathComponent().path == "/Volumes"
-            if isVolume, let name = (try? url.resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName {
+            // The name the sidebar already has: asking the volume (as this did at
+            // every redraw) is a round trip to the NAS for a share.
+            if isVolume, let name = VolumeKinds.names[url.lexicalPath]
+                ?? (try? url.resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName {
                 return name
             }
             return url.lastPathComponent

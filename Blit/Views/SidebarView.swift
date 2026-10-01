@@ -398,8 +398,8 @@ private struct FavoriteRow: View {
 
     /// The drive or share itself, when the favorite is a volume's top level.
     private var volume: VolumeLocation? {
-        guard let url = favorite.location.localURL?.standardizedFileURL else { return nil }
-        return (sidebar.drives + sidebar.networkShares + sidebar.cloudFolders).first { $0.url.standardizedFileURL.path == url.path }
+        guard let path = favorite.location.localURL?.lexicalPath else { return nil }
+        return (sidebar.drives + sidebar.networkShares + sidebar.cloudFolders).first { $0.url.lexicalPath == path }
     }
 
     private var symbol: String {

@@ -255,9 +255,9 @@ extension BrowserModel {
                 ? "This part file doesn't record its server (it's from an older version of Blit)."
                 : "The server it came from (\(partial.source!.host)) isn't in the sidebar anymore."
         }
-        let folder = url.deletingLastPathComponent().standardizedFileURL.path
+        let folder = url.deletingLastPathComponent().lexicalPath
         if operations.transfers.transferJobs.contains(where: { job in
-            let destination = job.destination.standardizedFileURL.path
+            let destination = job.destination.lexicalPath
             return (job.isActive || job.status == .queued) && (folder == destination || folder.hasPrefix(destination + "/"))
         }) {
             return "A transfer into this folder is already queued or running."

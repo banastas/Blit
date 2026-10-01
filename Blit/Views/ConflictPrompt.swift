@@ -28,7 +28,7 @@ enum ConflictPrompt {
                 var isDirectory: ObjCBool = false
                 guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory),
                       !isDirectory.boolValue else { return nil }
-                if let url = source.localURL, url.standardizedFileURL == target.standardizedFileURL { return nil }
+                if let url = source.localURL, url.lexicalPath == target.lexicalPath { return nil }
                 return Conflict(source: source, name: name, existing: target, detail: describe(existing: target, source: source))
             }
         }.value

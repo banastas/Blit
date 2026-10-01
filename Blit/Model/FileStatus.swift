@@ -30,8 +30,8 @@ extension TransferJob {
     /// destination, or under one of its sources (named by the source's own name).
     func relativePath(of location: BrowseLocation) -> String? {
         if let url = location.localURL {
-            let path = url.standardizedFileURL.path
-            let root = destination.standardizedFileURL.path
+            let path = url.lexicalPath
+            let root = destination.lexicalPath
             if path.hasPrefix(root + "/") {
                 var relative = String(path.dropFirst(root.count + 1))
                 if relative.hasSuffix(".blitpart") { relative.removeLast(".blitpart".count) }
@@ -45,7 +45,7 @@ extension TransferJob {
         for source in sources {
             switch (source, location) {
             case (.local(let s), .local(let l)):
-                let sp = s.standardizedFileURL.path, lp = l.standardizedFileURL.path
+                let sp = s.lexicalPath, lp = l.lexicalPath
                 if lp == sp { return s.lastPathComponent }
                 if lp.hasPrefix(sp + "/") { return s.lastPathComponent + "/" + lp.dropFirst(sp.count + 1) }
             case (.remote(let sID, let sBytes), .remote(let lID, let lBytes)) where sID == lID && !sBytes.isEmpty:

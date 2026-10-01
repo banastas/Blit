@@ -66,7 +66,7 @@ enum CloudFolders {
 
     /// The cloud folder `url` is in (or is), if any.
     @MainActor static func folder(containing url: URL) -> VolumeLocation? {
-        let path = url.standardizedFileURL.path
+        let path = url.lexicalPath
         return roots.first { path == $0.url.path || path.hasPrefix($0.url.path + "/") }
     }
 

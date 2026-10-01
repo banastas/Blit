@@ -463,7 +463,7 @@ struct ContentView: View {
             return "NAS · " + volumeName + (verified ? " ◆" : "")
         }
         if root == "/" { return "Mac" }
-        return url.standardizedFileURL.path == root ? "Drive" : volumeName
+        return url.lexicalPath == root ? "Drive" : volumeName
     }
 
     private func openSecondPaneIfNeeded() {
@@ -569,7 +569,7 @@ struct ContentView: View {
                 (name: url.lastPathComponent, detail: sidebar.volumeName(for: url).flatMap { $0 == url.lastPathComponent ? nil : $0 },
                  location: BrowseLocation.local(url))
             }
-            for share in sidebar.networkShares where !favorites.contains(where: { $0.standardizedFileURL == share.url.standardizedFileURL }) {
+            for share in sidebar.networkShares where !favorites.contains(where: { $0.lexicalPath == share.url.lexicalPath }) {
                 places.append((name: share.name, detail: share.host, location: .local(share.url)))
             }
             return places

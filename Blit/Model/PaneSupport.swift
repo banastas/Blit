@@ -90,13 +90,13 @@ enum PaneMemory {
         case .remote(let id, _):
             return servers.server(id) != nil
         case .local(let url):
-            let parts = url.standardizedFileURL.pathComponents
+            let parts = url.lexicalComponents
             if parts.count > 2, parts[1] == "Volumes" {
                 let mountPoint = "/Volumes/" + parts[2]
                 guard MountInfo.mounted(at: mountPoint) != nil else { return false }
                 // A share is opened as is (a missing folder shows its own message);
                 // a local drive is quick to check.
-                if VolumeKinds.isNetwork(URL(fileURLWithPath: mountPoint)) { return true }
+                if VolumeKinds.isNetwork(URL(filePath: mountPoint)) { return true }
             }
             return FileManager.default.fileExists(atPath: url.path)
         }
@@ -115,7 +115,7 @@ final class FreeSpace {
 
     /// The volume a local path is on: "/Volumes/<name>", or "/" for the startup disk.
     static func volumeRoot(of url: URL) -> String {
-        let parts = url.standardizedFileURL.pathComponents
+        let parts = url.lexicalComponents
         return parts.count > 2 && parts[1] == "Volumes" ? "/Volumes/" + parts[2] : "/"
     }
 
