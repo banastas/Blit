@@ -587,6 +587,7 @@ struct ContentView: View {
         UITestHarness.runStatusTestIfRequested(transfers: transfers)
         UITestHarness.runConflictTestIfRequested(transfers: transfers)
         UITestHarness.runCableTestIfRequested(transfers: transfers)
+        UITestHarness.runCableLiveTestIfRequested(transfers: transfers)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

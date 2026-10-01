@@ -1346,6 +1346,56 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitCableLiveTest <log> -BlitCableLiveShare /Volumes/Media`: the move to
+    /// the cable for real, on a share that's on the cable already. Its
+    /// connection is reported as Wi-Fi once, so Blit ejects and remounts it
+    /// with the real tools (nothing is copied or written). Logs each step, the
+    /// connection afterwards and whether it's mounted in the same place.
+    static func runCableLiveTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitCableLiveTest"),
+              let share = UserDefaults.standard.string(forKey: "BlitCableLiveShare") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let live = ShareTools.live
+            guard let before = await live.connection(share) else { return lines.append("no SMB connection for \(share)\ndone") }
+            lines.append("before: \(before.interface) to \(before.server) · Wi-Fi \(before.isWiFi) · new connections via \(before.fresh?.interface ?? "?")")
+            var pretended = false
+            var tools = live
+            tools.connection = { mountPoint in
+                let real = await live.connection(mountPoint)
+                guard mountPoint == share, !pretended, let real else { return real }
+                pretended = true
+                return SMBConnection(server: real.server, interface: "en1", isWiFi: true, isMultichannel: false, fresh: real.fresh)
+            }
+            tools.eject = { mountPoint in
+                let start = Date()
+                let problem = await live.eject(mountPoint)
+                lines.append("eject \(mountPoint): \(problem ?? "ok") · \(Int(Date().timeIntervalSince(start) * 1000)) ms")
+                return problem
+            }
+            tools.remount = { mountPoint in
+                let start = Date()
+                let problem = await live.remount(mountPoint)
+                lines.append("remount \(mountPoint): \(problem ?? "ok") · \(Int(Date().timeIntervalSince(start) * 1000)) ms")
+                return problem
+            }
+            transfers.shareTools = tools
+            transfers.lastCableReconnect = [:]
+            let job = TransferJob(kind: .copy, sources: [.local(URL(filePath: "/tmp/blit-cable-live/Pack"))],
+                                  destination: URL(filePath: share + "/blit-cable-live-test"), title: "Live", destinationName: "test")
+            let label = await transfers.keepSharesOnCable(job)
+            transfers.shareTools = .live
+            transfers.lastCableReconnect = [:]
+            for line in job.log { lines.append("    \(line.text)") }
+            let after = await live.connection(share)
+            lines.append("after: link \(label ?? "none") · \(after.map { "\($0.interface) to \($0.server)" } ?? "no connection") · mounted at \(share) \(MountInfo.mounted(at: share) != nil)")
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {
