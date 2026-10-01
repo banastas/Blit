@@ -193,12 +193,12 @@ public struct MountInfo: Sendable, Equatable {
     }
 
     /// The volume a path is on (the longest mount point containing it), from
-    /// the mount table (no waiting). Like `of(_:)`, but safe on the main thread.
-    /// Paths on the startup disk's firmlinked Data volume (/Users, /private…)
-    /// report "/" rather than /System/Volumes/Data: same file system, and
-    /// never SMB, which is what callers ask.
+    /// the mount table and the path's text (no waiting). Like `of(_:)`, but
+    /// safe on the main thread. Paths on the startup disk's firmlinked Data
+    /// volume (/Users, /private…) report "/" rather than /System/Volumes/Data:
+    /// same file system, and never SMB, which is what callers ask.
     public static func containing(_ path: String) -> MountInfo? {
-        let path = URL(fileURLWithPath: path).standardizedFileURL.path
+        let path = LexicalPath.normalize(path)
         return all().filter { m in
             m.mountPoint == "/" || path == m.mountPoint || path.hasPrefix(m.mountPoint + "/")
         }.max { $0.mountPoint.count < $1.mountPoint.count }

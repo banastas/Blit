@@ -347,6 +347,11 @@ final class TransferJob: Identifiable {
     /// The route advisory (PRD R1.7): the transfer is going over Wi-Fi while a
     /// wired link is up. Never a failure — the copy itself is fine, just slower.
     var routeWarning: String?
+    /// Its NAS shares were checked for Wi-Fi (and moved to the cable) this
+    /// attempt, so it may be reading or writing them (ShareCable.swift).
+    @ObservationIgnored var sharesChecked = false
+    /// Its shares that are on Wi-Fi while wired is up, already said in the log.
+    @ObservationIgnored var wifiShares: Set<String> = []
     /// Round trip to the server (an SFTP stat), measured at connect and every
     /// 30 s during a download, for the Link data panel.
     var rttMilliseconds: Double?
@@ -430,8 +435,21 @@ final class TransferManager {
     /// Idle sleep is held off while transfers run (PRD R5.6); shown in the menu bar panel.
     private(set) var isKeepingAwake = false
     @ObservationIgnored private var wakeObserver: NSObjectProtocol?
+    /// Share checks run one at a time (ShareCable.swift).
+    @ObservationIgnored var shareCheckTail: Task<Void, Never>?
+    /// When each NAS (by address) was last reconnected to move it to the cable.
+    @ObservationIgnored var lastCableReconnect: [String: Date] = [:]
+    /// How shares are looked at and reconnected; a test copy swaps in stand-ins.
+    @ObservationIgnored var shareTools = ShareTools.live
 
     var hasActiveWork: Bool { jobs.contains { $0.isActive } }
+
+    #if DEBUG
+    /// Test copies: a job in the list that isn't run (it stands for a
+    /// transfer already under way), and taking it out again.
+    func debugInsert(_ job: TransferJob) { jobs.append(job) }
+    func debugRemove(_ job: TransferJob) { jobs.removeAll { $0 === job } }
+    #endif
 
     /// Called when Blit is quitting mid-transfer: keeps the queue (including the
     /// running job) saved for next launch, then closes connections so the
@@ -1424,6 +1442,10 @@ final class TransferManager {
     // MARK: Engines
 
     private func download(_ job: TransferJob, from server: ServerConfig) async throws {
+        // A destination share stuck on Wi-Fi goes back to the cable first (PRD R1.7).
+        await keepSharesOnCable(job)
+        let shareWatch = Task { await self.watchShares(job, setsLink: false) }
+        defer { shareWatch.cancel() }
         let credential = try server.credential()
         let endpoint = server.endpoint
         let verifier = self.verifier
@@ -1468,7 +1490,8 @@ final class TransferManager {
         if let path = await Task.detached(operation: { NetworkPath.to(host: host, port: port) }).value {
             job.link += " · \(path.interface.uppercased())"
             // An advisory (PRD R1.7), not a failure: the transfer itself is fine.
-            job.routeWarning = path.wifiDespiteWired ? "Wi-Fi (\(path.interface)) while wired is up" : nil
+            // (The share check cleared it for this attempt.)
+            if path.wifiDespiteWired { job.routeWarning = "Wi-Fi (\(path.interface)) while wired is up" }
             if path.wifiDespiteWired {
                 job.note("✕ ROUTE IS WI-FI (\(path.interface)) WHILE WIRED IS UP · SEE PRD R1.7", failure: true)
             }
@@ -1673,6 +1696,9 @@ final class TransferManager {
     }
 
     private func copy(_ job: TransferJob) async throws {
+        // A share stuck on Wi-Fi goes back to the cable before anything on it
+        // is read or written (PRD R1.7).
+        let shareLink = await keepSharesOnCable(job)
         var files: [LocalFile] = []
         var directories: [String] = []
         job.localSourceDirectories = []
@@ -1704,24 +1730,12 @@ final class TransferManager {
         }.value
         guard await waitForSpace(job, needed: copyNeeded) else { return }
 
-        let mount = MountInfo.containing(job.destination.path)   // the mount table: no waiting on a hung share
-        if let mount, mount.isSMB {
-            let host = mount.source.split(separator: "@").last?.split(separator: "/").first
-                .map { String($0).replacingOccurrences(of: "._smb._tcp", with: "") }
-            // Off the main actor: resolving a .local NAS name blocks on mDNS.
-            if let host, let path = await Task.detached(operation: { NetworkPath.to(host: host) }).value {
-                job.link = "SMB · \(path.interface.uppercased())"
-                // An advisory (PRD R1.7), not a failure: the copy itself is fine.
-                job.routeWarning = path.wifiDespiteWired ? "Wi-Fi (\(path.interface)) while wired is up" : nil
-                if path.wifiDespiteWired {
-                    job.note("✕ ROUTE IS WI-FI (\(path.interface)) WHILE WIRED IS UP · SEE PRD R1.7", failure: true)
-                }
-            } else {
-                job.link = "SMB"
-            }
-        } else {
-            job.link = "LOCAL"
-        }
+        let mount = MountInfo.containing(job.destination.path)   // the mount table and the path's text: no waiting
+        // Which link each share runs over was read (from its live connection,
+        // not the route a new one would take) when the transfer started.
+        job.link = shareLink ?? (mount?.isSMB == true ? "SMB" : "LOCAL")
+        let shareWatch = Task { await self.watchShares(job, setsLink: true) }
+        defer { shareWatch.cancel() }
         job.connections = 2
 
         // Verify on the NAS itself when this share has a NAS login (PRD R1.6, R4.2).

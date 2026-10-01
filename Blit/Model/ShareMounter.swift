@@ -5,9 +5,11 @@
 // on a share, when an unavailable favorite is opened, and from the sidebar's
 // Reconnect item.
 
+import AppKit
 import BlitLocal
 import Foundation
 import NetFS
+import Security
 
 @MainActor
 enum ShareMounter {
@@ -75,6 +77,34 @@ enum ShareMounter {
             return "“\(name)” reconnected, but macOS mounted it somewhere else. Eject the other copy and reconnect."
         }
         return nil
+    }
+
+    /// Whether macOS has the password saved for the share mounted at
+    /// `mountPoint` (Finder's Remember this password), so remounting it
+    /// without a dialog works. Reads the Keychain item's attributes, never
+    /// the password, so it never asks.
+    static func hasSavedPassword(_ mountPoint: String) -> Bool {
+        guard let address = known[mountPoint], let parts = URLComponents(string: address), let host = parts.host else { return false }
+        var query: [CFString: Any] = [kSecClass: kSecClassInternetPassword, kSecAttrServer: host,
+                                      kSecAttrProtocol: kSecAttrProtocolSMB, kSecMatchLimit: kSecMatchLimitOne,
+                                      kSecReturnAttributes: true]
+        if let user = parts.user, !user.isEmpty { query[kSecAttrAccount] = user }
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    /// Ejects the share as Finder does, never forced: macOS refuses while
+    /// anything has a file open on it. Returns why, or nil once it's ejected.
+    static func eject(_ mountPoint: String) async -> String? {
+        do {
+            try await FileManager.default.unmountVolume(at: URL(filePath: mountPoint, directoryHint: .isDirectory), options: [.withoutUI])
+            return nil
+        } catch {
+            if let pid = (error as NSError).userInfo[NSFileManagerUnmountDissentingProcessIdentifierErrorKey] as? NSNumber,
+               let app = NSRunningApplication(processIdentifier: pid.int32Value)?.localizedName {
+                return "\(app) is using it"
+            }
+            return error.localizedDescription
+        }
     }
 
     #if DEBUG

@@ -395,6 +395,17 @@ func copyCommand(_ raw: [String]) async -> Never {
                 """)
             }
         }
+        // The share's own connection: it keeps the interface it connected on,
+        // whatever a new connection would take.
+        if let mount, mount.isSMB, let live = SMBConnection.of(mountPoint: mount.mountPoint) {
+            print("share connection: \(live.interface)\(live.isWiFi ? ", Wi-Fi" : "") to \(live.server)")
+            if live.reconnectMovesToWired {
+                print("""
+                WARNING: \(mount.mountPoint) is connected over Wi-Fi though the cable reaches the NAS (it connected
+                while only Wi-Fi was up). Eject it and connect it again to use the cable; Blit.app does this itself.
+                """)
+            }
+        }
 
         var nas: NASVerifier?
         if let nasTarget, options.verify {

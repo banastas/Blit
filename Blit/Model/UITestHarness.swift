@@ -1053,7 +1053,9 @@ enum UITestHarness {
 
     /// `-BlitShareTest <log>` (with -BlitIsolatedQueue YES): shares are remembered
     /// with their smb:// address, and mounting one that's already mounted goes
-    /// through NetFS without UI (EEXIST) and doesn't disturb it.
+    /// through NetFS without UI (EEXIST) and doesn't disturb it. Also each
+    /// share's live connection and whether its password is saved (what the
+    /// move to the cable checks; nothing is ejected).
     static func runShareTestIfRequested(sidebar: SidebarModel) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitShareTest") else { return }
         Task { @MainActor in
@@ -1064,6 +1066,9 @@ enum UITestHarness {
                 let (status, address) = await ShareMounter.debugMount(mountPoint)
                 let reconnect = await ShareMounter.reconnect(mountPoint)
                 lines.append("\(share.name): known \(ShareMounter.isKnown(mountPoint)) · \(address) · NetFS \(status)\(status == EEXIST ? " (already mounted)" : "") · reconnect: \(reconnect ?? "ok") · still mounted \(MountInfo.of(mountPoint)?.mountPoint == mountPoint) · missingShare \(ShareMounter.missingShare(containing: mountPoint + "/x") ?? "nil")")
+                let connection = await ShareTools.live.connection(mountPoint)
+                lines.append("    saved password \(ShareMounter.hasSavedPassword(mountPoint)) · connection "
+                             + (connection.map { "\($0.interface)\($0.isWiFi ? " (Wi-Fi)" : "") to \($0.server) · new connections via \($0.fresh?.interface ?? "?") · reconnect moves to the cable \($0.reconnectMovesToWired)" } ?? "unknown"))
             }
             lines.append("missingShare for a local drive path: \(ShareMounter.missingShare(containing: "/Users/x") ?? "nil")")
             if sidebar.networkShares.isEmpty { lines.append("no network shares mounted") }
@@ -1212,6 +1217,131 @@ enum UITestHarness {
             try? await Task.sleep(for: .milliseconds(500))
             lines.append("search cleared after navigating: “\(browser.searchText)”")
             try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
+    /// Stand-in shares for the cable test: where each is connected, which
+    /// have a saved password, which refuse to eject, and what was done.
+    @MainActor final class FakeShares {
+        var servers: [String: String] = [:]            // mounted share → NAS address
+        var connections: [String: SMBConnection] = [:]
+        var afterRemount: [String: SMBConnection] = [:]
+        var saved: Set<String> = []
+        var refuse: [String: String] = [:]
+        var remountProblem: [String: String] = [:]
+        var calls: [String] = []
+
+        var tools: ShareTools {
+            ShareTools(
+                mounts: { paths in
+                    Array(Set(paths.compactMap { path in self.servers.keys.first { path == $0 || path.hasPrefix($0 + "/") } })).sorted()
+                },
+                connection: { self.connections[$0] },
+                known: { self.servers.map { (mountPoint: $0.key, server: $0.value) }.sorted { $0.mountPoint < $1.mountPoint } },
+                canRemount: { self.servers[$0] != nil },
+                hasSavedPassword: { self.saved.contains($0) },
+                eject: { share in
+                    let name = (share as NSString).lastPathComponent
+                    if let reason = self.refuse[share] { self.calls.append("eject \(name) refused"); return reason }
+                    self.calls.append("eject \(name)")
+                    self.connections[share] = nil
+                    return nil
+                },
+                remount: { share in
+                    self.calls.append("remount \((share as NSString).lastPathComponent)")
+                    if let problem = self.remountProblem[share] { return problem }
+                    self.connections[share] = self.afterRemount[share]
+                    return nil
+                })
+        }
+    }
+
+    /// `-BlitCableTest <log>`: a share stuck on Wi-Fi goes back to the cable
+    /// before a transfer uses it, only when that's safe (PRD R1.7). Runs the
+    /// real check against stand-in shares, so nothing real is looked at or
+    /// ejected; each case logs the LINK label, the route warning, what was
+    /// ejected and remounted, and the lines the transfer's log gained.
+    static func runCableTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitCableTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let cable = NetworkPath(interface: "en7", localAddress: "192.168.20.86", isWiFi: false, activeWired: ["en7"])
+            let wifiRoute = NetworkPath(interface: "en1", localAddress: "192.168.20.38", isWiFi: true, activeWired: ["en7"])
+            func onWiFi(fresh: NetworkPath? = nil, multichannel: Bool = false) -> SMBConnection {
+                SMBConnection(server: "192.168.20.12", interface: "en1", isWiFi: true, isMultichannel: multichannel, fresh: fresh ?? cable)
+            }
+            let onCable = SMBConnection(server: "192.168.20.12", interface: "en7", isWiFi: false, isMultichannel: false, fresh: cable)
+            let nas = "/Volumes/FakeNAS", nas2 = "/Volumes/FakeNAS2"
+            let fake = FakeShares()
+            transfers.shareTools = fake.tools
+            transfers.lastCableReconnect = [:]
+            @MainActor func job(_ title: String) -> TransferJob {
+                TransferJob(kind: .copy, sources: [.local(URL(filePath: "/tmp/blit-cable-test/Pack"))],
+                            destination: URL(filePath: nas + "/Incoming"), title: title, destinationName: "Incoming")
+            }
+            @MainActor func run(_ name: String, _ job: TransferJob) async {
+                fake.calls = []
+                let label = await transfers.keepSharesOnCable(job)
+                lines.append("\(name): link \(label ?? "none") · route \(job.routeWarning ?? "none") · "
+                             + (fake.calls.isEmpty ? "nothing ejected" : fake.calls.joined(separator: ", ")))
+                for line in job.log { lines.append("    \(line.text)") }
+            }
+            fake.servers = [nas: "192.168.20.12"]
+            fake.saved = [nas]
+            fake.connections[nas] = onCable
+            await run("on the cable", job("A"))
+            fake.connections[nas] = onWiFi()
+            fake.afterRemount[nas] = onCable
+            await run("on Wi-Fi", job("B"))
+            fake.connections[nas] = onWiFi()
+            await run("on Wi-Fi again within 10 min", job("C"))
+            transfers.lastCableReconnect = [:]
+            fake.saved = []
+            await run("no saved password", job("D"))
+            fake.saved = [nas]
+            let busy = job("Busy")
+            busy.status = .running
+            busy.sharesChecked = true
+            transfers.debugInsert(busy)
+            await run("another transfer using the share", job("E"))
+            transfers.debugRemove(busy)
+            fake.connections[nas] = onWiFi(multichannel: true)
+            await run("multichannel", job("F"))
+            fake.connections[nas] = onWiFi(fresh: wifiRoute)
+            await run("cable not on the NAS's network", job("G"))
+            fake.servers[nas2] = "192.168.20.12"
+            fake.saved.insert(nas2)
+            fake.connections[nas] = onWiFi()
+            fake.connections[nas2] = onWiFi()
+            fake.afterRemount[nas2] = onCable
+            await run("two shares on that NAS", job("H"))
+            transfers.lastCableReconnect = [:]
+            fake.connections[nas] = onWiFi()
+            fake.connections[nas2] = onWiFi()
+            fake.refuse[nas2] = "Finder is using it"
+            fake.afterRemount[nas] = onWiFi()
+            await run("the other share won't eject", job("I"))
+            fake.refuse = [:]
+            fake.servers[nas2] = nil
+            fake.afterRemount[nas] = onCable
+            transfers.lastCableReconnect = [:]
+            fake.connections[nas] = onWiFi()
+            fake.calls = []
+            let first = job("J1"), second = job("J2")
+            let a = Task { await transfers.keepSharesOnCable(first) }
+            let b = Task { await transfers.keepSharesOnCable(second) }
+            let links = (await a.value, await b.value)
+            lines.append("two transfers starting together: links \(links.0 ?? "none") and \(links.1 ?? "none") · \(fake.calls.joined(separator: ", "))")
+            transfers.lastCableReconnect = [:]
+            fake.connections[nas] = onWiFi()
+            fake.remountProblem[nas] = "Couldn't reconnect “FakeNAS” (error 2). Connect it in Finder (Go › Connect to Server)."
+            await run("the remount fails", job("K"))
+            transfers.shareTools = .live
+            transfers.lastCableReconnect = [:]
             lines.append("done")
         }
     }
