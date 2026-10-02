@@ -9,6 +9,7 @@
 // it waits for <log>.points-N ([fromX, fromY, toX, toY], CG coordinates),
 // drags, touches <log>.hover-N while hovering (and photographs the test
 // window if <log>.wid holds its number), then releases.
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
@@ -43,6 +44,9 @@ for index in 0..<count {
     guard waitFor(log + ".points-\(index)", 40), let data = fm.contents(atPath: log + ".points-\(index)"),
           let d = try? JSONSerialization.jsonObject(with: data) as? [Double] else { print("no points \(index)"); exit(1) }
     let from = CGPoint(x: d[0], y: d[1]), to = CGPoint(x: d[2], y: d[3])
+    // A copy launched from a script can't always take focus from the app in
+    // use; bring it forward (it's still checked below, as ever).
+    if !testCopyOwnsPoint(from, pid: pid) { bringForward(pid) }
     guard testCopyOwnsPoint(from, pid: pid), endMayBeOutside || testCopyOwnsPoint(to, pid: pid) else {
         print("the test copy's window isn't the one under the pointer; stopping before drag \(index + 1)")
         fm.createFile(atPath: log + ".aborted", contents: nil)
@@ -68,6 +72,19 @@ for index in 0..<count {
     if !fast { usleep(900_000) }
     post(.leftMouseUp, to)
     print("drag \(index + 1) posted")
+}
+
+/// Brings the test copy and its window in front, through Accessibility (which
+/// this helper has, to post events).
+func bringForward(_ pid: pid_t) {
+    let app = AXUIElementCreateApplication(pid)
+    AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    var windows: CFTypeRef?
+    if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windows) == .success,
+       let window = (windows as? [AXUIElement])?.first {
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    }
+    usleep(500_000)
 }
 
 /// Whether the frontmost window under `point` (CG coordinates) belongs to the
