@@ -96,6 +96,29 @@ struct RenameRule: Codable, Equatable, Hashable {
         return ext.isEmpty ? renamed : renamed + "." + ext
     }
 
+    /// "starts with a space", "ends with 2 spaces", "is a space"… for text
+    /// with spaces at either end, which a text field doesn't show (the sheet
+    /// opens with the last rule, so a field that looks empty can hold one, and
+    /// typing after it finds nothing); nil when there are none.
+    static func edgeSpaces(_ text: String) -> String? {
+        guard !text.isEmpty else { return nil }
+        func spaces(_ n: Int) -> String { n == 1 ? "a space" : "\(n) spaces" }
+        let leading = text.prefix(while: \.isWhitespace).count
+        if leading == text.count { return text.count == 1 ? "is a space" : "is \(text.count) spaces" }
+        let trailing = text.reversed().prefix(while: \.isWhitespace).count
+        switch (leading, trailing) {
+        case (0, 0): return nil
+        case (_, 0): return "starts with \(spaces(leading))"
+        case (0, _): return "ends with \(spaces(trailing))"
+        default: return "starts with \(spaces(leading)) and ends with \(spaces(trailing))"
+        }
+    }
+
+    /// `text` with every space drawn as ␣, to show exactly what's typed.
+    static func visibleSpaces(_ text: String) -> String {
+        String(text.map { $0.isWhitespace ? "␣" : $0 })
+    }
+
     /// Whether the rule changes anything yet (a Replace with nothing to find doesn't).
     var isActive: Bool {
         switch mode {

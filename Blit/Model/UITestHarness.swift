@@ -662,6 +662,31 @@ enum UITestHarness {
                 lines.append("\(label): \(rule.apply(to: "Some.Show.S01E02.1080p.mkv", index: 1, date: date))")
             }
             lines.append("no real extension: \(add.apply(to: "Some.Show.S01E02", index: 0, date: date))")
+            // A Find with a space in front (the last rule's " " left in the field) matches nothing; the sheet says so.
+            var spaced = RenameRule(); spaced.find = " S01x"; spaced.replacement = "S01E"
+            var plain = spaced; plain.find = "S01x"
+            let episode = "Tales-from-the-Crypt_S01x01_The-Man-Who-Was-Death.mkv"
+            lines.append("find “ S01x”: \(spaced.apply(to: episode, index: 0, date: date)) · find “S01x”: \(plain.apply(to: episode, index: 0, date: date))")
+            lines.append("edge spaces: " + [" ", "  ", " S01x", "S01x ", " a ", "S01x", ""].map { "“\(RenameRule.visibleSpaces($0))” \(RenameRule.edgeSpaces($0) ?? "none")" }.joined(separator: " · "))
+            // A picture of the sheet with Find “S01x ” (a space left at the end): its own window,
+            // behind everything, given the rule (the user's saved one is never read or written).
+            let sample = FileManager.default.temporaryDirectory.appendingPathComponent("blit-rename-sheet")
+            try? FileManager.default.removeItem(at: sample)
+            try? FileManager.default.createDirectory(at: sample, withIntermediateDirectories: true)
+            for name in ["Show-Name_S01x01_Pilot.mkv", "Show-Name_S01x02_Second.mkv", "Show-Name_S02x01_Return.mkv"] {
+                FileManager.default.createFile(atPath: sample.appendingPathComponent(name).path, contents: nil)
+            }
+            if let items = try? BrowserModel.listLocal(sample, showHidden: false).sorted(by: { $0.name < $1.name }) {
+                var trailing = RenameRule(); trailing.find = "S01x "; trailing.replacement = "S01E"
+                let sheet = NSWindow(contentRect: NSRect(x: 60, y: 60, width: 520, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+                sheet.contentView = NSHostingView(rootView: BatchRenameView(browser: browser, items: items, steps: [trailing]))
+                sheet.orderBack(nil)
+                try? await Task.sleep(for: .seconds(1))
+                try? String(sheet.windowNumber).write(toFile: logPath + ".rename-wid", atomically: true, encoding: .utf8)
+                for _ in 0..<80 where !FileManager.default.fileExists(atPath: logPath + ".rename-shot") { try? await Task.sleep(for: .milliseconds(100)) }
+                sheet.orderOut(nil)
+            }
+            try? FileManager.default.removeItem(at: sample)
             // The naming-convention presets
             let conventions = RenamePresets.conventions
             for name in ["The.Gentlemen.2019.UHD.BluRay.2160p.TrueHD.Atmos.7.1.HEVC.REMUX-FraMeSToR.mkv",

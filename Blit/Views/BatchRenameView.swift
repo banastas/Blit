@@ -15,6 +15,15 @@ struct BatchRenameView: View {
     @State private var presets = RenamePresets.all()
     @State private var savingPreset = false
     @State private var presetName = ""
+    /// Opens with the last rule used, unless given steps (a test's picture).
+    private let restoresLast: Bool
+
+    init(browser: BrowserModel, items: [FileItem], steps: [RenameRule]? = nil) {
+        self.browser = browser
+        self.items = items
+        restoresLast = steps == nil
+        if let steps, !steps.isEmpty { _steps = State(initialValue: steps) }
+    }
 
     private var rows: [RenamePlanRow] {
         RenamePlan.rows(items, steps: steps) { parent in
@@ -60,6 +69,11 @@ struct BatchRenameView: View {
                     }
                 }
                 Section("Preview") {
+                    if let missing = unmatchedFind {
+                        Label("No name contains “\(RenameRule.visibleSpaces(missing))”", systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    }
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 4) {
                             ForEach(rows) { row in previewRow(row) }
@@ -91,7 +105,7 @@ struct BatchRenameView: View {
         }
         .frame(width: 520)
         .onAppear {
-            if let last = try? JSONDecoder().decode([RenameRule].self, from: lastStepsData), !last.isEmpty { steps = last }
+            if restoresLast, let last = try? JSONDecoder().decode([RenameRule].self, from: lastStepsData), !last.isEmpty { steps = last }
         }
     }
 
@@ -99,6 +113,28 @@ struct BatchRenameView: View {
     private var rule: Binding<RenameRule> {
         Binding(get: { steps[min(selectedStep, steps.count - 1)] },
                 set: { steps[min(selectedStep, steps.count - 1)] = $0 })
+    }
+
+    /// Spaces at either end of a field, drawn so they can be seen (␣): the
+    /// field itself shows none, and the sheet opens with the last rule.
+    @ViewBuilder private func spaceNote(_ field: String, _ text: String) -> some View {
+        if let edge = RenameRule.edgeSpaces(text) {
+            Label("\(field) \(edge): “\(RenameRule.visibleSpaces(text))”", systemImage: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundStyle(.orange)
+        }
+    }
+
+    /// The selected step's Find text, when it's plain text that no name
+    /// contains (so the preview can say why nothing changes).
+    private var unmatchedFind: String? {
+        let step = rule.wrappedValue
+        guard step.mode == .replace, !step.find.isEmpty, !step.regularExpression else { return nil }
+        let found = items.contains { item in
+            let name = step.includeExtension ? item.name : RenameRule.split(item.name).base
+            return name.range(of: step.find, options: step.matchCase ? [] : [.caseInsensitive]) != nil
+        }
+        return found ? nil : step.find
     }
 
     /// Step 1 · Step 2 · + / −
@@ -128,7 +164,9 @@ struct BatchRenameView: View {
         switch rule.wrappedValue.mode {
         case .replace:
             TextField("Find", text: rule.find)
+            spaceNote("Find", rule.wrappedValue.find)
             TextField("Replace with", text: rule.replacement)
+            spaceNote("Replace with", rule.wrappedValue.replacement)
             HStack {
                 Toggle("Match case", isOn: rule.matchCase)
                 Toggle("Regular expression", isOn: rule.regularExpression)
