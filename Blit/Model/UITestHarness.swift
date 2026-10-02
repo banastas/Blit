@@ -2410,6 +2410,97 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitTabsDragTest <log>`: the tab bar with five tabs: tabs that fill it
+    /// (never wider, which used to push the window's panes off its edges, a
+    /// picture at <log>.shot once the shell has captured <log>.wid), the sums
+    /// it does, and with `-BlitTabsDragReal YES` real drags along it, sent by
+    /// scripts/ui-drag (it acts only while this copy is in front): steady ones
+    /// to the far left, the far right, one slot and out over the sidebar
+    /// (<log>-slow), then quick flicks to each end (<log>-fast). Logs the
+    /// order after each.
+    static func runTabsDragTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTabsDragTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-tabs-drag")
+            try? fm.removeItem(at: root)
+            for name in ["Left", "Right"] { try? fm.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true) }
+            let tabs = PaneTabs.shared
+            guard let window = BrowserModel.activeWindow, let tab = tabs.current, let second = tab.second,
+                  let content = window.contentView else { return lines.append("no window or second pane") }
+            let real = UserDefaults.standard.bool(forKey: "BlitTabsDragReal")
+            window.setFrame(NSRect(x: 100, y: 100, width: 1280, height: 760), display: true)
+            if real {
+                NSApp.activate()
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                window.makeKey()
+            }
+            tab.first.open(.local(root.appendingPathComponent("Left")))
+            second.open(.local(root.appendingPathComponent("Right")))
+            for _ in 0..<4 { tabs.newTab() }
+            for (tab, name) in zip(tabs.tabs, ["A", "B", "C", "D", "E"]) { tabs.rename(tab.id, to: name) }
+            try? await Task.sleep(for: .seconds(1.5))
+            @MainActor func order() -> String { tabs.tabs.map { $0.customName ?? "?" }.joined(separator: " ") }
+            @MainActor func tabRect(_ index: Int) -> CGRect? {
+                tabs.tabs.indices.contains(index) ? tabFrames[tabs.tabs[index].id] : nil
+            }
+            guard let first = tabRect(0), let last = tabRect(4) else { return lines.append("no tab frames") }
+            // The sums the bar does: tab widths that fill it, and the slot a drag lands in.
+            let step = PaneTabBar.tabWidth(barWidth: 1100, count: 5) + 4
+            lines.append("math: width 1100 → \(Int(step - 4)) per tab (5), \(Int(PaneTabBar.tabWidth(barWidth: 1100, count: 2))) (2), \(Int(PaneTabBar.tabWidth(barWidth: 1100, count: 14))) (14)"
+                         + " · slot for left edge -500 → \(PaneTabBar.slot(pointer: -480, grab: 20, step: step, count: 5) + 1), 0 → \(PaneTabBar.slot(pointer: 20, grab: 20, step: step, count: 5) + 1)"
+                         + ", 1.4 slots → \(PaneTabBar.slot(pointer: 20 + 1.4 * step, grab: 20, step: step, count: 5) + 1), 1.6 → \(PaneTabBar.slot(pointer: 20 + 1.6 * step, grab: 20, step: step, count: 5) + 1)"
+                         + ", far right → \(PaneTabBar.slot(pointer: 5000, grab: 20, step: step, count: 5) + 1)")
+            lines.append("start: \(order()) · tabs \(Int(first.width)) wide, first at x \(Int(first.minX)), last ends at x \(Int(last.maxX))"
+                         + " · window \(Int(window.frame.width)) wide · fits \(last.maxX + 4 + 24 + 8 <= content.bounds.width + 0.5)")
+            // A picture of the bar: the shell captures the window once it sees <log>.wid.
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+            for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+            guard real else {
+                try? fm.removeItem(at: root)
+                return lines.append("(drags need -BlitTabsDragReal YES: real input)\ndone")
+            }
+            let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+            @MainActor func cg(_ x: CGFloat, _ y: CGFloat) -> [Int] {
+                let screen = window.convertPoint(toScreen: NSPoint(x: x, y: content.bounds.height - y))
+                return [Int(screen.x), Int(screenHeight - screen.y)]
+            }
+            var counts = ["slow": 0, "fast": 0]
+            /// Drags the tab named `name` (from right of its ⌘-number) to x `toX`
+            /// in the window, by ui-drag's `run` (slow or fast).
+            @MainActor func drag(_ label: String, _ name: String, toX: CGFloat, run: String) async {
+                guard let index = tabs.tabs.firstIndex(where: { $0.customName == name }), let frame = tabRect(index) else {
+                    return lines.append("\(label): no tab \(name)")
+                }
+                let n = counts[run] ?? 0
+                counts[run] = n + 1
+                let prefix = logPath + "-" + run
+                let from = cg(frame.midX + 20, frame.midY), to = cg(toX, frame.midY)
+                try? JSONSerialization.data(withJSONObject: from + to).write(to: URL(fileURLWithPath: prefix + ".points-\(n)"))
+                for _ in 0..<200 where !fm.fileExists(atPath: prefix + ".hover-\(n)") && !fm.fileExists(atPath: prefix + ".aborted") {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                try? await Task.sleep(for: .seconds(2.5))   // ui-drag lets go about a second after hovering
+                lines.append("\(label): \(order()) · shows \(tabs.current?.customName ?? "?")"
+                             + (fm.fileExists(atPath: prefix + ".aborted") ? " · ui-drag stopped" : ""))
+            }
+            @MainActor func edge(_ index: Int) -> CGRect { tabRect(index) ?? first }
+            await drag("D to the far left (expect D A B C E)", "D", toX: edge(0).minX - 20, run: "slow")
+            await drag("C to the far right (expect D A B E C)", "C", toX: edge(4).maxX + 20, run: "slow")
+            await drag("B one slot left (expect D B A E C)", "B", toX: edge(1).midX - 10, run: "slow")
+            await drag("E out over the sidebar (expect E D B A C)", "E", toX: edge(0).minX - 120, run: "slow")
+            await drag("C flicked to the far left (expect C E D B A)", "C", toX: edge(0).minX - 20, run: "fast")
+            await drag("D flicked to the far right (expect C E B A D)", "D", toX: edge(4).maxX + 20, run: "fast")
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     /// `-BlitEmptyClickTest <log>`: right-clicks below the last row of each
     /// pane (posted to this copy's own event queue: the pointer never moves)
     /// show the folder menu, before and after switching tabs.

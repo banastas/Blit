@@ -9,11 +9,16 @@ struct PaneTabBar: View {
     let twoPanes: Bool
     @Environment(ServerStore.self) private var servers
     @Environment(TransferManager.self) private var transfers
-    /// A tab being dragged along the bar, and how far past its slot.
-    @State private var dragging: UUID?
-    @State private var dragOffset: CGFloat = 0
-    @State private var consumed: CGFloat = 0
-    @State private var barWidth: CGFloat = 800
+    /// The tab being dragged along the bar.
+    @State private var drag: TabDrag?
+
+    struct TabDrag: Equatable {
+        let id: UUID
+        /// Where the tab was grabbed, from its left edge.
+        let grab: CGFloat
+        /// The pointer, in the row's coordinates.
+        var pointer: CGFloat
+    }
 
     private static let spacing: CGFloat = 4
     static let height: CGFloat = 33
@@ -22,20 +27,40 @@ struct PaneTabBar: View {
     /// share the bar, down to the minimum.
     private static let maxTabWidth: CGFloat = 220
     private static let minTabWidth: CGFloat = 100
+    /// The row of tabs' own coordinates (x 0 is the first tab's left edge),
+    /// which stay put while tabs change places under a drag.
+    private static let row = "tabRow"
 
-    private var tabWidth: CGFloat {
-        let count = CGFloat(max(PaneTabs.shared.tabs.count, 1))
-        let room = barWidth - 16 - 24 - Self.spacing * count   // the side padding, the + button, the gaps
-        return min(Self.maxTabWidth, max(Self.minTabWidth, room / count))
+    /// The tabs' width in a bar `width` wide: tabs, gaps, the + button and the
+    /// padding fill it exactly, down to the minimum. From the width the bar is
+    /// given, never its own: a row wider than the bar used to widen the bar,
+    /// so the tabs never shrank and pushed the window's panes off its edges.
+    static func tabWidth(barWidth: CGFloat, count: Int) -> CGFloat {
+        let count = CGFloat(max(count, 1))
+        let room = barWidth - 16 - 24 - spacing * count   // the side padding, the + button, the gaps
+        return min(maxTabWidth, max(minTabWidth, (room / count).rounded(.down)))
+    }
+
+    /// The slot a dragged tab goes to: the one its left edge is nearest, with
+    /// the pointer at `pointer` holding it `grab` from that edge. Past either
+    /// end of the row is the first or last slot.
+    static func slot(pointer: CGFloat, grab: CGFloat, step: CGFloat, count: Int) -> Int {
+        guard count > 0, step > 0 else { return 0 }
+        return min(max(Int(((pointer - grab) / step).rounded()), 0), count - 1)
     }
 
     var body: some View {
-        // Once a second, as the strip does: a transfer's byte count isn't observed.
-        TimelineView(.periodic(from: .now, by: 1)) { _ in bar }
+        GeometryReader { proxy in
+            // Once a second, as the strip does: a transfer's byte count isn't observed.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in bar(width: proxy.size.width) }
+        }
+        .frame(height: Self.height)
     }
 
-    private var bar: some View {
+    private func bar(width: CGFloat) -> some View {
         let tabs = PaneTabs.shared
+        let tabWidth = Self.tabWidth(barWidth: width, count: tabs.tabs.count)
+        let step = tabWidth + Self.spacing
         return HStack(spacing: Self.spacing) {
             ForEach(Array(tabs.tabs.enumerated()), id: \.element.id) { index, tab in
                 PaneTabItem(tab: tab, index: index, isSelected: tab.id == tabs.current?.id,
@@ -47,9 +72,11 @@ struct PaneTabBar: View {
                         UITestHarness.tabFrames[tab.id] = frame
                     }
                     #endif
-                    .offset(x: dragging == tab.id ? dragOffset : 0)
-                    .zIndex(dragging == tab.id ? 1 : 0)
-                    .gesture(reorder(tab))
+                    .offset(x: offset(of: tab.id, at: index, step: step, count: tabs.tabs.count))
+                    .zIndex(drag?.id == tab.id ? 1 : 0)
+                    // The others slide to make room; the dragged tab stays under the pointer.
+                    .transaction { if drag?.id == tab.id { $0.animation = nil } }
+                    .gesture(reorder(tab, step: step))
             }
             Button {
                 PaneTabs.shared.newTab()
@@ -63,46 +90,46 @@ struct PaneTabBar: View {
             .foregroundStyle(.secondary)
             .help("New Tab (⌘T)")
             .accessibilityLabel("New tab")
-            Spacer(minLength: 0)
         }
+        .coordinateSpace(.named(Self.row))
         .padding(.horizontal, 8)
         .padding(.top, 5)
-        .frame(height: Self.height)
-        .frame(maxWidth: .infinity)
+        .frame(width: width, height: Self.height, alignment: .topLeading)
         .clipped()
-        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, width in barWidth = width }
         .background(Color.black.opacity(0.10))
     }
 
-    /// Drag a tab along the bar: it trades places with a neighbour once it's
-    /// more than halfway over it.
-    private func reorder(_ tab: PaneTab) -> some Gesture {
-        DragGesture(minimumDistance: 6)
+    /// The dragged tab follows the pointer, kept within the row; the others
+    /// sit in their slots.
+    private func offset(of id: UUID, at index: Int, step: CGFloat, count: Int) -> CGFloat {
+        guard let drag, drag.id == id else { return 0 }
+        let left = min(max(drag.pointer - drag.grab, 0), CGFloat(max(count - 1, 0)) * step)
+        return left - CGFloat(index) * step
+    }
+
+    /// Drag a tab along the bar: it follows the pointer and takes the slot it's
+    /// over, however far and fast it goes. Measured in the row's coordinates,
+    /// which don't move as the tab changes places. (It used to measure from
+    /// the tab itself and trade places one neighbour per mouse event, so fast
+    /// drags fell short of the ends.)
+    private func reorder(_ tab: PaneTab, step: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.row))
             .onChanged { value in
                 let tabs = PaneTabs.shared
-                if dragging != tab.id {
-                    dragging = tab.id
-                    consumed = 0
+                if drag?.id != tab.id {
+                    guard let index = tabs.tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+                    drag = TabDrag(id: tab.id, grab: value.startLocation.x - CGFloat(index) * step, pointer: value.location.x)
                     tabs.select(tab.id)
                 }
-                let step = tabWidth + Self.spacing
-                var offset = value.translation.width - consumed
-                if let index = tabs.tabs.firstIndex(where: { $0.id == tab.id }) {
-                    if offset > step / 2, index < tabs.tabs.count - 1 {
-                        tabs.move(tab.id, to: index + 1)
-                        consumed += step
-                    } else if offset < -step / 2, index > 0 {
-                        tabs.move(tab.id, to: index - 1)
-                        consumed -= step
-                    }
+                drag?.pointer = value.location.x
+                guard let drag else { return }
+                let target = Self.slot(pointer: drag.pointer, grab: drag.grab, step: step, count: tabs.tabs.count)
+                if target != tabs.tabs.firstIndex(where: { $0.id == tab.id }) {
+                    withAnimation(.snappy(duration: 0.18)) { tabs.move(tab.id, to: target) }
                 }
-                offset = value.translation.width - consumed
-                dragOffset = offset
             }
             .onEnded { _ in
-                withAnimation(.snappy(duration: 0.2)) { dragOffset = 0 }
-                dragging = nil
-                consumed = 0
+                withAnimation(.snappy(duration: 0.2)) { drag = nil }
             }
     }
 

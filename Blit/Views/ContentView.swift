@@ -610,6 +610,7 @@ struct ContentView: View {
         UITestHarness.runTabsTestIfRequested()
         UITestHarness.runTabsRestoreTestIfRequested()
         UITestHarness.runTabsKeysTestIfRequested()
+        UITestHarness.runTabsDragTestIfRequested()
         UITestHarness.runEmptyClickTestIfRequested()
         UITestHarness.runRowDragTestIfRequested()
         UITestHarness.runRowDragRealTestIfRequested()
