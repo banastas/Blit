@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.36</title>
-      <pubDate>Fri, 02 Oct 2026 18:11:13 +0000</pubDate>
-      <sparkle:version>39</sparkle:version>
-      <sparkle:shortVersionString>0.2.36</sparkle:shortVersionString>
+      <title>Blit 0.2.37</title>
+      <pubDate>Fri, 02 Oct 2026 20:08:45 +0000</pubDate>
+      <sparkle:version>40</sparkle:version>
+      <sparkle:shortVersionString>0.2.37</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Reordering tabs is reliable: drag a tab to any position, the far left included, and it lands where you let go. With many tabs open, they now shrink to fit instead of pushing the sidebar and panes off the window's edges.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.36.zip" type="application/octet-stream" sparkle:edSignature="232wS/bAXKVSEEj8NF2YjvZqmQalNilmWKPKw5LaQ6puf5D/rfoMDwDR4pQdyjd3zbONkMEuGZr+2EFUsXxGCg==" length="5750180" />
+      <description><![CDATA[<p>Rename N Items shows spaces you can't otherwise see: if Find or Replace with starts or ends with a space, a warning shows the text with each space marked, and the preview says when nothing matches.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.37.zip" type="application/octet-stream" sparkle:edSignature="tOuBxECrva5dL4sa1epOctk69QHFU7ezqfoGBC82houPKkxnbM/0tJqfWyzMiKIjJWJnFH6AcaqTNEQL6P7FBw==" length="5753157" />
     </item>
   </channel>
 </rss>
