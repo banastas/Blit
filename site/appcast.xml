@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.35</title>
-      <pubDate>Thu, 01 Oct 2026 14:21:39 +0000</pubDate>
-      <sparkle:version>38</sparkle:version>
-      <sparkle:shortVersionString>0.2.35</sparkle:shortVersionString>
+      <title>Blit 0.2.36</title>
+      <pubDate>Fri, 02 Oct 2026 18:11:13 +0000</pubDate>
+      <sparkle:version>39</sparkle:version>
+      <sparkle:shortVersionString>0.2.36</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>If a NAS share is stuck on Wi-Fi while your Mac has a wired connection to the NAS, Blit now reconnects it over the cable before a transfer starts, and the transfer details show which link each share really uses.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.35.zip" type="application/octet-stream" sparkle:edSignature="2Um57s94MLdc2VVt4ltV/ghWJxZgehBuyxC6pUWVUR50yZIYL/6pz2BuLVUQ1PEMVD93+CUttthWCHqophoZDw==" length="5748783" />
+      <description><![CDATA[<p>Reordering tabs is reliable: drag a tab to any position, the far left included, and it lands where you let go. With many tabs open, they now shrink to fit instead of pushing the sidebar and panes off the window's edges.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.36.zip" type="application/octet-stream" sparkle:edSignature="232wS/bAXKVSEEj8NF2YjvZqmQalNilmWKPKw5LaQ6puf5D/rfoMDwDR4pQdyjd3zbONkMEuGZr+2EFUsXxGCg==" length="5750180" />
     </item>
   </channel>
 </rss>
