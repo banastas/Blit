@@ -111,6 +111,20 @@ enum ColumnFit {
         return Result(widths: widths, sizeOut: out)
     }
 
+    /// Puts the divider between the two panes in the middle (once, when the
+    /// second pane appears; after that it's where the user drags it).
+    @MainActor
+    static func centreDivider(from view: NSView) {
+        var current: NSView? = view
+        while let candidate = current {
+            if let split = candidate as? NSSplitView, split.isVertical, split.subviews.count == 2 {
+                split.setPosition(split.bounds.width / 2, ofDividerAt: 0)
+                return
+            }
+            current = candidate.superview
+        }
+    }
+
     /// How much of `scrollView` the window's floating sidebar covers (0 when
     /// it's hidden or beside the list rather than over it).
     @MainActor

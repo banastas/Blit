@@ -2253,6 +2253,96 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitNativeCellsTest <log>` (with `-BlitNativeList YES`): the AppKit
+    /// list's rows as its cells show them, through a stand-in transfer's
+    /// statuses (after the name, then in the Status column), a verified file,
+    /// a folder opened and closed with → and ←, a header-click sort and the
+    /// header's menu.
+    static func runNativeCellsTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitNativeCellsTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-native-cells")
+            try? fm.removeItem(at: root)
+            let dest = root.appendingPathComponent("Dest"), source = root.appendingPathComponent("Src")
+            for folder in [dest.appendingPathComponent("Sub"), source] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            for name in ["a.mkv", "b.mkv", "Sub/c.mkv"] { fm.createFile(atPath: dest.appendingPathComponent(name).path, contents: Data("x".utf8)) }
+            guard let model = PaneTabs.shared.current?.first else { return lines.append("no pane") }
+            model.open(.local(dest))
+            model.sort(by: .name)
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let table = FileListRegistry.table(for: model) else { return lines.append("no native list (run with -BlitNativeList YES)") }
+            @MainActor func shown(_ label: String) async {
+                try? await Task.sleep(for: .milliseconds(600))
+                var rows: [String] = []
+                for row in 0..<table.numberOfRows {
+                    let name = (table.view(atColumn: 0, row: row, makeIfNecessary: false) as? NameCellView)?.testSummary ?? "?"
+                    let statusColumn = table.column(withIdentifier: FileColumn.status.identifier)
+                    let status = statusColumn >= 0 && !table.tableColumns[statusColumn].isHidden
+                        ? (table.view(atColumn: statusColumn, row: row, makeIfNecessary: false)?.accessibilityLabel() ?? "") : ""
+                    rows.append(status.isEmpty ? name : "\(name) | \(status)")
+                }
+                lines.append("\(label): " + rows.joined(separator: " · "))
+            }
+            await shown("listed")
+            // A stand-in copy into Dest: a.mkv on its way, b.mkv cloned.
+            let job = TransferJob(kind: .copy, sources: [.local(source.appendingPathComponent("a.mkv")), .local(source.appendingPathComponent("b.mkv"))],
+                                  destination: dest, title: "a.mkv", destinationName: "Dest")
+            job.persistent = false
+            job.status = .running
+            job.inFlight = ["a.mkv"]
+            job.outcomes = ["b.mkv": "cloned"]
+            transfers.debugInsert(job)
+            await shown("copying")
+            // A picture of the marks: the shell captures the window once it sees <log>.wid.
+            if let window = table.window {
+                try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+                for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+            job.inFlight = []
+            job.outcomes["a.mkv"] = "read-back"
+            await shown("a.mkv verified")
+            let hidden = ColumnSettings.shared.isShown("status")
+            ColumnSettings.shared.set("status", shown: true)
+            await shown("Status column shown")
+            ColumnSettings.shared.set("status", shown: hidden)
+            job.status = .finished
+            transfers.debugRemove(job)
+            await shown("transfer gone")
+            // → and ← on the folder, as typed.
+            guard let sub = model.rows.first(where: { $0.name == "Sub" }) else { return lines.append("no Sub") }
+            model.selection = [sub.location]
+            try? await Task.sleep(for: .milliseconds(300))
+            @MainActor func press(_ code: UInt16) {
+                guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                   windowNumber: table.window?.windowNumber ?? 0, context: nil,
+                                                   characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code) else { return }
+                table.keyDown(with: event)
+            }
+            press(124)
+            await shown("→ on Sub")
+            if let inside = model.rows.first(where: { $0.depth == 1 }) { model.selection = [inside.location] }
+            try? await Task.sleep(for: .milliseconds(300))
+            press(123)
+            await shown("← inside Sub")
+            lines.append("selected: \(model.selectedItems.map(\.name))")
+            // A header click: Size, largest first (as Finder starts it).
+            table.sortDescriptors = [FileColumn.size.sortPrototype].compactMap { $0 }
+            await shown("sorted by size")
+            lines.append("model sort: \(model.sortColumn?.rawValue ?? "-") \(model.sortOrder.first?.order == .reverse ? "descending" : "ascending")")
+            if let menu = table.headerView?.menu {
+                menu.delegate?.menuNeedsUpdate?(menu)
+                lines.append("header menu: " + menu.items.map { "\($0.title)\($0.state == .on ? " ✓" : "")\($0.isEnabled ? "" : " (fixed)")" }.joined(separator: " | "))
+            }
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     /// The process's memory footprint, as Activity Monitor's Memory column.
     static func footprintMB() -> Double {
         var info = task_vm_info_data_t()
@@ -3034,6 +3124,8 @@ enum UITestHarness {
             for _ in 0..<30 where tab1.first.rows.count < 80 { try? await Task.sleep(for: .milliseconds(200)) }
             try? await Task.sleep(for: .seconds(1))
             @MainActor func clip(_ model: BrowserModel) -> NSClipView? {
+                // The AppKit list knows its own scroll view.
+                if FileListFlags.native { return FileListRegistry.scrollView(for: model)?.contentView }
                 guard let anchor = EmptySpaceMenu.anchorView(for: model), let content = window.contentView else { return nil }
                 let frame = anchor.convert(anchor.bounds, to: nil)
                 let centre = NSPoint(x: frame.midX, y: frame.midY)

@@ -31,6 +31,7 @@ struct FileListView: View {
     @AppStorage("showPathBar") private var showPathBar = true
     /// The path bar's height, kept clear under the AppKit list's rows.
     @State private var pathBarHeight: CGFloat = 24
+    @AppStorage("showIconPreviews") private var showIconPreviews = true
     /// Column widths, order and visibility (right-click a column header), kept per window.
 
     var body: some View {
@@ -80,12 +81,25 @@ struct FileListView: View {
     /// over it and the path bar over its last rows.
     private var nativeList: some View {
         NativeFileList(browser: browser, isShown: browser.error == nil && browser.current != nil,
-                       bottomInset: showPathBar && browser.current != nil ? pathBarHeight : 0)
+                       bottomInset: showPathBar && browser.current != nil ? pathBarHeight : 0,
+                       iconPreviews: showIconPreviews)
             .overlay { nativeStates.allowsHitTesting(false) }
             .overlay(alignment: .bottom) {
                 if showPathBar, browser.current != nil {
                     PathBar(browser: browser)
                         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { _, height in pathBarHeight = height }
+                }
+            }
+            .quickLookPreview($browser.previewURL, in: browser.previewURLs)
+            .onChange(of: browser.selection) {
+                // Like Finder: while Quick Look is open, it follows the selection.
+                if browser.previewURL != nil { browser.previewSelection() }
+            }
+            .onAppear {
+                // The second pane appearing: the two start at the same width.
+                guard paneTag == .second else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    if let list = FileListRegistry.scrollView(for: browser) { ColumnFit.centreDivider(from: list) }
                 }
             }
     }

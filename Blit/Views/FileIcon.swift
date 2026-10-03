@@ -41,6 +41,17 @@ final class ThumbnailCache {
 
     init() { cache.countLimit = 2000 }
 
+    /// A thumbnail already made, if any (a list's cell shows it at once rather
+    /// than the type icon first).
+    func cached(for url: URL, modified: Date) -> NSImage? {
+        cache.object(forKey: "\(url.path)|\(modified.timeIntervalSinceReferenceDate)" as NSString)
+    }
+
+    /// Whether Quick Look had no thumbnail for this file.
+    func hasNone(for url: URL, modified: Date) -> Bool {
+        none.contains("\(url.path)|\(modified.timeIntervalSinceReferenceDate)")
+    }
+
     func thumbnail(for url: URL, modified: Date) async -> NSImage? {
         let key = "\(url.path)|\(modified.timeIntervalSinceReferenceDate)"
         if let image = cache.object(forKey: key as NSString) { return image }

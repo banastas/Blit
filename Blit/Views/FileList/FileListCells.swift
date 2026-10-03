@@ -14,6 +14,8 @@ struct CellContext {
     let dateLevel: Int
     /// With the Status column hidden (the default), the status is a tag after the name.
     let statusAfterName: Bool
+    /// Quick Look thumbnails for local files (View › Show Icon Previews).
+    let iconPreviews: Bool
 }
 
 /// The list's fonts: the SwiftUI list's body font, with even digits where
@@ -117,7 +119,12 @@ class DrawnCellView: NSTableCellView {
 final class NameCellView: DrawnCellView {
     private(set) var item: FileItem?
     private var icon: NSImage?
+    /// The thumbnail being made for this row, if any.
+    private var thumbnailTask: Task<Void, Never>?
     private var isExpanded = false
+    /// The folder's contents are loading: a pixel spinner in place of the triangle.
+    private var isLoading = false
+    private var spinner: Timer?
     private var verifiedHelp: String?
     private var partialHelp: String?
     private var status: FileStatus?
@@ -145,9 +152,13 @@ final class NameCellView: DrawnCellView {
         let partialHelp = item.partial.map(browser.partialSummary)
         let status = context.statusAfterName ? browser.operations.transfers.status(for: item) : nil
         let expanded = item.isDirectory && browser.expanded.contains(item.location)
+        let loading = expanded && browser.loadingChildren.contains(item.location)
         let changed = item != self.item || verifiedHelp != self.verifiedHelp || partialHelp != self.partialHelp
-            || status != self.status || expanded != isExpanded
-        if item.id != self.item?.id || icon == nil { icon = IconCache.shared.rowIcon(for: item) }
+            || status != self.status || expanded != isExpanded || loading != isLoading
+        if item.id != self.item?.id || item.modified != self.item?.modified || icon == nil {
+            showIcon(for: item, previews: context.iconPreviews)
+        }
+        setLoading(loading)
         self.item = item
         self.verifiedHelp = verifiedHelp
         self.partialHelp = partialHelp
@@ -159,6 +170,52 @@ final class NameCellView: DrawnCellView {
             needsLayout = true
             needsDisplay = true
         }
+    }
+
+    /// The type icon, or (for a local file, with previews on) its Quick Look
+    /// thumbnail: at once if it was made before, else when it's ready.
+    private func showIcon(for item: FileItem, previews: Bool) {
+        thumbnailTask?.cancel()
+        thumbnailTask = nil
+        icon = IconCache.shared.rowIcon(for: item)
+        guard previews, !item.isDirectory, let url = item.location.localURL else { return }
+        let cache = ThumbnailCache.shared
+        if let thumbnail = cache.cached(for: url, modified: item.modified) {
+            icon = thumbnail
+            return
+        }
+        guard !cache.hasNone(for: url, modified: item.modified) else { return }
+        let id = item.id
+        thumbnailTask = Task { [weak self] in
+            guard let thumbnail = await cache.thumbnail(for: url, modified: item.modified),
+                  !Task.isCancelled, let self, self.item?.id == id else { return }
+            self.icon = thumbnail
+            self.needsDisplay = true
+        }
+    }
+
+    private func setLoading(_ loading: Bool) {
+        guard loading != isLoading else { return }
+        isLoading = loading
+        spinner?.invalidate()
+        spinner = nil
+        if loading {
+            spinner = Timer.scheduledTimer(withTimeInterval: 0.09, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setNeedsDisplay(self?.disclosureRect ?? .zero) }
+            }
+        }
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        thumbnailTask?.cancel()
+        thumbnailTask = nil
+        setLoading(false)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { setLoading(false) }
     }
 
     // The disclosure triangle takes its own clicks (the row isn't selected), as a button would.
@@ -220,13 +277,23 @@ final class NameCellView: DrawnCellView {
     override func draw(_ dirtyRect: NSRect) {
         guard let item else { return }
         let glyphColor: NSColor = emphasized ? .alternateSelectedControlTextColor : .secondaryLabelColor
-        if disclosureRect != .zero, let chevron = isExpanded ? Self.chevronDown : Self.chevron {
+        if disclosureRect != .zero, isLoading {
+            drawSpinner(in: disclosureRect, color: emphasized ? .alternateSelectedControlTextColor : .labelColor)
+        } else if disclosureRect != .zero, let chevron = isExpanded ? Self.chevronDown : Self.chevron {
             let size = chevron.size
             let rect = NSRect(x: disclosureRect.midX - size.width / 2, y: disclosureRect.midY - size.height / 2,
                               width: size.width, height: size.height).integral
             CellDrawing.draw(template: chevron, in: rect, color: glyphColor)
         }
-        icon?.draw(in: iconRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        if let icon {
+            // Thumbnails keep their shape inside the icon's square.
+            let size = icon.size
+            let scale = min(iconRect.width / max(size.width, 1), iconRect.height / max(size.height, 1), 1)
+            let fitted = NSRect(x: iconRect.midX - size.width * scale / 2, y: iconRect.midY - size.height * scale / 2,
+                                width: size.width * scale, height: size.height * scale)
+            icon.draw(in: size.width <= iconRect.width && size.height <= iconRect.height ? iconRect : fitted,
+                      from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        }
         CellDrawing.draw(item.name, in: nameRect, font: CellFonts.body,
                          color: emphasized ? .alternateSelectedControlTextColor : .labelColor, lineBreak: .byTruncatingMiddle)
         if verifiedRect != .zero { CellDrawing.draw(template: PixelGlyph.check.image(size: 9), in: verifiedRect, color: glyphColor) }
@@ -234,6 +301,39 @@ final class NameCellView: DrawnCellView {
         if let status, statusRect != .zero { StatusDrawing(status: status, font: CellFonts.caption).draw(in: statusRect, emphasized: emphasized) }
     }
 
+}
+
+#if DEBUG
+extension NameCellView {
+    /// What the cell shows, for the tests.
+    var testSummary: String {
+        guard let item else { return "-" }
+        var parts = [String(repeating: "  ", count: item.depth) + item.name]
+        if item.isDirectory { parts.append(isLoading ? "loading" : isExpanded ? "open" : "closed") }
+        if verifiedHelp != nil { parts.append("✓") }
+        if partialHelp != nil { parts.append("◐") }
+        if let status { parts.append("[\(status.glyph.map(String.init) ?? "")\(status.text)]") }
+        return parts.joined(separator: " ")
+    }
+}
+#endif
+
+extension NameCellView {
+    /// PixelSpinner's ring of eight 1.5-pt pixels, its head going round.
+    private static let ring = [(0, 0), (1, 0), (2, 0), (2, 1), (2, 2), (1, 2), (0, 2), (0, 1)]
+
+    fileprivate func drawSpinner(in rect: NSRect, color: NSColor) {
+        let cell: CGFloat = 1.5
+        let side = cell * 5
+        let origin = NSPoint(x: (rect.midX - side / 2).rounded(), y: (rect.midY - side / 2).rounded())
+        let head = Int(Date.timeIntervalSinceReferenceDate / 0.09) % Self.ring.count
+        for (index, (x, y)) in Self.ring.enumerated() {
+            let age = (head - index + Self.ring.count) % Self.ring.count
+            let opacity: CGFloat = age == 0 ? 1 : age == 1 ? 0.6 : age == 2 ? 0.3 : 0.12
+            color.withAlphaComponent(opacity).setFill()
+            NSRect(x: origin.x + CGFloat(x) * cell * 2, y: origin.y + CGFloat(y) * cell * 2, width: cell, height: cell).fill()
+        }
+    }
 }
 
 extension NameCellView: NSViewToolTipOwner {

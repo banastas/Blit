@@ -23,6 +23,8 @@ struct NativeFileList: NSViewRepresentable {
     var isShown: Bool
     /// Room under the rows for the path bar laid over them.
     var bottomInset: CGFloat
+    /// Quick Look thumbnails for local files (View › Show Icon Previews).
+    var iconPreviews: Bool
     // Plain values only (no closures): SwiftUI then leaves the list alone
     // when the window redraws and none of them changed (each update walks
     // every view in the list).
@@ -35,7 +37,7 @@ struct NativeFileList: NSViewRepresentable {
         #if DEBUG
         UITestHarness.tick("NativeFileList")
         #endif
-        context.coordinator.update(browser: browser, isShown: isShown, bottomInset: bottomInset)
+        context.coordinator.update(browser: browser, isShown: isShown, bottomInset: bottomInset, iconPreviews: iconPreviews)
     }
 
     static func dismantleNSView(_ view: NSScrollView, coordinator: FileListCoordinator) {

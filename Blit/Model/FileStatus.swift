@@ -6,7 +6,7 @@
 import BlitSFTP
 import Foundation
 
-struct FileStatus: Equatable {
+struct FileStatus: Hashable {
     var text: String
     /// Drawn as a pixel glyph before the text (✓ ✕ ▲ ▼ ‖); nil for none, "=" as text.
     var glyph: Character?
