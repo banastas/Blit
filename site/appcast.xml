@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.37</title>
-      <pubDate>Fri, 02 Oct 2026 20:08:45 +0000</pubDate>
-      <sparkle:version>40</sparkle:version>
-      <sparkle:shortVersionString>0.2.37</sparkle:shortVersionString>
+      <title>Blit 0.2.38</title>
+      <pubDate>Sat, 03 Oct 2026 15:28:24 +0000</pubDate>
+      <sparkle:version>41</sparkle:version>
+      <sparkle:shortVersionString>0.2.38</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Rename N Items shows spaces you can't otherwise see: if Find or Replace with starts or ends with a space, a warning shows the text with each space marked, and the preview says when nothing matches.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.37.zip" type="application/octet-stream" sparkle:edSignature="tOuBxECrva5dL4sa1epOctk69QHFU7ezqfoGBC82houPKkxnbM/0tJqfWyzMiKIjJWJnFH6AcaqTNEQL6P7FBw==" length="5753157" />
+      <description><![CDATA[<p>Pause and Cancel now work during copies to a NAS (they used to wait for the verification read-back), and every transfer has Pause and Cancel on the strip and in the HUD. Folders light up when you drag onto them while a transfer runs, and the HUD shows the transfer belonging to the tab you're on.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.38.zip" type="application/octet-stream" sparkle:edSignature="TFuuwoDktfRF7DTIhx/LS+G+m6KPAwh0tt9jWQf3fQI9H3GTrOt9CJHmdP0wasnhxP0mNRl8FYm6af/013uSBQ==" length="5770329" />
     </item>
   </channel>
 </rss>
