@@ -1670,6 +1670,196 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitFollowTabTest <log>`: the HUD shows the shown tab's transfer
+    /// (stand-in jobs, never run): each tab's own, the one dropped onto a
+    /// subfolder the tab shows, a fallback for a tab without one, and a
+    /// transfer picked in the queue list stays picked only until the tab changes.
+    static func runFollowTabTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitFollowTabTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-follow-tab")
+            try? fm.removeItem(at: root)
+            let names = ["SSD", "NAS", "Other", "Elsewhere", "Seedbox"]
+            for name in names + ["NAS/Movies"] { try? fm.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true) }
+            let folder = { (name: String) in root.appendingPathComponent(name) }
+            let tabs = PaneTabs.shared
+            guard let first = tabs.current, let firstSecond = first.second else { return lines.append("no second pane") }
+            first.first.open(.local(folder("Seedbox")))
+            firstSecond.open(.local(folder("SSD")))
+            // A new tab gets its second pane a moment later (the window makes it).
+            @MainActor func newTab(_ left: String, _ right: String) async {
+                tabs.newTab()
+                for _ in 0..<50 where tabs.current?.second == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                try? await Task.sleep(for: .milliseconds(200))
+                tabs.current?.first.open(.local(folder(left)))
+                tabs.current?.second?.open(.local(folder(right)))
+            }
+            await newTab("SSD", "NAS")
+            await newTab("Other", "Elsewhere")
+            try? await Task.sleep(for: .seconds(1))
+            @MainActor func job(_ title: String, from source: String, to destination: String, _ status: TransferJob.Status, startedAgo: Double) -> TransferJob {
+                let job = TransferJob(kind: .copy, sources: [.local(folder(source).appendingPathComponent(title))],
+                                      destination: folder(destination), title: title, destinationName: destination)
+                job.persistent = false
+                job.status = status
+                job.startedAt = Date().addingTimeInterval(-startedAgo)
+                return job
+            }
+            let download = job("Download", from: "Seedbox", to: "SSD", .running, startedAgo: 30)
+            let copy = job("Copy", from: "SSD", to: "NAS/Movies", .running, startedAgo: 10)
+            let old = job("Old", from: "Other", to: "Elsewhere", .finished, startedAgo: 600)
+            for job in [download, copy, old] { transfers.debugInsert(job) }
+            @MainActor func shows(_ label: String, tab index: Int) async {
+                tabs.select(index: index)
+                try? await Task.sleep(for: .milliseconds(400))
+                lines.append("\(label): \(transfers.featured?.title ?? "none") · pinned \(transfers.pinnedJobID.flatMap { id in transfers.jobs.first { $0.id == id }?.title } ?? "none")")
+                let shown = Panes.shared.shownLocations
+                lines.append("    shown \(shown.map(\.lastComponent)) · two panes \(Panes.shared.twoPanes) · touching "
+                             + transfers.jobs.filter { job in shown.contains(where: job.touches) }.map(\.title).joined(separator: ", "))
+            }
+            await shows("tab 1 (seedbox · SSD)", tab: 0)
+            await shows("tab 2 (SSD · NAS, the copy went into NAS/Movies)", tab: 1)
+            await shows("tab 3 (other folders, a finished transfer there)", tab: 2)
+            old.status = .cancelled
+            transfers.debugRemove(old)
+            await shows("tab 3 (nothing of its own)", tab: 2)
+            transfers.pinnedJobID = copy.id
+            lines.append("picked Copy in the queue list on tab 3: \(transfers.featured?.title ?? "none")")
+            await shows("then tab 1", tab: 0)
+            for job in [download, copy] { transfers.debugRemove(job) }
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitReloadDragTest <log> -BlitReloadDragTestDest <folder on another
+    /// volume>`: with a 6 GB copy running, real drags (scripts/ui-drag, 0–2)
+    /// of a file onto a subfolder in the left pane: plain; with the pane
+    /// reloading while it hovers and nothing changed; and with a file
+    /// appearing and the transfer-finished refresh arriving mid-drag (it waits
+    /// for the mouse button). Logs whether the folder was lit after the
+    /// reload, where each file landed, and when the new file showed.
+    static func runReloadDragTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitReloadDragTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitReloadDragTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-reload-drag")
+            try? fm.removeItem(at: root)
+            let big = root.appendingPathComponent("Big"), drop = root.appendingPathComponent("Drop")
+            for folder in [big, drop.appendingPathComponent("Target")] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            for name in ["a.bin", "b.bin", "c.bin"] { fm.createFile(atPath: drop.appendingPathComponent(name).path, contents: Data("x".utf8)) }
+            await Task.detached {
+                let file = big.appendingPathComponent("Big.mkv")
+                FileManager.default.createFile(atPath: file.path, contents: nil)
+                if let handle = try? FileHandle(forWritingTo: file) {
+                    var chunk = Data(count: 8 << 20)
+                    chunk.withUnsafeMutableBytes { arc4random_buf($0.baseAddress!, $0.count) }
+                    for _ in 0..<768 { try? handle.write(contentsOf: chunk) }   // 6 GB
+                    try? handle.close()
+                }
+            }.value
+            let dest = URL(filePath: destPath)
+            for name in (try? fm.contentsOfDirectory(atPath: dest.path)) ?? [] { try? fm.removeItem(at: dest.appendingPathComponent(name)) }
+            guard let tab = PaneTabs.shared.current, let right = tab.second, let window = BrowserModel.activeWindow,
+                  let content = window.contentView else { return lines.append("no window or second pane") }
+            let pane = tab.first
+            pane.open(.local(drop))
+            right.open(.local(dest))
+            for _ in 0..<30 where pane.rows.count < 4 { try? await Task.sleep(for: .milliseconds(200)) }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.setFrame(NSRect(x: 120, y: 100, width: 1280, height: 820), display: true)
+            _ = transfers.enqueue([.local(big)], to: .local(dest), destinationName: dest.lastPathComponent)
+            // A second copy queued behind it, so a transfer runs through all three drags.
+            try? fm.createDirectory(at: dest.appendingPathComponent("again"), withIntermediateDirectories: true)
+            _ = transfers.enqueue([.local(big)], to: .local(dest.appendingPathComponent("again")), destinationName: "again")
+            for _ in 0..<100 where !transfers.transferJobs.contains(where: { $0.status == .running }) { try? await Task.sleep(for: .milliseconds(100)) }
+            try? await Task.sleep(for: .seconds(2.5))   // the HUD opening as the copy starts settles the layout
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+            lines.append("copy running: \(transfers.transferJobs.contains { $0.status == .running }) · rows \(pane.rows.map(\.name))")
+            // The left pane's table: the leftmost list in the window.
+            var tables: [NSTableView] = []
+            func collect(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                view.subviews.forEach(collect)
+            }
+            collect(content)
+            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) else {
+                return lines.append("no table")
+            }
+            let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+            @MainActor func rowPoint(_ name: String) -> [Double]? {
+                guard let row = pane.rows.firstIndex(where: { $0.name == name }) else { return nil }
+                let rect = table.rect(ofRow: row)
+                let screen = window.convertPoint(toScreen: table.convert(NSPoint(x: rect.minX + 90, y: rect.midY), to: nil))
+                return [screen.x, screenHeight - screen.y]
+            }
+            for (index, file) in ["a.bin", "b.bin", "c.bin"].enumerated() {
+                guard let from = rowPoint(file), let to = rowPoint("Target") else {
+                    lines.append("drag \(file): rows not found · rows \(pane.rows.map(\.name))")
+                    continue
+                }
+                UITestHarness.lastDrop = ""
+                UITestHarness.dropTrail = []
+                lines.append("before drag \(index + 1): registered views \(EmptySpaceMenu.debugAnchors(for: pane)) · copy running \(transfers.transferJobs.contains { $0.status == .running })")
+                if let row = pane.rows.firstIndex(where: { $0.name == "Target" }) {
+                    let rect = table.rect(ofRow: row)
+                    let inWindow = table.convert(NSPoint(x: rect.minX + 90, y: rect.midY), to: nil)
+                    var chain: [String] = []
+                    var view = content.hitTest(content.convert(inWindow, from: nil))
+                    while let current = view, chain.count < 8 { chain.append(String(describing: type(of: current))); view = current.superview }
+                    lines.append("    hit test over Target: \(chain.joined(separator: " < "))")
+                }
+                try? JSONSerialization.data(withJSONObject: from + to).write(to: URL(fileURLWithPath: logPath + ".points-\(index)"))
+                for _ in 0..<200 where !fm.fileExists(atPath: logPath + ".hover-\(index)") && !fm.fileExists(atPath: logPath + ".aborted") {
+                    try? await Task.sleep(for: .milliseconds(25))
+                }
+                let litBefore = DragHoverRegistry.anyShowing
+                switch index {
+                case 1:
+                    pane.reload()   // nothing changed
+                case 2:
+                    fm.createFile(atPath: drop.appendingPathComponent("new.bin").path, contents: Data("n".utf8))
+                    BrowserModel.reloadWhenIdle([pane])   // as when a transfer into this folder finishes
+                default:
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(300))
+                let litAfter = DragHoverRegistry.anyShowing
+                let newShownMidDrag = pane.rows.contains { $0.name == "new.bin" }
+                var landed = false
+                for _ in 0..<40 {
+                    landed = fm.fileExists(atPath: drop.appendingPathComponent("Target/\(file)").path)
+                    if landed { break }
+                    try? await Task.sleep(for: .milliseconds(150))
+                }
+                try? await Task.sleep(for: .seconds(1))
+                let label = ["plain", "pane reloaded, nothing changed", "new file + transfer-finished refresh"][index]
+                lines.append("drag \(file) onto Target (\(label)): lit before \(litBefore) · lit after \(litAfter) · landed in Target \(landed)"
+                             + (index == 2 ? " · new.bin listed mid-drag \(newShownMidDrag), after \(pane.rows.contains { $0.name == "new.bin" })" : "")
+                             + " · drop: \(UITestHarness.lastDrop.isEmpty ? "none" : UITestHarness.lastDrop)"
+                             + " · trail \(UITestHarness.dropTrail.reduce(into: [String]()) { if $0.last != $1 { $0.append($1) } })"
+                             + (fm.fileExists(atPath: logPath + ".aborted") ? " · ui-drag stopped" : ""))
+            }
+            for job in transfers.transferJobs where job.isActive || job.status == .queued { transfers.cancel(job) }
+            try? await Task.sleep(for: .seconds(1))
+            transfers.dismissFinished()
+            try? fm.removeItem(at: root)
+            for name in (try? fm.contentsOfDirectory(atPath: dest.path)) ?? [] { try? fm.removeItem(at: dest.appendingPathComponent(name)) }
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {

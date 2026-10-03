@@ -487,6 +487,8 @@ struct ContentView: View {
     /// its scroll back. The keyboard goes to its active pane.
     private func tabShown() {
         guard let tab else { return }
+        // The HUD follows the tab: a transfer picked in the queue list doesn't stay pinned.
+        transfers.pinnedJobID = nil
         if tab.first.current == nil, !tab.firstOpened {
             tab.firstOpened = true
             let start = tab.pendingFirst.flatMap { PaneMemory.isReachable($0, servers: servers) ? $0 : nil }
@@ -593,6 +595,8 @@ struct ContentView: View {
         UITestHarness.runCableLiveTestIfRequested(transfers: transfers)
         UITestHarness.runBusyTestIfRequested(transfers: transfers)
         UITestHarness.runQueueClickTestIfRequested(transfers: transfers)
+        UITestHarness.runFollowTabTestIfRequested(transfers: transfers)
+        UITestHarness.runReloadDragTestIfRequested(transfers: transfers)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

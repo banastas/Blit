@@ -676,26 +676,32 @@ enum EmptySpaceMenu {
 
     /// The row of `browser`'s file list under the pointer (during a drag), or nil.
     static func rowUnderPointer(in browser: BrowserModel) -> Int? {
-        guard let view = anchors.first(where: { $0.browser === browser })?.view, let window = view.window,
-              let content = window.contentView else { return nil }
+        guard let view = anchors.last(where: { $0.browser === browser && $0.view?.window != nil })?.view,
+              let window = view.window, let content = window.contentView else { return nil }
         let point = window.convertPoint(fromScreen: NSEvent.mouseLocation)
-        guard view.convert(view.bounds, to: nil).contains(point),
-              let hit = content.hitTest(content.convert(point, from: nil)) else { return nil }
-        var current: NSView? = hit
-        while let view = current {
-            let table = view as? NSTableView ?? (view as? NSScrollView)?.documentView as? NSTableView
-            if let table {
-                let row = table.row(at: table.convert(point, from: nil))
-                return row >= 0 ? row : nil
-            }
-            current = view.superview
-        }
-        return nil
+        // The list by position, as for right-clicks: while the HUD is open (a
+        // transfer running), a hit test there finds the window's whole column
+        // instead of the table, and no folder lit up under a drag.
+        guard view.convert(view.bounds, to: nil).contains(point), let table = table(at: point, in: content) else { return nil }
+        let row = table.row(at: table.convert(point, from: nil))
+        return row >= 0 ? row : nil
     }
+
+    #if DEBUG
+    /// The views registered for `browser`'s list, in order: in a window or not, and where.
+    static func debugAnchors(for browser: BrowserModel) -> String {
+        anchors.filter { $0.browser === browser }.map { anchor in
+            guard let view = anchor.view else { return "gone" }
+            guard view.window != nil else { return "out of window" }
+            let frame = view.convert(view.bounds, to: nil)
+            return "in window \(Int(frame.minX)),\(Int(frame.minY)) \(Int(frame.width))×\(Int(frame.height))"
+        }.joined(separator: " · ")
+    }
+    #endif
 
     /// The view covering `browser`'s file list.
     static func anchorView(for browser: BrowserModel) -> NSView? {
-        anchors.first(where: { $0.browser === browser && $0.view?.window != nil })?.view
+        anchors.last(where: { $0.browser === browser && $0.view?.window != nil })?.view
     }
 
     /// The browser whose file list covers `point` in `window`.

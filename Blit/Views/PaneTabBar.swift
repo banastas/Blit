@@ -149,14 +149,8 @@ struct PaneTabBar: View {
     private func activity(_ tab: PaneTab) -> PaneTabItem.Activity? {
         let shown = [tab.firstLocation, twoPanes ? tab.secondLocation : nil].compactMap { $0 }
         guard !shown.isEmpty else { return nil }
-        let touching = transfers.jobs.filter { job in
-            guard !job.isOperation else { return false }
-            let places = [BrowseLocation.local(job.destination)] + job.sources + job.sources.compactMap(\.parent)
-            return shown.contains { pane in
-                // By the paths alone: this runs every second on the main thread.
-                places.contains { place in pane == place || FileOperations.location(place, textuallyContains: pane) }
-            }
-        }
+        // By the paths alone: this runs every second on the main thread.
+        let touching = transfers.jobs.filter { job in shown.contains(where: job.touches) }
         if let running = touching.last(where: \.isActive) {
             let percent = Int((running.progress * 100).rounded())   // as the strip and HUD round
             return .init(text: "\(running.directionGlyph) \(percent)%", failed: false,

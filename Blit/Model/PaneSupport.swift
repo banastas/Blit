@@ -59,6 +59,12 @@ final class Panes {
     var second: BrowserModel? { PaneTabs.shared.current?.second }
     var twoPanes = false
 
+    /// The folders the shown tab shows (its second pane's only while shown).
+    var shownLocations: [BrowseLocation] {
+        guard let tab = PaneTabs.shared.current else { return [] }
+        return [tab.firstLocation, twoPanes ? tab.secondLocation : nil].compactMap { $0 }
+    }
+
     func other(than model: BrowserModel) -> BrowserModel? {
         guard twoPanes, let first, let second else { return nil }
         return model === first ? second : model === second ? first : nil

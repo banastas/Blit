@@ -511,16 +511,35 @@ final class TransferManager {
     /// for the user to pick a destination.
     var pendingExternalFiles: [URL] = []
 
-    /// The job the strip shows: a running file operation (so a delete shows
-    /// over a long download while it runs), else the transfer that's been
-    /// running longest, so the other lane starting a job doesn't take over;
-    /// else the most recent.
+    /// The job the strip and HUD show: one picked in the queue list; a running
+    /// file operation (so a delete shows over a long download while it runs);
+    /// the shown tab's own transfer (the HUD follows the tab); else the
+    /// transfer that's been running longest, so the other lane starting a job
+    /// doesn't take over; else the most recent.
     var featured: TransferJob? {
         if let pinnedJobID, let pinned = jobs.first(where: { $0.id == pinnedJobID }) { return pinned }
         let active = jobs.filter(\.isActive)
         let started = { (job: TransferJob) in job.startedAt ?? .distantPast }
-        return active.filter(\.isOperation).max { started($0) < started($1) }
-            ?? active.min { started($0) < started($1) }
+        if let operation = active.filter(\.isOperation).max(by: { started($0) < started($1) }) { return operation }
+        // The HUD follows the tab: the transfer the shown tab's folders are
+        // part of (running, then paused, waiting, finished); else as before.
+        let shown = Panes.shared.shownLocations
+        let mine = jobs.filter { job in shown.contains(where: job.touches) }
+        // Between two of the tab's own, the one between more of its folders
+        // (its pair's copy over a download into one of them), then by start.
+        let reach = { (job: TransferJob) in shown.filter(job.touches).count }
+        func best(_ candidates: [TransferJob], earliest: Bool) -> TransferJob? {
+            candidates.max { a, b in
+                reach(a) != reach(b) ? reach(a) < reach(b) : (earliest ? started(a) > started(b) : started(a) < started(b))
+            }
+        }
+        if let job = best(mine.filter(\.isActive), earliest: true)
+            ?? best(mine.filter { $0.status == .paused }, earliest: false)
+            ?? best(mine.filter { $0.status == .queued }, earliest: true)
+            ?? best(mine, earliest: false) {
+            return job
+        }
+        return active.min { started($0) < started($1) }
             ?? jobs.last(where: { $0.status != .queued }) ?? jobs.first
     }
 

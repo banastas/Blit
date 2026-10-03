@@ -51,6 +51,17 @@ struct ShareTools {
 }
 
 extension TransferJob {
+    /// Whether a pane showing `pane` shows this transfer: it's the
+    /// destination or a source, or inside one (where files are landing or
+    /// coming from), or the folder one sits in (it's a row there). By the
+    /// paths alone: the HUD and the tab bar ask as they redraw.
+    func touches(_ pane: BrowseLocation) -> Bool {
+        guard !isOperation else { return false }
+        let ends = [BrowseLocation.local(destination)] + sources
+        return ends.contains { FileOperations.location($0, textuallyContains: pane) }
+            || ends.compactMap(\.parent).contains { FileOperations.same($0, pane) }
+    }
+
     /// Whether this transfer reads or writes on the share mounted at `mountPoint`.
     func uses(_ mountPoint: String) -> Bool {
         ([destination.path] + sources.compactMap { $0.localURL?.path }).contains { path in
