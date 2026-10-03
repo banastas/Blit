@@ -438,6 +438,13 @@ enum UITestHarness {
         }
         let running = job([]), failed = job(["a.mkv: SHA-256 mismatch"])
         let paused = job([]); paused.status = .paused
+        let trash = TransferJob(kind: .operation(verb: "TRASH", done: "MOVED TO TRASH"), sources: [.local(URL(fileURLWithPath: "/tmp/Some.Film.2160p.torrent"))],
+                                destination: URL(fileURLWithPath: "/tmp"), title: "Some.Film.2160p.torrent", destinationName: "Trash")
+        trash.persistent = false
+        trash.status = .finished
+        trash.fileCount = 1
+        trash.filesFinished = 1
+        trash.failures = ["Some.Film.2160p.torrent: “Some.Film.2160p.torrent” couldn’t be moved to the Trash because the volume doesn’t support it."]
         let pausing = job([]); pausing.stopRequest = .pause
         transfers.notice("Can't put a folder inside itself.", action: "MOVE", place: "Incoming")
         transfers.notice("“untitled folder” already exists in “Movies”.", action: "NEW FOLDER")
@@ -448,6 +455,9 @@ enum UITestHarness {
             TransferStrip(job: pausing).frame(width: 900)
             TransferHUD(job: running).frame(width: 900)
             TransferStrip(job: failed).frame(width: 900)
+            TransferStrip(job: trash).frame(width: 900)
+            WarningsPopover(job: trash) {}
+            WarningsPopover(job: failed) {}
             ForEach(Array(notices), id: \.id) { TransferStrip(job: $0).frame(width: 900) }
             MenuBarTransfer(job: failed).frame(width: 296)
         }

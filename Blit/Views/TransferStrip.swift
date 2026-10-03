@@ -48,6 +48,7 @@ enum HUDColor {
 struct TransferStrip: View {
     @Environment(TransferManager.self) private var transfers
     let job: TransferJob
+    @State private var showingWarnings = false
 
     var body: some View {
         #if DEBUG
@@ -92,8 +93,10 @@ struct TransferStrip: View {
                     PixelHistogram(samples: Array(job.history.suffix(30)), scale: job.histogramScale)
                         .frame(width: 60, height: 20)
                 } else {
+                    // What went wrong, right here: the full HUD doesn't show file
+                    // operations (a Move to Trash), so opening it did nothing.
                     Button {
-                        transfers.isExpanded = true
+                        showingWarnings = true
                     } label: {
                         hudText("✕ \(job.failures.count) WARNING\(job.failures.count == 1 ? "" : "S")", glyphSize: 9)
                             .font(HUDFont.label())
@@ -104,8 +107,11 @@ struct TransferStrip: View {
                             .fixedSize()
                     }
                     .buttonStyle(.plain)
-                    .help(job.failures.joined(separator: "\n") + "\n\nClick to show the full HUD")
-                    .accessibilityLabel("\(job.failures.count) warning\(job.failures.count == 1 ? "" : "s"), show details")
+                    .help("Show what went wrong")
+                    .accessibilityLabel("\(job.failures.count) warning\(job.failures.count == 1 ? "" : "s"), show them")
+                    .popover(isPresented: $showingWarnings, arrowEdge: .top) {
+                        WarningsPopover(job: job) { showingWarnings = false }
+                    }
                 }
                 rate
                 separator
@@ -315,8 +321,13 @@ struct TransferStrip: View {
         if let notice = job.notice { return "✕ \(notice.uppercased())" }
         if case .operation(_, let done) = job.kind {
             let ok = job.filesFinished - job.failures.count
+            // The first failure's reason ("name: reason"), so the line says why.
+            let why = job.failures.first.map { failure in
+                failure.range(of: ": ").map { String(failure[$0.upperBound...]) } ?? failure
+            }
             return "\(job.failures.isEmpty ? "✓" : "✕") \(ok)/\(job.fileCount) \(done) · \(job.destinationName.uppercased())"
                 + (job.failures.isEmpty ? "" : " · \(job.failures.count) FAILED")
+                + (why.map { ": \($0.uppercased())" } ?? "")
         }
         let verified = "\(job.filesVerified)/\(job.fileCount) VERIFIED"
         let size = TransferJob.bytes(job.totalBytes)
@@ -330,6 +341,57 @@ struct TransferStrip: View {
             + (job.unverifiedCount > 0 ? " · \(job.unverifiedCount) SIZE-CHECKED (VERIFY OFF)" : "")
             + (job.filesAlreadyPresent > 0 ? " · \(job.filesAlreadyPresent) ALREADY THERE" : "")
             + (job.failures.isEmpty ? "" : " · \(job.failures.count) FAILED")
+    }
+}
+
+/// A transfer's or a file operation's failures, from the strip's WARNING tag:
+/// each item with what went wrong, selectable. They used to show only in the
+/// tag's tooltip, and clicking it did nothing for operations.
+struct WarningsPopover: View {
+    @Environment(TransferManager.self) private var transfers
+    let job: TransferJob
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            hudText("✕ \(job.failures.count) WARNING\(job.failures.count == 1 ? "" : "S") · \(job.title.uppercased())", glyphSize: 9)
+                .font(HUDFont.label())
+                .foregroundStyle(HUDColor.failureText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if job.failures.count <= 6 {
+                list
+            } else {
+                ScrollView { list }.frame(height: 240)
+            }
+            if !job.isOperation {
+                HStack {
+                    Spacer()
+                    HUDButton("SHOW IN HUD", help: "Open the full HUD on this transfer") {
+                        transfers.pinnedJobID = job.id
+                        transfers.isExpanded = true
+                        close()
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 480, alignment: .leading)
+        .background(HUDColor.background)
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(job.failures.enumerated()), id: \.offset) { _, failure in
+                Text(failure)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(HUDColor.bright)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
