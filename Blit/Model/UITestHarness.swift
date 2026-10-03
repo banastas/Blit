@@ -1922,6 +1922,7 @@ enum UITestHarness {
                 }
                 try? await Task.sleep(for: .milliseconds(300))
                 let litAfter = DragHoverRegistry.anyShowing
+                    && (FileListRegistry.coordinator(for: pane).map { $0.litRowViews == 1 } ?? true)
                 let newShownMidDrag = pane.rows.contains { $0.name == "new.bin" }
                 var landed = false
                 for _ in 0..<40 {
@@ -2376,6 +2377,186 @@ enum UITestHarness {
             PaneTabs.shared.close(tab.id)
             await pause(1)
             lines.append("tab 2 closed: keyboard \(keyboard()) · active \(active())")
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitNativeDropTest <log>` (with `-BlitNativeList YES` and two panes):
+    /// the AppKit list's drag and drop, driven by a stand-in drag (no real
+    /// input): what a dragged row puts on the pasteboard, which folder lights
+    /// up as it moves (a folder row, the folder holding a file in an expanded
+    /// folder, never a folder being dragged; the list otherwise), a folder
+    /// selected in the receiving pane taking a drag from the other, and where
+    /// the dropped files land.
+    static func runNativeDropTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitNativeDropTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-native-drop")
+            try? fm.removeItem(at: root)
+            let left = root.appendingPathComponent("Left"), right = root.appendingPathComponent("Right")
+            for folder in ["Left/Sub", "Left/Other", "Right/Box"] {
+                try? fm.createDirectory(at: root.appendingPathComponent(folder), withIntermediateDirectories: true)
+            }
+            for name in ["Left/a.bin", "Left/b.bin", "Left/Sub/inner.bin", "Right/c.bin"] {
+                fm.createFile(atPath: root.appendingPathComponent(name).path, contents: Data("x".utf8))
+            }
+            defer { try? fm.removeItem(at: root) }
+            guard let first = PaneTabs.shared.current?.first, let window = BrowserModel.activeWindow else { return lines.append("no window") }
+            guard let second = BrowserModel.oppositePane?(first) else { return lines.append("no second pane (showSecondPane off?)") }
+            first.open(.local(left))
+            second.open(.local(right))
+            first.sort(by: .name)
+            second.sort(by: .name)
+            for _ in 0..<30 where first.rows.count < 4 || second.rows.count < 2 { try? await Task.sleep(for: .milliseconds(200)) }
+            if let sub = first.rows.first(where: { $0.name == "Sub" }) { first.setExpanded(sub.location, true) }
+            for _ in 0..<30 where first.rows.count < 5 { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .milliseconds(600))
+            guard let leftList = FileListRegistry.coordinator(for: first), let rightList = FileListRegistry.coordinator(for: second) else {
+                return lines.append("no native lists (run with -BlitNativeList YES)")
+            }
+            lines.append("left rows \(first.rows.map { String(repeating: "  ", count: $0.depth) + $0.name }) · right rows \(second.rows.map(\.name))")
+            var sequence = 1000
+            /// The rows' pasteboard items, as a drag of `names` from `list` writes them.
+            @MainActor func board(_ names: [String], from list: FileListCoordinator, in model: BrowserModel) -> NSPasteboard {
+                model.selection = Set(model.rows.filter { names.contains($0.name) }.map(\.id))
+                list.table.selectRowIndexes(IndexSet(model.rows.indices.filter { names.contains(model.rows[$0].name) }), byExtendingSelection: false)
+                let board = NSPasteboard(name: NSPasteboard.Name("blit-native-drop-\(sequence)"))
+                board.clearContents()
+                let writers = model.rows.indices.filter { names.contains(model.rows[$0].name) }
+                    .compactMap { list.tableView(list.table, pasteboardWriterForRow: $0) }
+                board.writeObjects(writers)
+                return board
+            }
+            @MainActor func point(_ name: String?, in list: FileListCoordinator, model: BrowserModel) -> NSPoint {
+                let table = list.table
+                guard let name, let row = model.rows.firstIndex(where: { $0.name == name }) else {
+                    // Below the last row.
+                    let last = table.rect(ofRow: max(0, table.numberOfRows - 1))
+                    return table.convert(NSPoint(x: last.minX + 60, y: last.maxY + 40), to: nil)
+                }
+                let rect = table.rect(ofRow: row)
+                return table.convert(NSPoint(x: rect.minX + 60, y: rect.midY), to: nil)
+            }
+            @MainActor func lit(_ list: FileListCoordinator) -> String {
+                let value: String = switch list.dropHover.value {
+                case .folder(let folder): folder.lastComponent
+                case .list: "the list"
+                case nil: "nothing"
+                }
+                return "\(value) (rows lit \(list.litRowViews), outline \(!list.listOutline.isHidden))"
+            }
+            // 1. What a dragged row carries.
+            let pasteboard = board(["a.bin"], from: leftList, in: first)
+            lines.append("a.bin's pasteboard: \(pasteboard.pasteboardItems?.map { $0.types.map(\.rawValue) } ?? [])")
+            // 2. Hovering a drag of a.bin over the left list.
+            sequence += 1
+            var drag = StandInDrag(pasteboard: pasteboard, sequence: sequence, window: window)
+            leftList.dragEntered(drag)
+            /// A picture of the left list alone (only this test's files show).
+            @MainActor func picture(_ suffix: String) {
+                let view = leftList.scrollView
+                guard UserDefaults.standard.bool(forKey: "BlitNativeDropPictures"),
+                      let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + "-\(suffix).png"))
+            }
+            for name in ["Other", "inner.bin", "b.bin", nil] as [String?] {
+                drag.location = point(name, in: leftList, model: first)
+                _ = leftList.tableView(leftList.table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
+                lines.append("a.bin over \(name ?? "empty space"): lights \(lit(leftList))")
+                if name == "Other" || name == "b.bin" { picture(name == "Other" ? "folder" : "list") }
+            }
+            leftList.dragExited()
+            lines.append("after it left: lights \(lit(leftList))")
+            // 3. Dragging Sub: Sub and the file inside it don't take it.
+            sequence += 1
+            drag = StandInDrag(pasteboard: board(["Sub"], from: leftList, in: first), sequence: sequence, window: window)
+            leftList.dragEntered(drag)
+            for name in ["Sub", "inner.bin", "Other"] {
+                drag.location = point(name, in: leftList, model: first)
+                _ = leftList.tableView(leftList.table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
+                lines.append("Sub over \(name): lights \(lit(leftList))")
+            }
+            leftList.dragExited()
+            // 4. a.bin onto Box in the right pane, Box selected there.
+            second.selection = Set(second.rows.filter { $0.name == "Box" }.map(\.id))
+            try? await Task.sleep(for: .milliseconds(300))
+            sequence += 1
+            drag = StandInDrag(pasteboard: board(["a.bin"], from: leftList, in: first), sequence: sequence, window: window)
+            rightList.dragEntered(drag)
+            drag.location = point("Box", in: rightList, model: second)
+            _ = rightList.tableView(rightList.table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
+            lines.append("a.bin over Box (selected in the right pane): lights \(lit(rightList))")
+            let accepted = rightList.tableView(rightList.table, acceptDrop: drag, row: -1, dropOperation: .on)
+            lines.append("dropped: accepted \(accepted) · lights \(lit(rightList)) · \(lastDrop)")
+            // 5. b.bin onto the right list's empty space.
+            sequence += 1
+            drag = StandInDrag(pasteboard: board(["b.bin"], from: leftList, in: first), sequence: sequence, window: window)
+            rightList.dragEntered(drag)
+            drag.location = point(nil, in: rightList, model: second)
+            _ = rightList.tableView(rightList.table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
+            lines.append("b.bin over the right list's empty space: lights \(lit(rightList))")
+            _ = rightList.tableView(rightList.table, acceptDrop: drag, row: -1, dropOperation: .on)
+            for _ in 0..<20 where !fm.fileExists(atPath: right.appendingPathComponent("b.bin").path) { try? await Task.sleep(for: .milliseconds(150)) }
+            try? await Task.sleep(for: .milliseconds(500))
+            func contents(_ url: URL) -> [String] { ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).sorted() }
+            lines.append("on disk: Left \(contents(left)) · Right \(contents(right)) · Right/Box \(contents(right.appendingPathComponent("Box")))")
+            // 6. With the full HUD open (a stand-in transfer running), a drag
+            // over a row still finds the list: the view under the pointer, and
+            // the first one up from it that takes Blit's drags.
+            /// The deepest view under `point` (in `view`'s superview) registered
+            /// for Blit's drags, front to back, as AppKit picks a drag's target.
+            @MainActor func dragTaker(_ view: NSView, _ point: NSPoint) -> NSView? {
+                guard !view.isHidden, view.frame.contains(point) else { return nil }
+                let local = view.superview.map { view.convert(point, from: $0) } ?? point
+                for sub in view.subviews.reversed() { if let found = dragTaker(sub, local) { return found } }
+                return view.registeredDraggedTypes.contains(.blitLocations) ? view : nil
+            }
+            @MainActor func probe(_ label: String) {
+                guard let content = window.contentView, let frame = content.superview else { return }
+                for name in ["Other", "inner.bin"] {
+                    let inWindow = point(name, in: leftList, model: first)
+                    let hit = content.hitTest(content.convert(inWindow, from: nil))
+                    let taker = dragTaker(frame, frame.convert(inWindow, from: nil))
+                    lines.append("\(label), over \(name): hit test \(hit.map { String(describing: type(of: $0)).prefix(40) } ?? "nothing") · the registered view there \(taker.map { String(describing: type(of: $0)).prefix(40) } ?? "none")")
+                }
+            }
+            /// Whether a click (posted to this copy: the pointer never moves) on
+            /// Other's date reaches the left list.
+            @MainActor func clickReaches() async -> Bool {
+                leftList.pressedOffName = false
+                guard let row = first.rows.firstIndex(where: { $0.name == "Other" }) else { return false }
+                let column = leftList.table.column(withIdentifier: FileColumn.modified.identifier)
+                let rect = leftList.table.frameOfCell(atColumn: max(column, 0), row: row)
+                let at = leftList.table.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                    try? await Task.sleep(for: .milliseconds(80))
+                }
+                try? await Task.sleep(for: .milliseconds(300))
+                return leftList.pressedOffName
+            }
+            lines.append("HUD closed: a click on a row reaches the list \(await clickReaches())")
+            probe("HUD closed")
+            let job = TransferJob(kind: .copy, sources: [.local(root.appendingPathComponent("x.bin"))], destination: right,
+                                  title: "x.bin", destinationName: "Right")
+            job.persistent = false
+            job.status = .running
+            transfers.debugInsert(job)
+            transfers.isExpanded = true
+            try? await Task.sleep(for: .seconds(1.5))
+            probe("HUD open (\(transfers.isExpanded))")
+            lines.append("HUD open: a click on a row reaches the list \(await clickReaches())")
+            transfers.isExpanded = false
+            transfers.debugRemove(job)
             lines.append("done")
         }
     }
@@ -3798,9 +3979,12 @@ enum UITestHarness {
             let cell = table.view(atColumn: nameColumn, row: 0, makeIfNecessary: false)
             let nameRect = table.rect(ofColumn: nameColumn)
             lines.append("name column \(Int(nameRect.minX))…\(Int(nameRect.maxX)) · cell content width \(Int(cell?.fittingSize.width ?? -1))")
+            // The AppKit list decides from its cells; the SwiftUI list from RowDragRule.
+            let native = FileListRegistry.coordinator(for: browser)
+            @MainActor func pressedOffName() -> Bool { native?.pressedOffName ?? RowDragRule.pressedOffName }
             for (label, x) in [("on the name", nameRect.minX + 40), ("blank part of the Name column", nameRect.maxX - 20)] {
                 let local = NSPoint(x: x, y: table.rect(ofRow: 0).midY)
-                lines.append("press \(label): moves files \(RowDragRule.isOnName(local, in: table, browser: browser))")
+                lines.append("press \(label): moves files \(native?.dragsFiles(from: local) ?? RowDragRule.isOnName(local, in: table, browser: browser))")
             }
             // Press on the date of the first row, move down over three more, release.
             let start = point(row: 0, column: dateColumn)
@@ -3808,12 +3992,14 @@ enum UITestHarness {
             for row in 1...3 { post(.leftMouseDragged, point(row: row, column: dateColumn)) }
             post(.leftMouseUp, point(row: 3, column: dateColumn))
             try? await Task.sleep(for: .seconds(1.5))
-            lines.append("press on the date: pressed off the name \(RowDragRule.pressedOffName)")
+            lines.append("press on the date: pressed off the name \(pressedOffName()) · selected \(browser.selectedItems.map(\.name))")
+            let widths = table.tableColumns.filter { !$0.isHidden }.map { "\($0.title) \(Int($0.width))" }
+            lines.append("columns: \(widths.joined(separator: ", ")) · table width \(Int(table.bounds.width)) · clip \(Int(table.enclosingScrollView?.contentView.bounds.width ?? 0))")
             // A press on a name sets the table up for a file drag again.
             post(.leftMouseDown, point(row: 4, column: nameColumn, x: nameRect.minX + 40))
             post(.leftMouseUp, point(row: 4, column: nameColumn, x: nameRect.minX + 40))
             try? await Task.sleep(for: .seconds(1))
-            lines.append("press on a name: pressed off the name \(RowDragRule.pressedOffName)")
+            lines.append("press on a name: pressed off the name \(pressedOffName())")
             lines.append("done")
         }
     }
@@ -4512,5 +4698,38 @@ enum UITestHarness {
             browser.goBack()
         }
     }
+}
+#endif
+
+#if DEBUG
+/// A drag for the native drop test: where it is and what it carries.
+@MainActor
+final class StandInDrag: NSObject, @MainActor NSDraggingInfo {
+    let draggingPasteboard: NSPasteboard
+    let draggingSequenceNumber: Int
+    let draggingDestinationWindow: NSWindow?
+    var location = NSPoint.zero
+
+    init(pasteboard: NSPasteboard, sequence: Int, window: NSWindow) {
+        draggingPasteboard = pasteboard
+        draggingSequenceNumber = sequence
+        draggingDestinationWindow = window
+    }
+
+    var draggingLocation: NSPoint { location }
+    var draggingSourceOperationMask: NSDragOperation { [.copy, .move, .generic] }
+    var draggedImageLocation: NSPoint { location }
+    var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 0
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    override func namesOfPromisedFilesDropped(atDestination dropDestination: URL) -> [String]? { nil }
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?,
+                                classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+    func resetSpringLoading() {}
 }
 #endif

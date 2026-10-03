@@ -107,6 +107,10 @@ extension FileListCoordinator: NSTextFieldDelegate {
     func pressBegan(_ event: NSEvent) {
         cancelPendingRename()
         press = nil
+        #if DEBUG
+        let pressed = table.convert(event.locationInWindow, from: nil)
+        pressedOffName = table.row(at: pressed) >= 0 && !dragsFiles(from: pressed)
+        #endif
         guard event.clickCount == 1, event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty,
               let model, model.renaming == nil else { return }
         let point = table.convert(event.locationInWindow, from: nil)

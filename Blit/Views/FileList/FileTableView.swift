@@ -59,6 +59,23 @@ final class FileTableView: NSTableView {
         return menu
     }
 
+    /// Finder's rule: a drag from a row's icon or name moves the files; from
+    /// the rest of the row it selects rows as it goes.
+    override func canDragRows(with rowIndexes: IndexSet, at mouseDownPoint: NSPoint) -> Bool {
+        guard coordinator?.dragsFiles(from: mouseDownPoint) != false else { return false }
+        return super.canDragRows(with: rowIndexes, at: mouseDownPoint)
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        coordinator?.dragEntered(sender)
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        super.draggingExited(sender)
+        coordinator?.dragExited()
+    }
+
     override func resignFirstResponder() -> Bool {
         coordinator?.cancelPendingRename()
         return super.resignFirstResponder()

@@ -111,6 +111,9 @@ class DrawnCellView: NSTableCellView {
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet { if backgroundStyle != oldValue { needsDisplay = true } }
     }
+
+    /// A dragged row's image is its icon and name (NameCellView's), as in Finder.
+    override var draggingImageComponents: [NSDraggingImageComponent] { [] }
 }
 
 /// The Name column: indent, disclosure triangle, icon, the name (shortened in
@@ -233,6 +236,25 @@ final class NameCellView: DrawnCellView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil { setLoading(false) }
+    }
+
+    /// Where the drawn content ends: the name and the marks after it.
+    var contentEnd: CGFloat { [nameRect, verifiedRect, partialRect, statusRect].map(\.maxX).max() ?? 0 }
+
+    /// The icon and the name, as the drag image.
+    override var draggingImageComponents: [NSDraggingImageComponent] {
+        guard let item, iconRect != .zero else { return [] }
+        let rect = NSRect(x: iconRect.minX, y: 0, width: max(nameRect.maxX, iconRect.maxX) - iconRect.minX, height: bounds.height)
+        let icon = self.icon, iconFrame = iconRect.offsetBy(dx: -rect.minX, dy: 0), nameFrame = nameRect.offsetBy(dx: -rect.minX, dy: 0)
+        let image = NSImage(size: rect.size, flipped: true) { _ in
+            icon?.draw(in: iconFrame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            CellDrawing.draw(item.name, in: nameFrame, font: CellFonts.body, color: .labelColor, lineBreak: .byTruncatingMiddle)
+            return true
+        }
+        let component = NSDraggingImageComponent(key: .icon)
+        component.contents = image
+        component.frame = rect
+        return [component]
     }
 
     // The disclosure triangle takes its own clicks (the row isn't selected), as a button would.

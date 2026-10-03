@@ -88,6 +88,18 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     /// The keyboard was asked for while the list couldn't take it (hidden for
     /// a pane with no folder yet, or not in the window yet).
     private var keyboardPending = false
+    /// Drops (FileListDrag.swift): where the drag over the list would go, its
+    /// watch, what the drag carries (read once per drag), and the list's
+    /// outline for a drop into its own folder.
+    let dropHover = DragHover<ListDrop>()
+    var dropWatch: Task<Void, Never>?
+    var dragged: (sequence: Int, locations: [BrowseLocation])?
+    let listOutline = PixelAntsView(cell: 2)
+    #if DEBUG
+    /// The last press was on a row but off its icon and name, where a drag
+    /// selects rows (the drag tests).
+    var pressedOffName = false
+    #endif
     /// Watches what the visible rows' marks are made of (status, ✓, the
     /// spinner), and refreshes them once a second while a transfer runs (its
     /// byte count isn't observed).
@@ -102,6 +114,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     isolated deinit {
         for observer in [frameObserver, scrollObserver].compactMap({ $0 }) { NotificationCenter.default.removeObserver(observer) }
         decorations?.cancel()
+        dropWatch?.cancel()
         ticker?.invalidate()
     }
 
@@ -164,6 +177,14 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
             MainActor.assumeIsolated { self?.noteVisibleRows() }
         }
         table.setDraggingSourceOperationMask([.copy, .move, .generic], forLocal: true)
+        // To Finder and other apps: a copy, unless they ask otherwise (⌘ moves).
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        // Blit draws its own drop marks (FileRowView, the list's outline).
+        table.draggingDestinationFeedbackStyle = .none
+        listOutline.isHidden = true
+        listOutline.autoresizingMask = [.width, .height]
+        scrollView.addSubview(listOutline)
+        watchDropHover()
         let header = NSMenu()
         header.delegate = self
         header.autoenablesItems = false
@@ -293,6 +314,8 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
             // A name being edited is saved, in its own pane.
             if let field = renameField { controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: field)) }
             cancelPendingRename()
+            dropHover.exited()
+            showDropMark()
             old.listScrollOrigin = scrollView.contentView.bounds.origin
             if old.keyboardTarget === self { old.keyboardTarget = nil }
             FileListRegistry.unregister(self, for: old)
@@ -412,6 +435,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
                 self.fill(cell, with: self.rows[row], context: context)
             }
         }
+        if dropHover.value != nil { showDropMark() }
     }
 
     private func setRows(_ new: [FileItem]) {
@@ -681,33 +705,20 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         }
     }
 
-    // MARK: Drops (a first probe: what arrives, and where it goes)
+    // MARK: Rows
 
-    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
-                   proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
-        #if DEBUG
-        UITestHarness.dropTrail.append("native validate row \(row) \(operation == .on ? "on" : "above")")
-        #endif
-        return NSEvent.modifierFlags.contains(.option) ? .copy : .move
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        tableView.makeView(withIdentifier: FileRowView.identifier, owner: nil) as? FileRowView ?? {
+            let view = FileRowView()
+            view.identifier = FileRowView.identifier
+            return view
+        }()
     }
 
-    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int,
-                   dropOperation: NSTableView.DropOperation) -> Bool {
-        guard let model, let folder = model.current else { return false }
-        let sources = DropReader.locations(on: info.draggingPasteboard)
-        #if DEBUG
-        UITestHarness.dropTrail.append("native accept \(sources.count)")
-        #endif
-        var target = folder
-        var name = model.title
-        if dropOperation == .on, rows.indices.contains(row), rows[row].isDirectory {
-            target = rows[row].location
-            name = rows[row].name
-        }
-        let moving = sources.filter { $0 != target }
-        guard !moving.isEmpty else { return false }
-        model.drop(moving, into: target, name: name, copy: NSEvent.modifierFlags.contains(.option))
-        return true
+    /// A row coming into view shows the drop marks if a drop would go into it.
+    func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
+        guard let rowView = rowView as? FileRowView else { return }
+        rowView.isDropTarget = rows.indices.contains(row) && dropHover.value == .folder(rows[row].location)
     }
 }
 
