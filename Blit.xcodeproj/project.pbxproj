@@ -150,7 +150,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = F87BNUZAVJ;
 				CODE_SIGN_ENTITLEMENTS = Support/Blit.entitlements;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -163,7 +163,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.39;
+				MARKETING_VERSION = 0.2.40;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				PRODUCT_BUNDLE_IDENTIFIER = com.banastas.Blit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -177,7 +177,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = F87BNUZAVJ;
 				CODE_SIGN_ENTITLEMENTS = Support/Blit.entitlements;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -190,7 +190,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.39;
+				MARKETING_VERSION = 0.2.40;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				PRODUCT_BUNDLE_IDENTIFIER = com.banastas.Blit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
