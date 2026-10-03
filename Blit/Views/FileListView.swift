@@ -871,7 +871,11 @@ struct ViewAnchor: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: NSView, context: Context) {}
+    /// Again on updates: a list shown for another tab is the same view with
+    /// another browser, which has to be registered for it.
+    func updateNSView(_ view: NSView, context: Context) {
+        onView(view)
+    }
 }
 
 /// Editing a name in place (PRD R2.12): the name without its extension starts

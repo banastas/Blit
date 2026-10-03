@@ -226,17 +226,22 @@ enum PaneScroll {
         }
     }
 
-    /// Scrolls `tab`'s lists back, once their tables exist and hold rows.
+    /// Scrolls `tab`'s lists back (to the top for one not scrolled before:
+    /// the same lists show every tab), once they show the tab's own rows.
     static func restore(_ tab: PaneTab) {
         for model in [tab.first, tab.second].compactMap({ $0 }) {
-            guard let origin = offsets.removeValue(forKey: ObjectIdentifier(model)) else { continue }
+            let origin = offsets.removeValue(forKey: ObjectIdentifier(model))
             Task { @MainActor in
                 for _ in 0..<20 {
                     try? await Task.sleep(for: .milliseconds(50))
                     guard let clip = clipView(for: model), let table = clip.documentView as? NSTableView,
-                          table.numberOfRows > 0 else { continue }
-                    clip.scroll(to: origin)
-                    clip.enclosingScrollView?.reflectScrolledClipView(clip)
+                          table.numberOfRows == model.rows.count else { continue }
+                    if let origin {
+                        clip.scroll(to: origin)
+                        clip.enclosingScrollView?.reflectScrolledClipView(clip)
+                    } else if table.numberOfRows > 0 {
+                        table.scrollRowToVisible(0)
+                    }
                     return
                 }
             }

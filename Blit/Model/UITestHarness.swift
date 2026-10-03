@@ -1909,6 +1909,69 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitTabSwitchTest <log>`: how long a tab switch keeps the main thread
+    /// (two tabs, 300 files in each pane): 40 switches, each timed until the
+    /// window has drawn the new tab, with a pause after the first ten for the
+    /// shell to sample the process (<log>.sample, then <log>.sampled).
+    static func runTabSwitchTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTabSwitchTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-tab-switch")
+            try? fm.removeItem(at: root)
+            for name in ["A", "B", "C", "D"] {
+                let folder = root.appendingPathComponent(name)
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                for i in 0..<300 { fm.createFile(atPath: folder.appendingPathComponent(String(format: "%@-file-%03d.mkv", name, i)).path, contents: Data("x".utf8)) }
+            }
+            let tabs = PaneTabs.shared
+            guard let window = BrowserModel.activeWindow, let first = tabs.current, let firstSecond = first.second else {
+                return lines.append("no second pane")
+            }
+            window.setFrame(NSRect(x: 100, y: 100, width: 1280, height: 800), display: true)
+            first.first.open(.local(root.appendingPathComponent("A")))
+            firstSecond.open(.local(root.appendingPathComponent("B")))
+            tabs.newTab()
+            for _ in 0..<50 where tabs.current?.second == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            try? await Task.sleep(for: .milliseconds(200))
+            tabs.current?.first.open(.local(root.appendingPathComponent("C")))
+            tabs.current?.second?.open(.local(root.appendingPathComponent("D")))
+            try? await Task.sleep(for: .seconds(2))
+            var times: [Double] = []
+            @MainActor func switches(_ count: Int) async {
+                for n in 0..<count {
+                    let start = Date()
+                    tabs.select(index: n % 2 == 0 ? 0 : 1)
+                    // Until the window has handled the change: the main actor is
+                    // free again after SwiftUI's update and AppKit's layout and display.
+                    try? await Task.sleep(for: .milliseconds(1))
+                    await MainActor.run { window.displayIfNeeded() }
+                    times.append(Date().timeIntervalSince(start) * 1000)
+                    try? await Task.sleep(for: .milliseconds(30))
+                }
+            }
+            await switches(10)
+            try? Data().write(to: URL(fileURLWithPath: logPath + ".sample"))
+            try? await Task.sleep(for: .milliseconds(300))
+            await switches(30)
+            for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".sampled") { try? await Task.sleep(for: .milliseconds(100)) }
+            let sorted = times.sorted()
+            lines.append(String(format: "%d switches · median %.0f ms · p90 %.0f ms · worst %.0f ms · first %.0f ms",
+                                sorted.count, sorted[sorted.count / 2], sorted[Int(Double(sorted.count) * 0.9)], sorted.last ?? 0, times.first ?? 0))
+            lines.append("rows shown: \(tabs.current?.first.rows.count ?? -1) | \(tabs.current?.second?.rows.count ?? -1)")
+            if let table = firstTable(in: window.contentView), table.numberOfRows > 2 {
+                let heights = (0..<min(5, table.numberOfRows)).map { Int(table.rect(ofRow: $0).height * 10) }
+                lines.append("table: automatic heights \(table.usesAutomaticRowHeights) · rowHeight \(table.rowHeight) · spacing \(table.intercellSpacing) · row rects \(heights.map { Double($0) / 10 }) · style \(table.style.rawValue)")
+            }
+            try? fm.removeItem(at: root)
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {
