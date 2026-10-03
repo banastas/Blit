@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.39</title>
-      <pubDate>Sat, 03 Oct 2026 15:51:19 +0000</pubDate>
-      <sparkle:version>42</sparkle:version>
-      <sparkle:shortVersionString>0.2.39</sparkle:shortVersionString>
+      <title>Blit 0.2.40</title>
+      <pubDate>Sat, 03 Oct 2026 16:33:24 +0000</pubDate>
+      <sparkle:version>43</sparkle:version>
+      <sparkle:shortVersionString>0.2.40</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Click a transfer's or file operation's WARNING tag to see exactly what went wrong, and a failed file operation (such as Move to Trash) now says why right on the strip.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.39.zip" type="application/octet-stream" sparkle:edSignature="AmQkQqXnSBy/JAY67kE+72WDI2NZYNHndPs3C193n1quZaS2cChusp/i40ZloiSjGmdSPK4H/YTvmqHHI6qcBw==" length="5777478" />
+      <description><![CDATA[<p>Blit now explains Full Disk Access: a one-time welcome sheet (and a row in Settings › General) takes you straight to the setting macOS needs before Blit can move, rename or delete in iCloud Drive, Desktop, Documents, Downloads and the Trash, and a warning macOS caused says so.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.40.zip" type="application/octet-stream" sparkle:edSignature="Nhi6pgA0arYVrWtsCHJxDS/qzZL/YQVOlkxTiDFuPvh+u7jBbub2BBSSLlrGnyW6jrI05kkBJpBnFp/8s9eZCw==" length="5789929" />
     </item>
   </channel>
 </rss>
