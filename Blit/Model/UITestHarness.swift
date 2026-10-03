@@ -3033,12 +3033,15 @@ enum UITestHarness {
         return 0
     }
 
+    /// The tab shown as the last click's button came up (the real-input tabs test).
+    static var shownAtRelease: Int?
+
     /// Where each queue row's buttons sit in the HUD (the queue click test).
     static var queueControls: [UUID: CGRect] = [:]
 
 
     /// `-BlitTabsKeysTest <log>`: the tabs with real keys and clicks, sent by
-    /// scripts/ui-keys (steps 0–7) and ui-drag (one drag), both of which act
+    /// scripts/ui-keys (steps 0–9) and ui-drag (one drag), both of which act
     /// only while this copy's window is the one in front.
     static func runTabsKeysTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitTabsKeysTest") else { return }
@@ -3101,6 +3104,13 @@ enum UITestHarness {
                 try? await Task.sleep(for: .seconds(1))
             }
             @MainActor func shown() -> Int { (tabs.selectedIndex ?? -1) + 1 }
+            // The tab shown as each click's button comes up: a local monitor sees the
+            // release before the tab bar does, so a tab chosen on the press already shows.
+            let releases = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { event in
+                MainActor.assumeIsolated { shownAtRelease = (PaneTabs.shared.selectedIndex ?? -1) + 1 }
+                return event
+            }
+            defer { releases.map(NSEvent.removeMonitor) }
             lines.append("frontmost is this test copy: \(NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier)")
             await step(0, 17, 1)                                      // ⌘T
             lines.append("⌘T: \(tabs.tabs.count) tabs · shows \(shown()) · \(tabs.current?.first.current?.lastComponent ?? "-") | \(tabs.current?.second?.current?.lastComponent ?? "-")")
@@ -3111,7 +3121,7 @@ enum UITestHarness {
             await step(3, 48, 2 | 4)                                  // ⌃⇧Tab
             lines.append("⌃⇧Tab: shows \(shown())")
             await step(4, -1, 0, click: tabPoint(1))                  // click tab 2
-            lines.append("click on tab 2: shows \(shown())")
+            lines.append("click on tab 2: shows \(shown()) · already shown as the button came up \(shownAtRelease == 2)")
             await step(5, -1, 0, click: tabPoint(0), clicks: 2)       // double-click tab 1
             lines.append("double-click on tab 1: shows \(shown()) · renaming \(tabs.renamingID == tabs.tabs.first?.id)")
             await step(6, 53, 0)                                      // Escape
@@ -3128,7 +3138,20 @@ enum UITestHarness {
                 try? await Task.sleep(for: .seconds(2.5))   // ui-drag releases about a second after hovering
             }
             lines.append("drag tab 1 past tab 2: it's now tab \((tabs.tabs.firstIndex { $0.id == firstID } ?? -1) + 1) · shows \(shown())")
-            await step(7, 13, 1)                                      // ⌘W
+            await step(7, 17, 1)                                      // ⌘T
+            lines.append("⌘T: \(tabs.tabs.count) tabs · shows \(shown())")
+            // A click on a tab's close button (the ⌘-number, hovered) closes it, never showing it first.
+            let showing = tabs.current?.id
+            let closing = tabs.tabs.first { $0.id != showing }
+            let button = closing.flatMap { TabPress.spots[$0.id]?.close }.map { frame -> [Int] in
+                guard let content = window.contentView else { return [] }
+                return cg(NSPoint(x: frame.midX, y: content.bounds.height - frame.midY))
+            } ?? []
+            shownAtRelease = nil
+            await step(8, -1, 0, click: button)                       // click a tab's close button
+            lines.append("close button on another tab: \(tabs.tabs.count) tabs · it's gone \(!tabs.tabs.contains { $0.id == closing?.id })"
+                         + " · the shown tab stayed \(tabs.current?.id == showing) · shown as the button came up \(shownAtRelease.map(String.init) ?? "-")")
+            await step(9, 13, 1)                                      // ⌘W
             lines.append("⌘W: \(tabs.tabs.count) tab · window open \(window.isVisible)")
             lines.append("done")
         }
