@@ -19,6 +19,8 @@ struct ContentView: View {
     @FocusState private var searchFocused: Bool
     @State private var selection: BrowseLocation?
     @State private var editing: EditingServer?
+    /// The first launch's Full Disk Access sheet (PRD R2.20).
+    @State private var offeringFullDiskAccess = false
     @State private var removing: ServerConfig?
     /// Height of the floating transfer HUD or strip, reserved below the list.
     @State private var hudHeight: CGFloat = 0
@@ -141,6 +143,7 @@ struct ContentView: View {
                                                                   available: transfers.featured != nil))
         .focusedSceneValue(\.textSurface, textSurfaceUp)
         .focusedSceneValue(\.paneTabs, tabsState)
+        .sheet(isPresented: $offeringFullDiskAccess) { FullDiskAccessSheet() }
         .sheet(item: $editing) { item in
             ServerEditor(server: item.server, isNew: item.isNew) { server, password in
                 servers.save(server, password: password)
@@ -597,6 +600,7 @@ struct ContentView: View {
         UITestHarness.runQueueClickTestIfRequested(transfers: transfers)
         UITestHarness.runFollowTabTestIfRequested(transfers: transfers)
         UITestHarness.runReloadDragTestIfRequested(transfers: transfers)
+        UITestHarness.renderFullDiskAccessIfRequested(transfers: transfers)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)
@@ -648,6 +652,13 @@ struct ContentView: View {
         wireRefresh()
         // The shown tab's folders (a window made again keeps its tabs).
         tabShown()
+        // First launch: offer Full Disk Access once, after the window is up.
+        if FullDiskAccess.shared.shouldOffer {
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                offeringFullDiskAccess = true
+            }
+        }
     }
 }
 

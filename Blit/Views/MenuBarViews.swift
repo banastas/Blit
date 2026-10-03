@@ -278,6 +278,7 @@ struct SettingsView: View {
                     }
                     note("Problems, files that were only size-checked, and waiting for disk space always notify.")
                 }
+                Section { FullDiskAccessRow() }
             }
             .tabItem { Label("General", systemImage: "gearshape") }
 

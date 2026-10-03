@@ -364,6 +364,19 @@ struct WarningsPopover: View {
             } else {
                 ScrollView { list }.frame(height: 240)
             }
+            // Turned away by macOS's privacy protection: say which setting, and go there.
+            if job.failures.contains(where: FullDiskAccess.looksBlocked), !FullDiskAccess.shared.isGranted {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("macOS blocked this: Blit doesn’t have Full Disk Access.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(HUDColor.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    HUDButton("OPEN SYSTEM SETTINGS", help: "Privacy & Security › Full Disk Access") {
+                        FullDiskAccess.shared.openSettings()
+                    }
+                }
+            }
             if !job.isOperation {
                 HStack {
                     Spacer()

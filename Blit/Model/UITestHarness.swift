@@ -1091,6 +1091,45 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRenderFullDiskAccess out.png`: the first-launch Full Disk Access
+    /// sheet, not granted (out.png) and granted (out-granted.png), and the
+    /// warning popover's hint for a Move to Trash macOS turned away
+    /// (out-popover.png). Also out.txt: whether this copy has it.
+    static func renderFullDiskAccessIfRequested(transfers: TransferManager) {
+        guard let path = UserDefaults.standard.string(forKey: "BlitRenderFullDiskAccess") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let access = FullDiskAccess.shared
+            let real = access.isGranted
+            try? "this copy: granted \(real) · check \(FullDiskAccess.check()) · would offer \(access.shouldOffer)".write(toFile: path.replacingOccurrences(of: ".png", with: ".txt"), atomically: true, encoding: .utf8)
+            @MainActor func picture<V: View>(_ view: V, _ suffix: String) async {
+                let host = NSHostingView(rootView: view.environment(transfers))
+                let size = host.fittingSize
+                let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: 80, y: 80), size: size),
+                                      styleMask: [.titled], backing: .buffered, defer: false)
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = host
+                window.orderFront(nil)
+                try? await Task.sleep(for: .seconds(1.2))
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path.replacingOccurrences(of: ".png", with: "\(suffix).png")))
+                }
+                window.orderOut(nil)
+            }
+            access.debugSet(false)
+            await picture(FullDiskAccessSheet().background(Color(nsColor: .windowBackgroundColor)), "")
+            let trash = TransferJob(kind: .operation(verb: "TRASH", done: "MOVED TO TRASH"), sources: [.local(URL(fileURLWithPath: "/tmp/Some.Film.torrent"))],
+                                    destination: URL(fileURLWithPath: "/tmp"), title: "Some.Film.torrent", destinationName: "Trash")
+            trash.persistent = false
+            trash.failures = ["Some.Film.torrent: “Some.Film.torrent” couldn’t be moved to the trash because you don’t have permission to access it."]
+            await picture(WarningsPopover(job: trash) {}, "-popover")
+            access.debugSet(true)
+            await picture(FullDiskAccessSheet().background(Color(nsColor: .windowBackgroundColor)), "-granted")
+            access.debugRelease()
+        }
+    }
+
     /// `-BlitShareTest <log>` (with -BlitIsolatedQueue YES): shares are remembered
     /// with their smb:// address, and mounting one that's already mounted goes
     /// through NetFS without UI (EEXIST) and doesn't disturb it. Also each
