@@ -63,9 +63,10 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     if PaneTabs.shared.tabs.count > 1 { PaneTabBar(twoPanes: showSecondPane) }
                     // The same lists show every tab, each tab's own folders, rows and
-                    // selection (its models); scrolls are kept per tab (PaneScroll).
-                    // Built afresh per tab (.id), a switch took half a second with
-                    // 300 files a pane: a new split view and tables every time.
+                    // selection (its models); scrolls are kept per tab (PaneScroll),
+                    // and the divider stays where it was put. A switch costs the same
+                    // as building the lists afresh per tab (.id): about 0.2 s, all in
+                    // swapping the visible rows (the tab switch test).
                     panes(browser)
                 }
                     // Room at the bottom for the transfer HUD, which floats over it.
@@ -606,6 +607,7 @@ struct ContentView: View {
         UITestHarness.runReloadDragTestIfRequested(transfers: transfers)
         UITestHarness.renderFullDiskAccessIfRequested(transfers: transfers)
         UITestHarness.runTabSwitchTestIfRequested()
+        UITestHarness.runTabPressTestIfRequested()
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

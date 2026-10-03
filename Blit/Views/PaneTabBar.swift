@@ -70,11 +70,9 @@ struct PaneTabBar: View {
                             title: tab.title(twoPanes: twoPanes, servers: servers),
                             detail: detail(tab), activity: activity(tab))
                     .frame(width: tabWidth)
-                    #if DEBUG
                     .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { _, frame in
-                        UITestHarness.tabFrames[tab.id] = frame
+                        TabPress.spots[tab.id, default: .init()].tab = frame
                     }
-                    #endif
                     .offset(x: offset(of: tab.id, at: index, step: step, count: tabs.tabs.count))
                     .zIndex(drag?.id == tab.id ? 1 : 0)
                     // The others slide to make room; the dragged tab stays under the pointer.
@@ -95,6 +93,7 @@ struct PaneTabBar: View {
             .accessibilityLabel("New tab")
         }
         .coordinateSpace(.named(Self.row))
+        .onAppear { TabPress.install() }
         .padding(.horizontal, 8)
         .padding(.top, 5)
         .frame(width: width, height: Self.height, alignment: .topLeading)
@@ -174,6 +173,9 @@ private struct PaneTabItem: View {
     var body: some View {
         HStack(spacing: 6) {
             leading
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { _, frame in
+                    TabPress.spots[tab.id, default: .init()].close = frame
+                }
             Group {
                 if isRenaming {
                     TextField("Tab Name", text: $draft)
@@ -280,5 +282,44 @@ private struct PaneTabItem: View {
         } else {
             Color.clear.frame(width: 18, height: 16)
         }
+    }
+}
+
+/// Tabs are chosen on the press, as in Safari and Finder: the tap gesture
+/// fires on the release, a click's length later. The close button (the
+/// ⌘-number, hovered), a ⌃-click (the menu) and a double-click's second press
+/// (renaming) are left to the tab.
+@MainActor
+enum TabPress {
+    struct Spot {
+        var tab = CGRect.null
+        var close = CGRect.null
+    }
+    /// Where each tab and its close button are, in SwiftUI's global space
+    /// (the window's content, top-left origin).
+    static var spots: [UUID: Spot] = [:]
+    private static var monitor: Any?
+
+    static func install() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            nonisolated(unsafe) let event = event
+            MainActor.assumeIsolated {
+                if let id = tab(at: event) { PaneTabs.shared.select(id) }
+            }
+            return event
+        }
+    }
+
+    /// The tab a press chooses: one under it, off its close button.
+    static func tab(at event: NSEvent) -> UUID? {
+        guard event.type == .leftMouseDown, event.clickCount == 1, !event.modifierFlags.contains(.control),
+              let window = event.window, window === BrowserModel.activeWindow, let content = window.contentView,
+              PaneTabs.shared.tabs.count > 1 else { return nil }
+        let point = CGPoint(x: event.locationInWindow.x, y: content.bounds.height - event.locationInWindow.y)
+        return PaneTabs.shared.tabs.first { tab in
+            guard let spot = spots[tab.id] else { return false }
+            return spot.tab.contains(point) && !spot.close.insetBy(dx: -3, dy: -4).contains(point)
+        }?.id
     }
 }

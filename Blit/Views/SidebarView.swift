@@ -42,6 +42,9 @@ struct SidebarView: View {
     var onRefresh: (BrowseLocation, _ reconnect: Bool) -> Void
 
     var body: some View {
+        #if DEBUG
+        let _ = UITestHarness.tick("SidebarView")
+        #endif
         List(selection: rowSelection) {
             Section("Favorites") {
                 ForEach(Array(sidebar.favorites.enumerated()), id: \.element.id) { index, favorite in

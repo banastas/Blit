@@ -17,6 +17,9 @@ struct PathBar: View {
     let browser: BrowserModel
 
     var body: some View {
+        #if DEBUG
+        let _ = UITestHarness.tick("PathBar")
+        #endif
         let segments = self.segments
         HStack(spacing: 3) {
             ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in

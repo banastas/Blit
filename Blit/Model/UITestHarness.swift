@@ -6,6 +6,7 @@
 
 #if DEBUG
 import AppKit
+import QuartzCore
 import AVFoundation
 import BlitLocal
 import BlitRemote
@@ -1946,9 +1947,13 @@ enum UITestHarness {
     }
 
     /// `-BlitTabSwitchTest <log>`: how long a tab switch keeps the main thread
-    /// (two tabs, 300 files in each pane): 40 switches, each timed until the
-    /// window has drawn the new tab, with a pause after the first ten for the
-    /// shell to sample the process (<log>.sample, then <log>.sampled).
+    /// (two tabs, or `-BlitTabSwitchTabs N`; 300 files in each pane, or
+    /// `-BlitTabSwitchFiles N`): 40 switches, each timed until the run loop
+    /// has been round twice (the window has drawn), with a pause after the
+    /// first ten for the shell to sample the process (<log>.sample, then
+    /// <log>.sampled; touch <log>.sampled first to skip it, as a sampler slows
+    /// the process). Then the same for making the other pane active and for
+    /// resizing the window, and the memory footprint.
     static func runTabSwitchTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitTabSwitchTest") else { return }
         var lines: [String] = [] {
@@ -1962,7 +1967,8 @@ enum UITestHarness {
             for name in ["A", "B", "C", "D"] {
                 let folder = root.appendingPathComponent(name)
                 try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
-                for i in 0..<300 { fm.createFile(atPath: folder.appendingPathComponent(String(format: "%@-file-%03d.mkv", name, i)).path, contents: Data("x".utf8)) }
+                let count = UserDefaults.standard.integer(forKey: "BlitTabSwitchFiles")
+                for i in 0..<(count > 0 ? count : 300) { fm.createFile(atPath: folder.appendingPathComponent(String(format: "%@-file-%03d.mkv", name, i)).path, contents: Data("x".utf8)) }
             }
             let tabs = PaneTabs.shared
             guard let window = BrowserModel.activeWindow, let first = tabs.current, let firstSecond = first.second else {
@@ -1971,41 +1977,134 @@ enum UITestHarness {
             window.setFrame(NSRect(x: 100, y: 100, width: 1280, height: 800), display: true)
             first.first.open(.local(root.appendingPathComponent("A")))
             firstSecond.open(.local(root.appendingPathComponent("B")))
-            tabs.newTab()
-            for _ in 0..<50 where tabs.current?.second == nil { try? await Task.sleep(for: .milliseconds(50)) }
-            try? await Task.sleep(for: .milliseconds(200))
-            tabs.current?.first.open(.local(root.appendingPathComponent("C")))
-            tabs.current?.second?.open(.local(root.appendingPathComponent("D")))
+            // -BlitTabSwitchTabs N: N tabs (2 by default), showing A | B and C | D in turn.
+            let tabCount = max(2, UserDefaults.standard.integer(forKey: "BlitTabSwitchTabs"))
+            for index in 1..<tabCount {
+                tabs.newTab()
+                for _ in 0..<50 where tabs.current?.second == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                try? await Task.sleep(for: .milliseconds(200))
+                tabs.current?.first.open(.local(root.appendingPathComponent(index % 2 == 0 ? "A" : "C")))
+                tabs.current?.second?.open(.local(root.appendingPathComponent(index % 2 == 0 ? "B" : "D")))
+                try? await Task.sleep(for: .milliseconds(500))
+            }
             try? await Task.sleep(for: .seconds(2))
             var times: [Double] = []
-            @MainActor func switches(_ count: Int) async {
-                for n in 0..<count {
-                    let start = Date()
-                    tabs.select(index: n % 2 == 0 ? 0 : 1)
-                    // Until the window has handled the change: the main actor is
-                    // free again after SwiftUI's update and AppKit's layout and display.
-                    try? await Task.sleep(for: .milliseconds(1))
-                    await MainActor.run { window.displayIfNeeded() }
-                    times.append(Date().timeIntervalSince(start) * 1000)
-                    try? await Task.sleep(for: .milliseconds(30))
+            // Until the run loop has been round twice: SwiftUI's update, AppKit's
+            // layout and the display commit happen in the first round's observers.
+            @MainActor func settled() async {
+                await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                    DispatchQueue.main.async { DispatchQueue.main.async { done.resume() } }
                 }
             }
+            @MainActor func switches(_ count: Int, select: Bool = true) async {
+                for n in 0..<count {
+                    let start = CACurrentMediaTime()
+                    if select { tabs.select(index: n % tabCount) }
+                    await settled()
+                    times.append((CACurrentMediaTime() - start) * 1000)
+                    try? await Task.sleep(for: .milliseconds(60))
+                }
+            }
+            // The same wait with no switch: what the measuring itself costs.
+            await switches(10, select: false)
+            let baseline = times.sorted()[5]
+            times = []
+            tabs.select(index: 0)
+            try? await Task.sleep(for: .milliseconds(300))
+            let before = bodyCounts
             await switches(10)
+            lines.append("redraws per switch: " + bodyCounts.keys.sorted().map { key in
+                String(format: "%@ %.1f", key, Double((bodyCounts[key] ?? 0) - (before[key] ?? 0)) / 10)
+            }.joined(separator: " · "))
             try? Data().write(to: URL(fileURLWithPath: logPath + ".sample"))
             try? await Task.sleep(for: .milliseconds(300))
             await switches(30)
             for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".sampled") { try? await Task.sleep(for: .milliseconds(100)) }
             let sorted = times.sorted()
-            lines.append(String(format: "%d switches · median %.0f ms · p90 %.0f ms · worst %.0f ms · first %.0f ms",
-                                sorted.count, sorted[sorted.count / 2], sorted[Int(Double(sorted.count) * 0.9)], sorted.last ?? 0, times.first ?? 0))
-            lines.append("rows shown: \(tabs.current?.first.rows.count ?? -1) | \(tabs.current?.second?.rows.count ?? -1)")
-            if let table = firstTable(in: window.contentView), table.numberOfRows > 2 {
-                let heights = (0..<min(5, table.numberOfRows)).map { Int(table.rect(ofRow: $0).height * 10) }
-                lines.append("table: automatic heights \(table.usesAutomaticRowHeights) · rowHeight \(table.rowHeight) · spacing \(table.intercellSpacing) · row rects \(heights.map { Double($0) / 10 }) · style \(table.style.rawValue)")
+            lines.append(String(format: "%d switches · median %.0f ms · p90 %.0f ms · worst %.0f ms · first %.0f ms · no switch %.1f ms",
+                                sorted.count, sorted[sorted.count / 2], sorted[Int(Double(sorted.count) * 0.9)], sorted.last ?? 0, times.first ?? 0, baseline))
+            lines.append("rows shown: \(tabs.current?.first.rows.count ?? -1) | \(tabs.current?.second?.rows.count ?? -1) · \(tabCount) tabs")
+            // Making the other pane the active one (a click on it), as the window does.
+            var activations: [Double] = []
+            for _ in 0..<20 {
+                guard let tab = tabs.current else { break }
+                let start = CACurrentMediaTime()
+                tab.secondActive.toggle()
+                await settled()
+                activations.append((CACurrentMediaTime() - start) * 1000)
+                try? await Task.sleep(for: .milliseconds(60))
             }
+            let activated = activations.sorted()
+            lines.append(String(format: "other pane active · median %.1f ms · worst %.1f ms", activated[activated.count / 2], activated.last ?? 0))
+            // Resizing the window: every list there is follows it.
+            var resizes: [Double] = []
+            for n in 0..<12 {
+                let start = CACurrentMediaTime()
+                window.setFrame(NSRect(x: 100, y: 100, width: n % 2 == 0 ? 1160 : 1280, height: 800), display: true)
+                await settled()
+                resizes.append((CACurrentMediaTime() - start) * 1000)
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+            let resized = resizes.sorted()
+            lines.append(String(format: "resize · median %.0f ms · worst %.0f ms · footprint %.0f MB", resized[resized.count / 2], resized.last ?? 0, footprintMB()))
             try? fm.removeItem(at: root)
             lines.append("done")
         }
+    }
+
+    /// `-BlitTabPressTest <log>`: which tab a press chooses (TabPress, the
+    /// tab bar's mouse-down monitor), from presses made up at each tab's spots
+    /// and handed to it directly, never sent: the test copy stays in the back.
+    static func runTabPressTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTabPressTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let tabs = PaneTabs.shared
+            for _ in 0..<2 {
+                tabs.newTab()
+                try? await Task.sleep(for: .milliseconds(700))
+            }
+            tabs.select(index: 0)
+            try? await Task.sleep(for: .milliseconds(700))
+            guard let window = BrowserModel.activeWindow, let content = window.contentView, tabs.tabs.count == 3 else {
+                return lines.append("no window or tabs")
+            }
+            @MainActor func press(_ label: String, tab index: Int, clickCount: Int = 1, flags: NSEvent.ModifierFlags = [],
+                                  at place: (TabPress.Spot) -> CGPoint) {
+                guard let spot = TabPress.spots[tabs.tabs[index].id] else { return lines.append("\(label): no spot") }
+                let point = place(spot)
+                guard let event = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: point.x, y: content.bounds.height - point.y),
+                                                     modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                     windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                                     clickCount: clickCount, pressure: 1) else { return lines.append("\(label): no event") }
+                let chosen = TabPress.tab(at: event)
+                if let chosen { tabs.select(chosen) }
+                let name = chosen.flatMap { id in tabs.tabs.firstIndex { $0.id == id } }.map { "tab \($0 + 1)" } ?? "none"
+                lines.append("\(label): \(name) · shown tab \((tabs.selectedIndex ?? -1) + 1)")
+            }
+            press("tab 2, its name", tab: 1) { CGPoint(x: $0.tab.midX, y: $0.tab.midY) }
+            press("tab 3, its right end (the transfer tag)", tab: 2) { CGPoint(x: $0.tab.maxX - 6, y: $0.tab.midY) }
+            press("tab 1, its close button", tab: 0) { CGPoint(x: $0.close.midX, y: $0.close.midY) }
+            press("tab 1, just right of the close button", tab: 0) { CGPoint(x: $0.close.maxX + 2, y: $0.close.midY) }
+            press("tab 1, a double-click's second press", tab: 0, clickCount: 2) { CGPoint(x: $0.tab.midX, y: $0.tab.midY) }
+            press("tab 1, ⌃-click", tab: 0, flags: .control) { CGPoint(x: $0.tab.midX, y: $0.tab.midY) }
+            press("below tab 1, in the list", tab: 0) { CGPoint(x: $0.tab.midX, y: $0.tab.maxY + 60) }
+            press("tab 1, its name", tab: 0) { CGPoint(x: $0.tab.midX + 20, y: $0.tab.midY) }
+            lines.append("done")
+        }
+    }
+
+    /// The process's memory footprint, as Activity Monitor's Memory column.
+    static func footprintMB() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : -1
     }
 
     static func runUndoTestIfRequested() {
@@ -2937,9 +3036,6 @@ enum UITestHarness {
     /// Where each queue row's buttons sit in the HUD (the queue click test).
     static var queueControls: [UUID: CGRect] = [:]
 
-    /// Where each tab sits in the tab bar (SwiftUI's global space: the
-    /// window's content, top-left origin), for the real-input tabs test.
-    static var tabFrames: [UUID: CGRect] = [:]
 
     /// `-BlitTabsKeysTest <log>`: the tabs with real keys and clicks, sent by
     /// scripts/ui-keys (steps 0–7) and ui-drag (one drag), both of which act
@@ -2975,7 +3071,7 @@ enum UITestHarness {
                 return [Int(screen.x), Int(screenHeight - screen.y)]
             }
             @MainActor func tabPoint(_ index: Int) -> [Int] {
-                guard tabs.tabs.indices.contains(index), let frame = tabFrames[tabs.tabs[index].id],
+                guard tabs.tabs.indices.contains(index), let frame = TabPress.spots[tabs.tabs[index].id]?.tab,
                       let content = window.contentView else { return [] }
                 // Right of the ⌘-number (hovering there shows the close button).
                 return cg(NSPoint(x: frame.midX + 20, y: content.bounds.height - frame.midY))
@@ -3075,7 +3171,7 @@ enum UITestHarness {
             try? await Task.sleep(for: .seconds(1.5))
             @MainActor func order() -> String { tabs.tabs.map { $0.customName ?? "?" }.joined(separator: " ") }
             @MainActor func tabRect(_ index: Int) -> CGRect? {
-                tabs.tabs.indices.contains(index) ? tabFrames[tabs.tabs[index].id] : nil
+                tabs.tabs.indices.contains(index) ? TabPress.spots[tabs.tabs[index].id]?.tab : nil
             }
             guard let first = tabRect(0), let last = tabRect(4) else { return lines.append("no tab frames") }
             // The sums the bar does: tab widths that fill it, and the slot a drag lands in.
