@@ -6,6 +6,7 @@
 import AppKit
 import QuickLookThumbnailing
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FileIcon: View {
     let item: FileItem
@@ -56,6 +57,56 @@ final class ThumbnailCache {
         }
         let image = representation.nsImage
         cache.setObject(image, forKey: key as NSString)
+        return image
+    }
+}
+
+/// File icons by type, cached (per-file icons are slow over SMB).
+@MainActor
+final class IconCache {
+    static let shared = IconCache()
+    private var cache: [String: NSImage] = [:]
+    private var pathCache: [String: NSImage] = [:]
+
+    /// Finder's icon for a folder or volume (drive icons, shared-folder badges).
+    func icon(forPath path: String) -> NSImage {
+        if let cached = pathCache[path] { return cached }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        pathCache[path] = image
+        return image
+    }
+
+    func icon(for item: FileItem) -> NSImage {
+        let key = item.isDirectory ? "/folder" : (item.name as NSString).pathExtension.lowercased()
+        if let cached = cache[key] { return cached }
+        let type = item.isDirectory ? UTType.folder : (UTType(filenameExtension: key) ?? .data)
+        let image = NSWorkspace.shared.icon(for: type)
+        cache[key] = image
+        return image
+    }
+
+    private var rowCache: [String: NSImage] = [:]
+
+    /// The same icon drawn once at a row's 16 pt (and 32 px). Handed to an
+    /// image view, the full icon went to Core Animation at its largest size,
+    /// 1024 px: 4 MB for each kind of file in view.
+    func rowIcon(for item: FileItem) -> NSImage {
+        let key = item.isDirectory ? "/folder" : (item.name as NSString).pathExtension.lowercased()
+        if let cached = rowCache[key] { return cached }
+        let source = icon(for: item)
+        let image = NSImage(size: NSSize(width: 16, height: 16))
+        for scale in [1, 2] {
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 16 * scale, pixelsHigh: 16 * scale,
+                                             bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                             colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { continue }
+            rep.size = NSSize(width: 16, height: 16)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            source.draw(in: NSRect(x: 0, y: 0, width: 16, height: 16))
+            NSGraphicsContext.restoreGraphicsState()
+            image.addRepresentation(rep)
+        }
+        rowCache[key] = image
         return image
     }
 }

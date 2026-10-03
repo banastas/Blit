@@ -240,6 +240,14 @@ extension BrowserModel {
 
     // MARK: Partial downloads
 
+    /// A part file's tooltip: how far it got, and from where.
+    func partialSummary(_ partial: PartialDownload) -> String {
+        let done = Int64(partial.done).formatted(.byteCount(style: .file))
+        let total = Int64(partial.size).formatted(.byteCount(style: .file))
+        let from = server(for: partial)?.displayName ?? partial.source?.host ?? "a server"
+        return "\(done) of \(total) downloaded from \(from): \(partial.remotePath). Right-click › Resume Download to finish it, or Move to Trash to discard it."
+    }
+
     /// The configured server a partial download came from.
     func server(for partial: PartialDownload) -> ServerConfig? {
         guard let source = partial.source else { return nil }

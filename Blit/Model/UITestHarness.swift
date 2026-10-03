@@ -2047,6 +2047,40 @@ enum UITestHarness {
             }
             let resized = resizes.sorted()
             lines.append(String(format: "resize · median %.0f ms · worst %.0f ms · footprint %.0f MB", resized[resized.count / 2], resized.last ?? 0, footprintMB()))
+            // -BlitTabSwitchLayers YES: the layers with backing stores over 1 MB.
+            if UserDefaults.standard.bool(forKey: "BlitTabSwitchLayers"), let content = window.contentView {
+                var byClass: [String: (count: Int, megabytes: Double)] = [:]
+                func add(_ layer: CALayer, owner: String) {
+                    if layer.contents != nil {
+                        let megabytes = Double(layer.bounds.width * layer.bounds.height * layer.contentsScale * layer.contentsScale * 4) / 1_048_576
+                        let key = owner + " / " + String(describing: type(of: layer))
+                        byClass[key, default: (0, 0)].count += 1
+                        byClass[key, default: (0, 0)].megabytes += megabytes
+                    }
+                }
+                func walkLayers(_ layer: CALayer, owner: String, skip: Set<ObjectIdentifier>) {
+                    for sub in layer.sublayers ?? [] where !skip.contains(ObjectIdentifier(sub)) {
+                        add(sub, owner: owner + "·sub")
+                        walkLayers(sub, owner: owner, skip: skip)
+                    }
+                }
+                func walk(_ view: NSView) {
+                    let owner = String(describing: type(of: view)).prefix(40)
+                    if let layer = view.layer {
+                        add(layer, owner: String(owner))
+                        // Sublayers that aren't other views' layers.
+                        let viewLayers = Set(view.subviews.compactMap { $0.layer.map(ObjectIdentifier.init) })
+                        walkLayers(layer, owner: String(owner), skip: viewLayers)
+                    }
+                    view.subviews.forEach(walk)
+                }
+                walk(content)
+                let total = byClass.values.reduce(0) { $0 + $1.megabytes }
+                lines.append(String(format: "layer contents: %.1f MB in %d layers", total, byClass.values.reduce(0) { $0 + $1.count }))
+                for (key, value) in byClass.sorted(by: { $0.value.megabytes > $1.value.megabytes }).prefix(12) {
+                    lines.append(String(format: "    %.1f MB · %d × ", value.megabytes, value.count) + key)
+                }
+            }
             try? fm.removeItem(at: root)
             lines.append("done")
         }
@@ -2093,6 +2127,128 @@ enum UITestHarness {
             press("tab 1, ⌃-click", tab: 0, flags: .control) { CGPoint(x: $0.tab.midX, y: $0.tab.midY) }
             press("below tab 1, in the list", tab: 0) { CGPoint(x: $0.tab.midX, y: $0.tab.maxY + 60) }
             press("tab 1, its name", tab: 0) { CGPoint(x: $0.tab.midX + 20, y: $0.tab.midY) }
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitTableMetricsTest <log>`: how the left file list's table is set up
+    /// (style, rows, spacing, header, columns, scroll view, a cell's views and
+    /// fonts), to copy into the AppKit list and compare the two.
+    static func runTableMetricsTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTableMetricsTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-table-metrics")
+            try? fm.removeItem(at: root)
+            let left = root.appendingPathComponent("Left"), right = root.appendingPathComponent("Right")
+            for folder in [left, right] {
+                try? fm.createDirectory(at: folder.appendingPathComponent("Sub"), withIntermediateDirectories: true)
+                for name in ["a.mkv", "b.txt"] { fm.createFile(atPath: folder.appendingPathComponent(name).path, contents: Data("x".utf8)) }
+                // -BlitTableMetricsFiles N: that many more files.
+                for index in 0..<UserDefaults.standard.integer(forKey: "BlitTableMetricsFiles") {
+                    fm.createFile(atPath: folder.appendingPathComponent(String(format: "file-%04d.mkv", index)).path, contents: Data("x".utf8))
+                }
+            }
+            guard let window = BrowserModel.activeWindow, let tab = PaneTabs.shared.current, let second = tab.second else {
+                return lines.append("no window or second pane")
+            }
+            window.setFrame(NSRect(x: 100, y: 100, width: 1280, height: 800), display: true)
+            tab.first.open(.local(left))
+            second.open(.local(right))
+            try? await Task.sleep(for: .seconds(2))
+            // -BlitTableMetricsScroll YES: scrolled halfway down first.
+            if UserDefaults.standard.bool(forKey: "BlitTableMetricsScroll") {
+                for case let scroll as NSScrollView in (window.contentView.map { [$0] } ?? []).flatMap({ view -> [NSView] in
+                    var all: [NSView] = []
+                    func walk(_ v: NSView) { all.append(v); v.subviews.forEach(walk) }
+                    walk(view)
+                    return all
+                }) where (scroll.documentView as? NSTableView)?.headerView != nil {
+                    scroll.contentView.scroll(to: NSPoint(x: 0, y: (scroll.documentView?.frame.height ?? 0) / 2))
+                    scroll.reflectScrolledClipView(scroll.contentView)
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+            var tables: [NSTableView] = []
+            func collect(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
+                view.subviews.forEach(collect)
+            }
+            if let content = window.contentView { collect(content) }
+            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) else {
+                return lines.append("no table")
+            }
+            func f(_ value: CGFloat) -> String { String(format: "%.1f", value) }
+            lines.append("table \(type(of: table)) · style \(table.style.rawValue) · effective \(table.effectiveStyle.rawValue) · rows \(table.numberOfRows)")
+            lines.append("rowHeight \(f(table.rowHeight)) · automatic \(table.usesAutomaticRowHeights) · row 0 height \(table.numberOfRows > 0 ? f(table.rect(ofRow: 0).height) : "-") · rowSizeStyle \(table.rowSizeStyle.rawValue) · effective \(table.effectiveRowSizeStyle.rawValue)")
+            lines.append("intercellSpacing \(f(table.intercellSpacing.width))×\(f(table.intercellSpacing.height)) · grid \(table.gridStyleMask.rawValue) · alternating \(table.usesAlternatingRowBackgroundColors) · background \(table.backgroundColor)")
+            lines.append("selection \(table.selectionHighlightStyle.rawValue) · multiple \(table.allowsMultipleSelection) · empty \(table.allowsEmptySelection) · typeSelect \(table.allowsTypeSelect) · reorder \(table.allowsColumnReordering) · resize \(table.allowsColumnResizing) · autoresizing \(table.columnAutoresizingStyle.rawValue) · focusRing \(table.focusRingType.rawValue) · floatsGroupRows \(table.floatsGroupRows)")
+            lines.append("verticalMotionCanBeginDrag \(table.verticalMotionCanBeginDrag) · draggingFeedback \(table.draggingDestinationFeedbackStyle.rawValue) · registered \(table.registeredDraggedTypes.map(\.rawValue))")
+            if let header = table.headerView {
+                lines.append("header \(type(of: header)) · height \(f(header.frame.height))")
+            }
+            for column in table.tableColumns {
+                let cell = column.headerCell
+                lines.append("column \(column.identifier.rawValue) “\(column.title)” · width \(f(column.width)) min \(f(column.minWidth)) max \(f(column.maxWidth)) · mask \(column.resizingMask.rawValue) · hidden \(column.isHidden) · sort \(column.sortDescriptorPrototype.map { "\($0.key ?? "-") \($0.ascending)" } ?? "-") · header font \(cell.font.map { "\($0.fontName) \(f($0.pointSize))" } ?? "-") · align \(cell.alignment.rawValue)")
+            }
+            if let scroll = table.enclosingScrollView {
+                lines.append("scroll \(type(of: scroll)) · insets t\(f(scroll.contentInsets.top)) b\(f(scroll.contentInsets.bottom)) · automatic \(scroll.automaticallyAdjustsContentInsets) · scrollers \(scroll.scrollerStyle.rawValue) · autohides \(scroll.autohidesScrollers) · border \(scroll.borderType.rawValue) · drawsBackground \(scroll.drawsBackground) · clip \(type(of: scroll.contentView))")
+            }
+            if let scroll = table.enclosingScrollView {
+                let clip = scroll.contentView
+                lines.append("scroll more: hScroller \(scroll.hasHorizontalScroller) · vScroller \(scroll.hasVerticalScroller) · hElastic \(scroll.horizontalScrollElasticity.rawValue) · vElastic \(scroll.verticalScrollElasticity.rawValue) · predominant \(scroll.usesPredominantAxisScrolling) · bg \(scroll.backgroundColor) · clip draws \(clip.drawsBackground) · clip bg \(clip.backgroundColor) · clip insets t\(f(clip.contentInsets.top)) b\(f(clip.contentInsets.bottom)) · automaticClip \(clip.automaticallyAdjustsContentInsets) · scroller insets b\(f(scroll.scrollerInsets.bottom)) · table frame \(table.frame) · clip bounds \(clip.bounds) · wantsLayer \(table.wantsLayer) · scroll wantsLayer \(scroll.wantsLayer)")
+            }
+            // Layers with their own backing store, and how big (a full-height one costs memory).
+            var layers: [String] = []
+            func layerWalk(_ view: NSView, _ depth: Int) {
+                guard depth < 4 else { return }
+                if let layer = view.layer {
+                    let px = layer.bounds.width * layer.bounds.height * layer.contentsScale * layer.contentsScale * 4 / 1_048_576
+                    layers.append(String(repeating: "  ", count: depth) + "\(type(of: view)) \(type(of: layer)) \(f(layer.bounds.width))×\(f(layer.bounds.height)) contents \(layer.contents != nil) ~\(String(format: "%.1f", px)) MB · drawsAsLayer \(view.wantsUpdateLayer) · policy \(view.layerContentsRedrawPolicy.rawValue)")
+                }
+                for sub in view.subviews.prefix(6) { layerWalk(sub, depth + 1) }
+            }
+            if let scroll = table.enclosingScrollView { layerWalk(scroll, 0) }
+            lines.append("layers:\n    " + layers.joined(separator: "\n    "))
+            if table.numberOfRows > 0, let rowView = table.rowView(atRow: 0, makeIfNecessary: false) {
+                lines.append("row view \(type(of: rowView)) · frame \(rowView.frame) · emphasized \(rowView.isEmphasized) · groupRowStyle \(rowView.isGroupRowStyle)")
+                for column in 0..<table.numberOfColumns where !table.tableColumns[column].isHidden {
+                    guard let cell = table.view(atColumn: column, row: 0, makeIfNecessary: false) else { continue }
+                    var chain: [String] = []
+                    func walk(_ view: NSView, _ depth: Int) {
+                        guard depth < 4, chain.count < 12 else { return }
+                        chain.append(String(repeating: "  ", count: depth) + "\(type(of: view)) \(f(view.frame.minX)),\(f(view.frame.minY)) \(f(view.frame.width))×\(f(view.frame.height))")
+                        view.subviews.forEach { walk($0, depth + 1) }
+                    }
+                    walk(cell, 0)
+                    lines.append("cell \(table.tableColumns[column].title):\n    " + chain.joined(separator: "\n    "))
+                }
+            }
+            // Each list's rows against its model's, and the folder row's disclosure button.
+            var allTables: [NSTableView] = []
+            func collectTables(_ view: NSView) {
+                if let table = view as? NSTableView, table.headerView != nil { allTables.append(table) }
+                view.subviews.forEach(collectTables)
+            }
+            if let content = window.contentView { collectTables(content) }
+            for (index, table) in allTables.enumerated() {
+                let model = [tab.first, second][min(index, 1)]
+                var buttons: [String] = []
+                table.enumerateAvailableRowViews { rowView, row in
+                    for case let button as NSButton in (rowView.view(atColumn: 0) as? NSView)?.subviews ?? [] {
+                        buttons.append("row \(row) button hidden \(button.isHidden) frame \(button.frame) image \(button.image != nil)")
+                    }
+                }
+                lines.append("table \(index): numberOfRows \(table.numberOfRows) · model rows \(model.rows.count) · \(buttons.filter { $0.contains("hidden false") }.joined(separator: "; "))")
+            }
+            // A picture of the window: the shell captures it once it sees <log>.wid.
+            try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+            for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+            try? fm.removeItem(at: root)
             lines.append("done")
         }
     }

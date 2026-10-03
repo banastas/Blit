@@ -608,6 +608,7 @@ struct ContentView: View {
         UITestHarness.renderFullDiskAccessIfRequested(transfers: transfers)
         UITestHarness.runTabSwitchTestIfRequested()
         UITestHarness.runTabPressTestIfRequested()
+        UITestHarness.runTableMetricsTestIfRequested()
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

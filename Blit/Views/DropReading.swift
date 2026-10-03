@@ -21,6 +21,21 @@ enum DropReader {
         return found.uniqued()
     }
 
+    /// Everything on a drag pasteboard, read at once (the AppKit list's
+    /// drops): Blit's own payload where an item has it, else a file URL.
+    static func locations(on pasteboard: NSPasteboard) -> [BrowseLocation] {
+        let blit = NSPasteboard.PasteboardType(UTType.blitLocations.identifier)
+        var found: [BrowseLocation] = []
+        for item in pasteboard.pasteboardItems ?? [] {
+            if let data = item.data(forType: blit), let payload = try? JSONDecoder().decode(TransferPayload.self, from: data) {
+                found += payload.locations
+            } else if let string = item.string(forType: .fileURL), let url = URL(string: string) {
+                found.append(.local(url))
+            }
+        }
+        return found.uniqued()
+    }
+
     /// Reads one dragged item: Blit's own payload, or a file URL from Finder.
     private static func read(_ provider: NSItemProvider, _ done: @escaping @Sendable ([BrowseLocation]) -> Void) {
         if provider.hasItemConformingToTypeIdentifier(UTType.blitLocations.identifier) {
@@ -221,3 +236,9 @@ enum DragHoverRegistry {
     static var anyShowing: Bool { all.allObjects.contains { ($0 as? any DragHoverShowing)?.isShowing == true } }
 }
 #endif
+
+/// Where a drop on a file list would go: the list's own folder, or a folder row.
+enum ListDrop: Equatable {
+    case list
+    case folder(BrowseLocation)
+}

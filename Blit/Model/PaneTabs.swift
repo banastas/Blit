@@ -238,6 +238,8 @@ enum PaneScroll {
     private static var offsets: [ObjectIdentifier: NSPoint] = [:]
 
     static func save(_ tab: PaneTab) {
+        // The AppKit list keeps each pane's scroll itself (BrowserModel.listScrollOrigin).
+        guard !FileListFlags.native else { return }
         for model in [tab.first, tab.second].compactMap({ $0 }) {
             if let clip = clipView(for: model) { offsets[ObjectIdentifier(model)] = clip.bounds.origin }
         }
@@ -246,6 +248,7 @@ enum PaneScroll {
     /// Scrolls `tab`'s lists back (to the top for one not scrolled before:
     /// the same lists show every tab), once they show the tab's own rows.
     static func restore(_ tab: PaneTab) {
+        guard !FileListFlags.native else { return }
         for model in [tab.first, tab.second].compactMap({ $0 }) {
             let origin = offsets.removeValue(forKey: ObjectIdentifier(model))
             Task { @MainActor in

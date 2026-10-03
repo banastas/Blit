@@ -29,6 +29,8 @@ struct FileListView: View {
     @State private var dropHighlight = DragHover<ListDrop>()
     @FocusState private var tableFocused: Bool
     @AppStorage("showPathBar") private var showPathBar = true
+    /// The path bar's height, kept clear under the AppKit list's rows.
+    @State private var pathBarHeight: CGFloat = 24
     /// Column widths, order and visibility (right-click a column header), kept per window.
 
     var body: some View {
@@ -36,16 +38,11 @@ struct FileListView: View {
         let _ = UITestHarness.tick("FileListView")
         #endif
         Group {
-            if let error = browser.error {
-                ContentUnavailableView("Can't Open Folder", systemImage: "exclamationmark.triangle", description: Text(error))
-            } else if browser.current == nil {
-                ContentUnavailableView("Choose a Location", systemImage: "sidebar.left")
+            if FileListFlags.native {
+                nativeList
             } else {
-                table
+                swiftUIList
             }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if showPathBar, browser.current != nil { PathBar(browser: browser) }
         }
         .confirmationDialog(deleteTitle, isPresented: deleteShown, presenting: browser.deleteRequest) { items in
             Button("Delete", role: .destructive) { browser.confirmDelete(items) }
@@ -60,6 +57,51 @@ struct FileListView: View {
             if let items = browser.batchRenameItems { BatchRenameView(browser: browser, items: items) }
         }
         .sheet(isPresented: $browser.showGoToFolder) { GoToFolderView(browser: browser) }
+    }
+
+    /// The SwiftUI Table, with the states shown instead of it.
+    private var swiftUIList: some View {
+        Group {
+            if let error = browser.error {
+                ContentUnavailableView("Can't Open Folder", systemImage: "exclamationmark.triangle", description: Text(error))
+            } else if browser.current == nil {
+                ContentUnavailableView("Choose a Location", systemImage: "sidebar.left")
+            } else {
+                table
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if showPathBar, browser.current != nil { PathBar(browser: browser) }
+        }
+    }
+
+    /// The AppKit list (-BlitNativeList YES): always there (hidden under an
+    /// error or with no folder, so the next tab finds it), with the states
+    /// over it and the path bar over its last rows.
+    private var nativeList: some View {
+        NativeFileList(browser: browser, isShown: browser.error == nil && browser.current != nil,
+                       bottomInset: showPathBar && browser.current != nil ? pathBarHeight : 0)
+            .overlay { nativeStates.allowsHitTesting(false) }
+            .overlay(alignment: .bottom) {
+                if showPathBar, browser.current != nil {
+                    PathBar(browser: browser)
+                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { _, height in pathBarHeight = height }
+                }
+            }
+    }
+
+    @ViewBuilder private var nativeStates: some View {
+        if let error = browser.error {
+            ContentUnavailableView("Can't Open Folder", systemImage: "exclamationmark.triangle", description: Text(error))
+        } else if browser.current == nil {
+            ContentUnavailableView("Choose a Location", systemImage: "sidebar.left")
+        } else if browser.isLoading, browser.items.isEmpty {
+            PixelSpinner(cell: 3)
+        } else if browser.items.isEmpty {
+            Text("Empty Folder").foregroundStyle(.tertiary)
+        } else if !browser.searchText.trimmingCharacters(in: .whitespaces).isEmpty, browser.rows.isEmpty {
+            ContentUnavailableView.search(text: browser.searchText.trimmingCharacters(in: .whitespaces))
+        }
     }
 
     private var batchRenameShown: Binding<Bool> {
@@ -175,7 +217,7 @@ struct FileListView: View {
                             if browser.renaming != item.location, let partial = item.partial {
                                 Image(nsImage: PixelGlyph.partial.image(size: 9))
                                     .foregroundStyle(.secondary)
-                                    .help(partialSummary(partial))
+                                    .help(browser.partialSummary(partial))
                                     .accessibilityLabel("Partial download")
                             }
                             // With the Status column hidden (the default), the status is a
@@ -352,13 +394,6 @@ struct FileListView: View {
         }
     }
 
-    private func partialSummary(_ partial: PartialDownload) -> String {
-        let done = Int64(partial.done).formatted(.byteCount(style: .file))
-        let total = Int64(partial.size).formatted(.byteCount(style: .file))
-        let from = browser.server(for: partial)?.displayName ?? partial.source?.host ?? "a server"
-        return "\(done) of \(total) downloaded from \(from): \(partial.remotePath). Right-click › Resume Download to finish it, or Move to Trash to discard it."
-    }
-
     /// The triangle that shows a folder's contents in place, like Finder's list view.
     @ViewBuilder private func disclosure(for item: FileItem) -> some View {
         if item.isDirectory {
@@ -513,12 +548,6 @@ struct FileListView: View {
     }
 }
 
-/// Where a drop on a file list would go: the list's own folder, or a folder row.
-enum ListDrop: Equatable {
-    case list
-    case folder(BrowseLocation)
-}
-
 /// The whole list's drop outline (a view of its own, so only it redraws).
 private struct DropListOutline: View {
     let highlight: DragHover<ListDrop>
@@ -621,31 +650,6 @@ private struct PaneFocusing: ViewModifier {
         } else {
             content
         }
-    }
-}
-
-/// File icons by type, cached (per-file icons are slow over SMB).
-@MainActor
-final class IconCache {
-    static let shared = IconCache()
-    private var cache: [String: NSImage] = [:]
-    private var pathCache: [String: NSImage] = [:]
-
-    /// Finder's icon for a folder or volume (drive icons, shared-folder badges).
-    func icon(forPath path: String) -> NSImage {
-        if let cached = pathCache[path] { return cached }
-        let image = NSWorkspace.shared.icon(forFile: path)
-        pathCache[path] = image
-        return image
-    }
-
-    func icon(for item: FileItem) -> NSImage {
-        let key = item.isDirectory ? "/folder" : (item.name as NSString).pathExtension.lowercased()
-        if let cached = cache[key] { return cached }
-        let type = item.isDirectory ? UTType.folder : (UTType(filenameExtension: key) ?? .data)
-        let image = NSWorkspace.shared.icon(for: type)
-        cache[key] = image
-        return image
     }
 }
 
@@ -840,21 +844,6 @@ enum RowDragRule {
         let nameEnd = min(cellRect.maxX, iconEnd + 6 + nameWidth + 18)
         return local.x <= nameEnd
     }
-}
-
-/// A menu item that runs a closure.
-final class ClosureMenuItem: NSMenuItem {
-    private let handler: () -> Void
-
-    init(_ title: String, handler: @escaping () -> Void) {
-        self.handler = handler
-        super.init(title: title, action: #selector(fire), keyEquivalent: "")
-        target = self
-    }
-
-    required init(coder: NSCoder) { fatalError("not used") }
-
-    @objc private func fire() { handler() }
 }
 
 /// Hands over an invisible NSView that tracks a SwiftUI view's frame.
@@ -1136,16 +1125,12 @@ enum FitColumns {
 struct AdaptiveDate: View {
     let date: Date
 
-    /// The widest each form gets, so every row picks the same form (a short
-    /// date fitting a longer form would make the column uneven).
-    private static let widest = ["Sep 28, 2026 at 20:00", "Sep 28 at 20:00", "Yesterday", "12/28"]
-
     var body: some View {
-        let forms = Self.forms(date)
+        let forms = DateForms.forms(date)
         ViewThatFits(in: .horizontal) {
             ForEach(0..<4, id: \.self) { level in
                 ZStack(alignment: .leading) {
-                    Text(Self.widest[level]).lineLimit(1).hidden()
+                    Text(DateForms.widest[level]).lineLimit(1).hidden()
                     Text(forms[level]).lineLimit(1)
                 }
             }
@@ -1153,28 +1138,6 @@ struct AdaptiveDate: View {
         .monospacedDigit()
         .foregroundStyle(.secondary)
         .help(forms[0])
-    }
-
-    static func forms(_ date: Date) -> [String] {
-        let calendar = Calendar.current
-        let full = date.formatted(.dateTime.year().month(.abbreviated).day().hour().minute())
-        let thisYear = calendar.isDate(date, equalTo: .now, toGranularity: .year)
-        let time = date.formatted(.dateTime.hour().minute())
-        let medium = thisYear ? date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
-                              : date.formatted(.dateTime.year().month(.abbreviated).day())
-        let short: String
-        if calendar.isDateInToday(date) {
-            short = "Today \(time)"
-        } else if calendar.isDateInYesterday(date) {
-            short = "Yesterday"
-        } else if thisYear {
-            short = date.formatted(.dateTime.month(.abbreviated).day())
-        } else {
-            short = date.formatted(.iso8601.year().month().day())
-        }
-        let tiny = calendar.isDateInToday(date) ? time
-            : thisYear ? date.formatted(.dateTime.month(.defaultDigits).day()) : date.formatted(.dateTime.year())
-        return [full, medium, short, tiny]
     }
 }
 

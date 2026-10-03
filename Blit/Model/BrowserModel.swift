@@ -36,12 +36,15 @@ struct TrustRequest: Identifiable {
 @Observable
 final class BrowserModel {
     private(set) var current: BrowseLocation?
-    private(set) var items: [FileItem] = []
+    private(set) var items: [FileItem] = [] {
+        didSet { rowsCache = nil }
+    }
     private(set) var error: String?
     private(set) var isLoading = false
     /// Newest first unless this folder was sorted otherwise before (SortMemory).
     var sortOrder = SortMemory.standard {
         didSet {
+            rowsCache = nil
             guard !restoringSort, let current, sortOrder != oldValue else { return }
             SortMemory.set(sortOrder, for: current)
         }
@@ -57,8 +60,12 @@ final class BrowserModel {
     private(set) var showHidden = false
     var selection = Set<BrowseLocation>()
     /// Folders expanded in place (disclosure triangles), and their contents.
-    private(set) var expanded = Set<BrowseLocation>()
-    private(set) var children: [BrowseLocation: [FileItem]] = [:]
+    private(set) var expanded = Set<BrowseLocation>() {
+        didSet { rowsCache = nil }
+    }
+    private(set) var children: [BrowseLocation: [FileItem]] = [:] {
+        didSet { rowsCache = nil }
+    }
     private(set) var loadingChildren = Set<BrowseLocation>()
     /// The item whose name is being edited in place, if any.
     var renaming: BrowseLocation?
@@ -79,6 +86,9 @@ final class BrowserModel {
     var previewURL: URL?
     /// A server file being downloaded to preview (Space again cancels showing it).
     var previewLoading: BrowseLocation?
+    /// Where the AppKit list was scrolled when it last showed this pane (a tab
+    /// switch shows another tab's pane in the same list).
+    @ObservationIgnored var listScrollOrigin: NSPoint?
     /// Server files already downloaded for Quick Look this session, oldest first.
     @ObservationIgnored var previewDownloads: [(location: BrowseLocation, url: URL)] = []
 
@@ -117,9 +127,14 @@ final class BrowserModel {
     var sortedItems: [FileItem] { items.sorted(using: sortOrder) }
 
     /// The rows to show: this folder's items, with the contents of expanded
-    /// folders nested under them, each level sorted.
+    /// folders nested under them, each level sorted. Kept until one of those
+    /// changes: sorting thousands of files on every read (the list, the path
+    /// bar's count, the menus) slowed tab switches.
     var rows: [FileItem] {
+        // Read every input, cached or not, so whoever reads the rows hears when they change.
         let query = searchText.trimmingCharacters(in: .whitespaces)
+        let (items, sortOrder, expanded, children) = (items, sortOrder, expanded, children)
+        if let rowsCache { return rowsCache }
         func matches(_ item: FileItem) -> Bool { query.isEmpty || item.name.localizedStandardContains(query) }
         // With a search, a folder stays when it matches or holds a match (in an expanded folder).
         func rows(_ list: [FileItem], depth: Int) -> [FileItem] {
@@ -136,12 +151,17 @@ final class BrowserModel {
             }
             return result
         }
-        return rows(items, depth: 0)
+        let built = rows(items, depth: 0)
+        rowsCache = built
+        return built
     }
+    @ObservationIgnored private var rowsCache: [FileItem]?
 
     /// The toolbar search (⌘F): filters the listing (and expanded folders) by
     /// name, ignoring case and accents. Cleared when moving to another folder.
-    var searchText = ""
+    var searchText = "" {
+        didSet { rowsCache = nil }
+    }
 
     /// Whether this browser shows `folder`, as its location or an expanded folder.
     func shows(_ folder: BrowseLocation) -> Bool {

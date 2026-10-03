@@ -491,9 +491,14 @@ extension Color {
     static let failure = Color(red: 0xB3 / 255, green: 0x5C / 255, blue: 0x5C / 255)
     /// The same red for failure text: #b35c5c in light mode (4.6:1 on white),
     /// its lighter tint #C98080 in dark mode, where #b35c5c falls under 4.5:1.
-    static let failureText = Color(nsColor: NSColor(name: nil) { appearance in
+    static let failureText = Color(nsColor: .failureText)
+}
+
+extension NSColor {
+    /// Color.failureText for AppKit views (the file list's status).
+    static let failureText = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(red: 0xC9 / 255, green: 0x80 / 255, blue: 0x80 / 255, alpha: 1)
             : NSColor(red: 0xB3 / 255, green: 0x5C / 255, blue: 0x5C / 255, alpha: 1)
-    })
+    }
 }
