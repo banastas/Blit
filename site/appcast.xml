@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.38</title>
-      <pubDate>Sat, 03 Oct 2026 15:28:24 +0000</pubDate>
-      <sparkle:version>41</sparkle:version>
-      <sparkle:shortVersionString>0.2.38</sparkle:shortVersionString>
+      <title>Blit 0.2.39</title>
+      <pubDate>Sat, 03 Oct 2026 15:51:19 +0000</pubDate>
+      <sparkle:version>42</sparkle:version>
+      <sparkle:shortVersionString>0.2.39</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Pause and Cancel now work during copies to a NAS (they used to wait for the verification read-back), and every transfer has Pause and Cancel on the strip and in the HUD. Folders light up when you drag onto them while a transfer runs, and the HUD shows the transfer belonging to the tab you're on.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.38.zip" type="application/octet-stream" sparkle:edSignature="TFuuwoDktfRF7DTIhx/LS+G+m6KPAwh0tt9jWQf3fQI9H3GTrOt9CJHmdP0wasnhxP0mNRl8FYm6af/013uSBQ==" length="5770329" />
+      <description><![CDATA[<p>Click a transfer's or file operation's WARNING tag to see exactly what went wrong, and a failed file operation (such as Move to Trash) now says why right on the strip.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.39.zip" type="application/octet-stream" sparkle:edSignature="AmQkQqXnSBy/JAY67kE+72WDI2NZYNHndPs3C193n1quZaS2cChusp/i40ZloiSjGmdSPK4H/YTvmqHHI6qcBw==" length="5777478" />
     </item>
   </channel>
 </rss>
