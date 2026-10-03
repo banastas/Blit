@@ -24,4 +24,14 @@ enum FileListRegistry {
     static func table(for model: BrowserModel) -> NSTableView? { coordinator(for: model)?.table }
 
     static func scrollView(for model: BrowserModel) -> NSScrollView? { coordinator(for: model)?.scrollView }
+
+    /// The pane whose list shows at `point` (window coordinates), if any.
+    static func browser(at point: NSPoint, in window: NSWindow) -> BrowserModel? {
+        for case let model as BrowserModel in coordinators.keyEnumerator().allObjects {
+            guard let scrollView = scrollView(for: model), scrollView.window === window,
+                  !scrollView.isHiddenOrHasHiddenAncestor else { continue }
+            if scrollView.convert(scrollView.bounds, to: nil).contains(point) { return model }
+        }
+        return nil
+    }
 }

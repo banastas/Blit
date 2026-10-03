@@ -89,6 +89,10 @@ final class BrowserModel {
     /// Where the AppKit list was scrolled when it last showed this pane (a tab
     /// switch shows another tab's pane in the same list).
     @ObservationIgnored var listScrollOrigin: NSPoint?
+    /// The AppKit list showing this pane, which takes the keyboard when asked
+    /// (requestKeyboardFocus), and whether it was asked before one showed it.
+    @ObservationIgnored weak var keyboardTarget: (any ListKeyboardTarget)?
+    @ObservationIgnored var wantsKeyboard = false
     /// Server files already downloaded for Quick Look this session, oldest first.
     @ObservationIgnored var previewDownloads: [(location: BrowseLocation, url: URL)] = []
 

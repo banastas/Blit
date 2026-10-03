@@ -11,15 +11,62 @@ final class FileTableView: NSTableView {
     /// table overrides too; if AppKit stops asking, the list just costs more.)
     @objc func _needsRubberBandViews() -> Bool { false }
 
-    /// → and ← open and close folders in place (Finder's list view).
+    /// → and ← open and close folders in place (Finder's list view); Return
+    /// with several rows selected opens the first (one is renamed, by the
+    /// app's key handling); Tab and ⇧Tab go to the other pane.
     override func keyDown(with event: NSEvent) {
-        let plain = event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
-        let right: UInt16 = 124, left: UInt16 = 123
+        coordinator?.cancelPendingRename()
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        let plain = modifiers.isEmpty
+        let right: UInt16 = 124, left: UInt16 = 123, returnKey: UInt16 = 36, enter: UInt16 = 76, tab: UInt16 = 48
         if plain, event.keyCode == right || event.keyCode == left,
            coordinator?.expandSelection(event.keyCode == right) == true {
             return
         }
+        if plain, event.keyCode == returnKey || event.keyCode == enter, coordinator?.openSelection() == true { return }
+        if event.keyCode == tab, plain || modifiers == .shift, coordinator?.focusOtherPane() == true { return }
         super.keyDown(with: event)
+    }
+
+    /// A click makes the pane active at once; a click on the only selected
+    /// row's name renames it a moment later (FileListRename.swift).
+    override func mouseDown(with event: NSEvent) {
+        coordinator?.noteInteraction()
+        coordinator?.pressBegan(event)
+        super.mouseDown(with: event)
+        // The table's tracking may have taken the mouse-up; else it comes to
+        // mouseUp(with:).
+        if let up = NSApp.currentEvent, up.type == .leftMouseUp { coordinator?.pressEnded(up) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        coordinator?.pressEnded(event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        coordinator?.cancelPendingRename()
+        coordinator?.noteInteraction()
+        super.rightMouseDown(with: event)
+    }
+
+    /// Right-clicks and ⌃-clicks ask for the menu here: it's filled for the
+    /// row clicked (AppKit has just set it) before it shows.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        coordinator?.noteInteraction()
+        let menu = super.menu(for: event)
+        if let menu { coordinator?.fillContextMenu(menu) }
+        return menu
+    }
+
+    override func resignFirstResponder() -> Bool {
+        coordinator?.cancelPendingRename()
+        return super.resignFirstResponder()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { coordinator?.tableMovedToWindow() }
     }
 
     override func becomeFirstResponder() -> Bool {

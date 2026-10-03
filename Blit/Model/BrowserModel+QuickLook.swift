@@ -22,6 +22,16 @@ extension BrowserModel {
     @MainActor static var oppositePane: ((BrowserModel) -> BrowserModel?)?
     @MainActor static var swapPanes: (() -> Void)?
 
+    /// Gives this pane's list the keyboard: now if a list shows the pane,
+    /// else as soon as one does (a tab not shown yet).
+    func requestKeyboardFocus() {
+        if let keyboardTarget {
+            keyboardTarget.takeKeyboardFocus()
+        } else {
+            wantsKeyboard = true
+        }
+    }
+
     /// What the Quick Look panel holds: just the file shown. Moving between
     /// files goes through the list's selection (↑/↓), so the two stay in step.
     var previewURLs: [URL] { previewURL.map { [$0] } ?? [] }

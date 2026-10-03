@@ -419,7 +419,7 @@ struct ContentView: View {
                 // Activating from the header also hands the pane the keyboard,
                 // so the arrows don't keep moving the other pane's selection.
                 activate()
-                focusedPane = tag
+                if FileListFlags.native { model.requestKeyboardFocus() } else { focusedPane = tag }
             }
             Divider()
             FileListView(browser: model, onFocus: activate, paneFocus: $focusedPane, paneTag: tag)
@@ -509,7 +509,13 @@ struct ContentView: View {
         if showSecondPane { openSecondPaneIfNeeded() }
         PaneScroll.restore(tab)
         let focus: PaneFocus = showSecondPane && tab.secondActive ? .second : .first
-        Task { focusedPane = focus }
+        // The AppKit list takes the keyboard itself: SwiftUI focus bound to no
+        // view sent it to the toolbar's search field.
+        if FileListFlags.native {
+            (focus == .second ? tab.second : tab.first)?.requestKeyboardFocus()
+        } else {
+            Task { focusedPane = focus }
+        }
     }
 
     private func makeBrowser() -> BrowserModel {
@@ -540,11 +546,12 @@ struct ContentView: View {
         guard showSecondPane else { return }
         if model === secondBrowser {
             secondActive = true
-            focusedPane = .second
+            if !FileListFlags.native { focusedPane = .second }
         } else if model === browser {
             secondActive = false
-            focusedPane = .first
+            if !FileListFlags.native { focusedPane = .first }
         }
+        if FileListFlags.native { model.requestKeyboardFocus() }
     }
 
     /// Refresh whichever panes show a folder that changed, in any tab: a
@@ -610,6 +617,7 @@ struct ContentView: View {
         UITestHarness.runTabPressTestIfRequested()
         UITestHarness.runTableMetricsTestIfRequested()
         UITestHarness.runNativeCellsTestIfRequested(transfers: transfers)
+        UITestHarness.runNativeKeysTestIfRequested()
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

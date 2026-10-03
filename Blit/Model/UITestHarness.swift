@@ -2253,6 +2253,133 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitNativeKeysTest <log>` (with `-BlitNativeList YES`): the AppKit
+    /// list's keys and focus, sent straight to the lists (no real input): Tab
+    /// and ⇧Tab go to the other pane, → and ← open and close a folder in
+    /// place, type-select, Return with two rows selected opens the first, and
+    /// after a tab switch the shown tab's active list has the keyboard.
+    static func runNativeKeysTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitNativeKeysTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-native-keys")
+            try? fm.removeItem(at: root)
+            let left = root.appendingPathComponent("Left"), right = root.appendingPathComponent("Right")
+            for folder in [left.appendingPathComponent("Sub"), left.appendingPathComponent("Tub"), right] {
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            }
+            for name in ["Left/b.bin", "Left/c.bin", "Left/Sub/a.bin", "Right/d.bin"] {
+                fm.createFile(atPath: root.appendingPathComponent(name).path, contents: Data("x".utf8))
+            }
+            defer { try? fm.removeItem(at: root) }
+            guard let first = PaneTabs.shared.current?.first, let window = BrowserModel.activeWindow else { return lines.append("no window") }
+            guard let second = BrowserModel.oppositePane?(first) else { return lines.append("no second pane (showSecondPane off?)") }
+            first.open(.local(left))
+            second.open(.local(right))
+            first.sort(by: .name)
+            for _ in 0..<30 where first.rows.count < 4 || second.rows.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let leftTable = FileListRegistry.table(for: first), let rightTable = FileListRegistry.table(for: second) else {
+                return lines.append("no native lists (run with -BlitNativeList YES)")
+            }
+            @MainActor func keyboard() -> String {
+                let responder = window.firstResponder
+                return responder === leftTable ? "left" : responder === rightTable ? "right" : responder.map { "\(type(of: $0))" } ?? "none"
+            }
+            @MainActor func active() -> String { BrowserModel.active === first ? "left" : BrowserModel.active === second ? "right" : "other" }
+            @MainActor func key(_ table: NSTableView, _ code: UInt16, _ characters: String, shift: Bool = false) {
+                guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: shift ? [.shift] : [],
+                                                   timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                   context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                                   isARepeat: false, keyCode: code) else { return }
+                table.keyDown(with: event)
+            }
+            func pause(_ seconds: Double = 0.4) async { try? await Task.sleep(for: .seconds(seconds)) }
+            lines.append("at launch: keyboard \(keyboard()) · active \(active())")
+            first.requestKeyboardFocus()
+            await pause()
+            lines.append("start: keyboard \(keyboard()) · active \(active())")
+            key(leftTable, 48, "\t")
+            await pause()
+            lines.append("Tab: keyboard \(keyboard()) · active \(active())")
+            key(rightTable, 48, "\u{19}", shift: true)
+            await pause()
+            lines.append("⇧Tab: keyboard \(keyboard()) · active \(active())")
+            // → opens a folder in place; ← from the file inside closes it and selects it.
+            guard let sub = first.rows.first(where: { $0.name == "Sub" }) else { return lines.append("no Sub · rows \(first.rows.map(\.name))") }
+            first.selection = [sub.location]
+            await pause()
+            key(leftTable, 124, "\u{F703}")
+            await pause(0.8)
+            lines.append("→: open \(first.expanded.contains(sub.location)) · table rows \(leftTable.numberOfRows) · rows \(first.rows.map(\.name))")
+            if let inner = first.rows.first(where: { $0.name == "a.bin" }) { first.selection = [inner.location] }
+            await pause()
+            key(leftTable, 123, "\u{F702}")
+            await pause(0.8)
+            lines.append("← inside: open \(first.expanded.contains(sub.location)) · selected \(first.selectedItems.map(\.name)) · table rows \(leftTable.numberOfRows) · table selection \(Array(leftTable.selectedRowIndexes))")
+            // Type-select.
+            key(leftTable, 8, "c")
+            await pause(0.8)
+            lines.append("type c: selected \(first.selectedItems.map(\.name))")
+            // Return with two folders selected browses into the first.
+            if let tub = first.rows.first(where: { $0.name == "Tub" }) { first.selection = [sub.location, tub.location] }
+            await pause()
+            key(leftTable, 36, "\r")
+            await pause(1)
+            lines.append("Return on two: in \(first.current?.lastComponent ?? "?") · rows \(first.rows.map(\.name))")
+            first.goBack()
+            await pause(0.8)
+            // Tabs: the new tab's active list takes the keyboard; Tab there; back
+            // on the first tab the keyboard is its left list again.
+            guard let firstTab = PaneTabs.shared.current?.id else { return lines.append("no tab") }
+            // The new tab's pane has no folder for a moment (its list hides):
+            // the keyboard waits, then comes back to the list.
+            PaneTabs.shared.newTab()
+            var seen: [String] = []
+            for _ in 0..<20 {
+                let now = window.firstResponder.map { "\(type(of: $0))" } ?? "none"
+                if seen.last != now { seen.append(now) }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            lines.append("after ⌘T the keyboard went: \(seen.joined(separator: " → "))")
+            guard let tab = PaneTabs.shared.current, tab.id != firstTab, let newFirst = Optional(tab.first),
+                  let newSecond = tab.second, let newLeft = FileListRegistry.table(for: newFirst),
+                  let newRight = FileListRegistry.table(for: newSecond) else { return lines.append("no new tab lists") }
+            @MainActor func tabKeyboard() -> String {
+                window.firstResponder === newLeft ? "left" : window.firstResponder === newRight ? "right" : window.firstResponder.map { "\(type(of: $0))" } ?? "none"
+            }
+            lines.append("new tab: keyboard \(tabKeyboard()) · active \(BrowserModel.active === newFirst ? "left" : BrowserModel.active === newSecond ? "right" : "other")")
+            key(newLeft, 48, "\t")
+            await pause()
+            lines.append("new tab, Tab: keyboard \(tabKeyboard())")
+            PaneTabs.shared.select(firstTab)
+            await pause(1)
+            lines.append("back on tab 1: keyboard \(keyboard()) · active \(active())")
+            PaneTabs.shared.select(tab.id)
+            await pause(1)
+            lines.append("tab 2 again: keyboard \(tabKeyboard())")
+            // A third tab (the tab bar already shows).
+            PaneTabs.shared.newTab()
+            var third: [String] = []
+            for _ in 0..<20 {
+                let now = window.firstResponder.map { "\(type(of: $0))" } ?? "none"
+                if third.last != now { third.append(now) }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            lines.append("third tab: the keyboard went \(third.joined(separator: " → "))")
+            if let id = PaneTabs.shared.current?.id, id != tab.id, id != firstTab { PaneTabs.shared.close(id) }
+            await pause(0.6)
+            PaneTabs.shared.close(tab.id)
+            await pause(1)
+            lines.append("tab 2 closed: keyboard \(keyboard()) · active \(active())")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitNativeCellsTest <log>` (with `-BlitNativeList YES`): the AppKit
     /// list's rows as its cells show them, through a stand-in transfer's
     /// statuses (after the name, then in the Status column), a verified file,
@@ -2336,7 +2463,9 @@ enum UITestHarness {
             lines.append("model sort: \(model.sortColumn?.rawValue ?? "-") \(model.sortOrder.first?.order == .reverse ? "descending" : "ascending")")
             if let menu = table.headerView?.menu {
                 menu.delegate?.menuNeedsUpdate?(menu)
-                lines.append("header menu: " + menu.items.map { "\($0.title)\($0.state == .on ? " ✓" : "")\($0.isEnabled ? "" : " (fixed)")" }.joined(separator: " | "))
+                lines.append("header menu: " + menu.items.map {
+                    $0.isSeparatorItem ? "—" : "\($0.title)\($0.state == .on ? " ✓" : "")\($0.isEnabled ? "" : " (disabled)")"
+                }.joined(separator: " | "))
             }
             try? fm.removeItem(at: root)
             lines.append("done")
@@ -3560,7 +3689,7 @@ enum UITestHarness {
                     var view = hit
                     while let current = view, chain.count < 6 { chain.append(String(describing: type(of: current))); view = current.superview }
                     let row = table.row(at: table.convert(point, from: nil))
-                    let anchored = EmptySpaceMenu.browser(at: point, in: window) != nil
+                    let anchored = (FileListFlags.native ? FileListRegistry.browser(at: point, in: window) : EmptySpaceMenu.browser(at: point, in: window)) != nil
                     opened = nil
                     guard let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [],
                                                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,

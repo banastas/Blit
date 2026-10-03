@@ -29,12 +29,14 @@ private struct ListSnapshot: Equatable, Sendable {
     var sort: SortKey?
     var hiddenColumns: Set<String>
     var expanded: Set<BrowseLocation>
+    var renaming: BrowseLocation?
 
     @MainActor
     init(_ model: BrowserModel) {
         folder = model.current
         rows = model.rows
         expanded = model.expanded
+        renaming = model.renaming
         selection = model.selection
         sort = model.sortOrder.first.flatMap { comparator in
             SortColumn(comparator).map { SortKey(column: $0, ascending: comparator.order == .forward) }
@@ -51,7 +53,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     private(set) weak var model: BrowserModel?
     /// The rows shown, as of the last update: the table reads only these.
     private(set) var rows: [FileItem] = []
-    private var rowIndex: [BrowseLocation: Int] = [:]
+    private(set) var rowIndex: [BrowseLocation: Int] = [:]
     /// The folder the rows came from (a new one starts at the top).
     private var shownFolder: BrowseLocation?
     /// Counts the model's watches: a change the model reports for an older
@@ -73,6 +75,19 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     /// The expanded folders as of the last update (a change slides rows in or out).
     private var shownExpanded = Set<BrowseLocation>()
     private let viewport = Viewport()
+    /// Renaming (FileListRename.swift): the field over the name, what it
+    /// renames and in which pane, and whether it has been saved or cancelled.
+    var renameField: NSTextField?
+    var renamingItem: FileItem?
+    weak var renamingModel: BrowserModel?
+    var renameFinished = false
+    /// Click to rename: the press on a row, and the rename waiting out the
+    /// double-click interval.
+    var press: ListPress?
+    var pendingRename: Task<Void, Never>?
+    /// The keyboard was asked for while the list couldn't take it (hidden for
+    /// a pane with no folder yet, or not in the window yet).
+    private var keyboardPending = false
     /// Watches what the visible rows' marks are made of (status, ✓, the
     /// spinner), and refreshes them once a second while a transfer runs (its
     /// byte count isn't observed).
@@ -151,7 +166,12 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         table.setDraggingSourceOperationMask([.copy, .move, .generic], forLocal: true)
         let header = NSMenu()
         header.delegate = self
+        header.autoenablesItems = false
         table.headerView?.menu = header
+        fillHeaderMenu(header)
+        let context = NSMenu()
+        context.autoenablesItems = false
+        table.menu = context
     }
 
     // MARK: Fitting the columns
@@ -207,7 +227,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     // MARK: The SwiftUI side
 
     func update(browser: BrowserModel, isShown: Bool, bottomInset: CGFloat, iconPreviews: Bool) {
-        if scrollView.isHidden == isShown { scrollView.isHidden = !isShown }
+        setShown(isShown)
         if iconPreviews != self.iconPreviews {
             self.iconPreviews = iconPreviews
             refillVisibleRows()
@@ -219,8 +239,41 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         show(browser)
     }
 
+    /// Hidden while the pane has no folder or can't open it (the wrapper's
+    /// message shows instead). Hiding the list with the keyboard would hand it
+    /// to the window's next key view, the toolbar's search field: the list
+    /// keeps it waiting instead, and takes it back on showing unless something
+    /// else took it meanwhile.
+    private func setShown(_ shown: Bool) {
+        guard scrollView.isHidden == shown else { return }
+        let window = table.window
+        if shown {
+            scrollView.isHidden = false
+            if keyboardPending, let window, window.firstResponder === window || window.firstResponder == nil {
+                window.makeFirstResponder(table)
+            }
+            keyboardPending = false
+        } else {
+            if let window, window.firstResponder === table {
+                keyboardPending = true
+                window.makeFirstResponder(nil)
+            }
+            scrollView.isHidden = true
+        }
+    }
+
+    /// The table went into a window (the first time it shows): it takes the
+    /// keyboard if it was asked for before.
+    func tableMovedToWindow() {
+        guard keyboardPending, !scrollView.isHidden, let window = table.window else { return }
+        keyboardPending = false
+        if window.firstResponder === window || window.firstResponder == nil { window.makeFirstResponder(table) }
+    }
+
     func detach() {
         watchGeneration += 1
+        removeRenameField()
+        cancelPendingRename()
         decorations?.cancel()
         decorations = nil
         ticker?.invalidate()
@@ -237,10 +290,15 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     private func show(_ model: BrowserModel) {
         guard model !== self.model else { return }
         if let old = self.model {
+            // A name being edited is saved, in its own pane.
+            if let field = renameField { controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: field)) }
+            cancelPendingRename()
             old.listScrollOrigin = scrollView.contentView.bounds.origin
+            if old.keyboardTarget === self { old.keyboardTarget = nil }
             FileListRegistry.unregister(self, for: old)
         }
         self.model = model
+        model.keyboardTarget = self
         FileListRegistry.register(self, for: model)
         let snapshot = watch(model)
         isApplying = true
@@ -253,6 +311,11 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         isApplying = false
         scroll(to: model.listScrollOrigin)
         watchDecorations(of: model)
+        showRenaming(snapshot.renaming)
+        if model.wantsKeyboard {
+            model.wantsKeyboard = false
+            DispatchQueue.main.async { [weak self] in self?.takeKeyboardFocus() }
+        }
     }
 
     /// Reads what the list shows of `model` and watches it for changes, in one
@@ -295,6 +358,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
             table.scrollRowToVisible(first)
         }
         noteVisibleRows()
+        showRenaming(snapshot.renaming)
     }
 
     /// Rows came or went in the same folder: slid in or out where a folder
@@ -383,6 +447,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         let first = shownHidden == nil
         shownHidden = hidden
         scheduleFit(force: true)
+        if let menu = table.headerView?.menu { fillHeaderMenu(menu) }
         if !first { refillVisibleRows() }
     }
 
@@ -440,7 +505,29 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         }
     }
 
-    // MARK: Keys
+    // MARK: Keys and the keyboard
+
+    /// Return with several rows selected (one is renamed, by the app's key
+    /// handling): opens the first, as a double-click would.
+    func openSelection() -> Bool {
+        guard let model, let item = model.selectedItems.first else { return false }
+        open(item, in: model)
+        return true
+    }
+
+    /// Tab and ⇧Tab: the keyboard goes to the other pane.
+    func focusOtherPane() -> Bool {
+        guard let model, let other = BrowserModel.oppositePane?(model) else { return false }
+        other.requestKeyboardFocus()
+        BrowserModel.onInteraction?(other)
+        return true
+    }
+
+    /// A click or right-click in the list: its pane becomes the active one at
+    /// once (SwiftUI's gestures never see the clicks the table takes).
+    func noteInteraction() {
+        if let model { BrowserModel.onInteraction?(model) }
+    }
 
     /// → opens the selected folders in place; ← closes them, or from a row
     /// inside one, closes it and selects it. While a name is edited the arrows
@@ -573,7 +660,11 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     @objc private func openClicked() {
         let row = table.clickedRow
         guard rows.indices.contains(row), let model else { return }
-        let item = rows[row]
+        cancelPendingRename()
+        open(rows[row], in: model)
+    }
+
+    private func open(_ item: FileItem, in model: BrowserModel) {
         if item.isDirectory {
             model.open(item.location)
         } else if let url = item.location.localURL {
@@ -624,7 +715,11 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
 
 extension FileListCoordinator: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === table.headerView?.menu else { return }
+        if menu === table.headerView?.menu { fillHeaderMenu(menu) }
+    }
+
+    /// Which columns show, ticked; Name always does.
+    func fillHeaderMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         let name = NSMenuItem(title: FileColumn.name.title, action: nil, keyEquivalent: "")
         name.state = .on
@@ -635,5 +730,51 @@ extension FileListCoordinator: NSMenuDelegate {
             item.state = ColumnSettings.shared.isShown(column.id) ? .on : .off
             menu.addItem(item)
         }
+        menu.addItem(.separator())
+        let all = ClosureMenuItem("Show All") {
+            for column in ColumnSettings.optional { ColumnSettings.shared.set(column.id, shown: true) }
+        }
+        all.isEnabled = ColumnSettings.optional.contains { !ColumnSettings.shared.isShown($0.id) }
+        menu.addItem(all)
+    }
+}
+
+// MARK: The context menu
+
+extension FileListCoordinator {
+    /// For the row clicked (the selection, when the click was inside it), or
+    /// for empty space: the folder's own menu, and the selection clears, as in
+    /// Finder.
+    func fillContextMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let model else { return }
+        let row = table.clickedRow
+        guard rows.indices.contains(row) else {
+            if !model.selection.isEmpty { model.selection = [] }
+            FileMenuBuilder.folderItems(in: model).forEach(menu.addItem)
+            return
+        }
+        let items = table.selectedRowIndexes.contains(row)
+            ? table.selectedRowIndexes.compactMap { rows.indices.contains($0) ? rows[$0] : nil }
+            : [rows[row]]
+        FileMenuBuilder.items(for: items, in: model).forEach(menu.addItem)
+    }
+}
+
+// MARK: The keyboard (asked for by the window: a header click, a tab shown)
+
+extension FileListCoordinator: ListKeyboardTarget {
+    func takeKeyboardFocus() {
+        guard let window = table.window, !scrollView.isHidden else {
+            // Taken once the list can: nothing else keeps it meanwhile.
+            keyboardPending = true
+            if let window = table.window, window.firstResponder !== window { window.makeFirstResponder(nil) }
+            return
+        }
+        guard window.firstResponder !== table else { return }
+        // Not from a name being edited here.
+        if let editor = window.firstResponder as? NSText, editor.delegate === renameField, renameField != nil { return }
+        keyboardPending = false
+        window.makeFirstResponder(table)
     }
 }

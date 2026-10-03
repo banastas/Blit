@@ -16,6 +16,12 @@ enum FileListFlags {
     }()
 }
 
+/// A list that can take the keyboard for the pane it shows.
+@MainActor
+protocol ListKeyboardTarget: AnyObject {
+    func takeKeyboardFocus()
+}
+
 struct NativeFileList: NSViewRepresentable {
     let browser: BrowserModel
     /// False while the pane shows an error or no folder: the list stays, hidden,

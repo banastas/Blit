@@ -125,6 +125,8 @@ final class NameCellView: DrawnCellView {
     /// The folder's contents are loading: a pixel spinner in place of the triangle.
     private var isLoading = false
     private var spinner: Timer?
+    /// The rename field, over the name while it's edited.
+    private var editor: NSTextField?
     private var verifiedHelp: String?
     private var partialHelp: String?
     private var status: FileStatus?
@@ -213,6 +215,21 @@ final class NameCellView: DrawnCellView {
         setLoading(false)
     }
 
+    /// Shows `field` over the name (from where the name starts to the cell's end).
+    func beginEditing(with field: NSTextField) {
+        editor?.removeFromSuperview()
+        editor = field
+        addSubview(field)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        needsDisplay = true
+    }
+
+    func endEditing() {
+        editor = nil
+        needsDisplay = true
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil { setLoading(false) }
@@ -220,6 +237,7 @@ final class NameCellView: DrawnCellView {
 
     // The disclosure triangle takes its own clicks (the row isn't selected), as a button would.
     override func hitTest(_ point: NSPoint) -> NSView? {
+        if let editor, let superview, editor.frame.contains(convert(point, from: superview)) { return super.hitTest(point) }
         guard item?.isDirectory == true, let superview else { return super.hitTest(point) }
         return disclosureRect.insetBy(dx: -2, dy: -4).contains(convert(point, from: superview)) ? self : super.hitTest(point)
     }
@@ -268,6 +286,10 @@ final class NameCellView: DrawnCellView {
         if status != nil {
             statusRect = NSRect(x: x + 5, y: 0, width: statusWidth, height: height)
         }
+        if let editor {
+            let height = ceil(editor.intrinsicContentSize.height)
+            editor.frame = NSRect(x: nameRect.minX - 4, y: centered(height), width: bounds.width - nameRect.minX + 4, height: height)
+        }
         removeAllToolTips()
         if disclosureRect != .zero { addToolTip(disclosureRect, owner: self, userData: nil) }
         if nameTruncated { addToolTip(nameRect, owner: self, userData: nil) }
@@ -294,6 +316,8 @@ final class NameCellView: DrawnCellView {
             icon.draw(in: size.width <= iconRect.width && size.height <= iconRect.height ? iconRect : fitted,
                       from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
+        // While the name is edited, the field shows it (and the marks after it wait).
+        guard editor == nil else { return }
         CellDrawing.draw(item.name, in: nameRect, font: CellFonts.body,
                          color: emphasized ? .alternateSelectedControlTextColor : .labelColor, lineBreak: .byTruncatingMiddle)
         if verifiedRect != .zero { CellDrawing.draw(template: PixelGlyph.check.image(size: 9), in: verifiedRect, color: glyphColor) }
