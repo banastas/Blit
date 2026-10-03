@@ -1723,6 +1723,9 @@ enum UITestHarness {
     /// (stand-in jobs, never run): each tab's own, the one dropped onto a
     /// subfolder the tab shows, a fallback for a tab without one, and a
     /// transfer picked in the queue list stays picked only until the tab changes.
+    /// Then the tabs' tags: transfers started from a tab show on that tab
+    /// only, each tab its own, and only while running; one from a closed tab
+    /// goes to the tab showing its folders.
     static func runFollowTabTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitFollowTabTest") else { return }
         var lines: [String] = [] {
@@ -1780,7 +1783,40 @@ enum UITestHarness {
             transfers.pinnedJobID = copy.id
             lines.append("picked Copy in the queue list on tab 3: \(transfers.featured?.title ?? "none")")
             await shows("then tab 1", tab: 0)
+            // What each tab's tag shows (PaneTabBar).
+            @MainActor func tags(_ label: String) {
+                lines.append("tags, \(label): " + tabs.tabs.enumerated().map { index, tab in
+                    let job = transfers.runningTransfer(on: tab.id)
+                    return "\(index + 1) " + (job.map { "\($0.title) \(Int(($0.progress * 100).rounded()))%" } ?? "—")
+                }.joined(separator: " · "))
+            }
+            tags("from no tab (by their folders)")
             for job in [download, copy] { transfers.debugRemove(job) }
+            @MainActor func from(_ index: Int, _ job: TransferJob, percent: Int64) -> TransferJob {
+                job.originTab = tabs.tabs[index].id
+                job.totalBytes = 100
+                job.resumedBytes = percent
+                transfers.debugInsert(job)
+                return job
+            }
+            let one = from(0, job("One", from: "Seedbox", to: "SSD", .running, startedAgo: 40), percent: 42)
+            let two = from(1, job("Two", from: "SSD", to: "NAS/Movies", .running, startedAgo: 20), percent: 10)
+            let held = from(2, job("Held", from: "Other", to: "Elsewhere", .paused, startedAgo: 300), percent: 70)
+            let done = from(2, job("Done", from: "Other", to: "Elsewhere", .finished, startedAgo: 900), percent: 100)
+            tags("one each from tabs 1 and 2, tab 3's paused and finished")
+            await shows("tab 1 (One started here)", tab: 0)
+            await shows("tab 2 (Two started here; One lands in its SSD)", tab: 1)
+            await shows("tab 3 (its own paused and finished)", tab: 2)
+            let later = from(0, job("Later", from: "Seedbox", to: "SSD", .running, startedAgo: 5), percent: 80)
+            tags("a second from tab 1")
+            one.status = .finished
+            tags("tab 1's first finished")
+            let orphan = job("Orphan", from: "Other", to: "Elsewhere", .running, startedAgo: 60)
+            orphan.originTab = UUID()   // a tab since closed
+            transfers.debugInsert(orphan)
+            tags("one from a closed tab")
+            for job in [one, two, held, done, later, orphan] { transfers.debugRemove(job) }
+            tags("all gone")
             try? fm.removeItem(at: root)
             lines.append("done")
         }
@@ -2867,11 +2903,16 @@ enum UITestHarness {
                 tabs.select(index: 1)
                 tabs.current?.secondActive = true
                 tabs.save()
+                try? tabs.tabs.map(\.id.uuidString).joined(separator: "\n")
+                    .write(to: root.appendingPathComponent("ids"), atomically: true, encoding: .utf8)
                 lines.append("saved \(tabs.tabs.count) tabs")
             } else {
                 // The shown tab opens its folders; the others wait until shown.
                 try? await Task.sleep(for: .seconds(1))
                 lines.append("restored \(tabs.tabs.count) tabs · shown \((tabs.selectedIndex ?? -1) + 1) · right pane active \(tabs.current?.secondActive ?? false)")
+                // Their ids too: a restored transfer finds the tab it was started from.
+                let ids = (try? String(contentsOf: root.appendingPathComponent("ids"), encoding: .utf8)) ?? ""
+                lines.append("same ids \(ids == tabs.tabs.map(\.id.uuidString).joined(separator: "\n"))")
                 for (index, tab) in tabs.tabs.enumerated() {
                     let open = tab.first.current != nil
                     lines.append("tab \(index + 1): \(tab.firstLocation?.lastComponent ?? "-") | \(tab.secondLocation?.lastComponent ?? "-") · name \(tab.customName ?? "none") · opened \(open)")

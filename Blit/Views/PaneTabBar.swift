@@ -1,7 +1,7 @@
 // The tab bar (R2.18): one tab per pair of panes, above the cards in the same
 // gutter. Names stay in the system font; the pixel look marks what the
 // keyboard and the transfers say: each tab's ⌘-number, and a small HUD tag
-// while a transfer touches one of the tab's folders.
+// with its own transfer's progress while one runs.
 
 import SwiftUI
 
@@ -143,32 +143,19 @@ struct PaneTabBar: View {
         return paths.compactMap { $0 }.joined(separator: "  ·  ")
     }
 
-    /// The HUD tag for the transfer touching one of `tab`'s folders (a pane
-    /// showing its destination or where its files come from, or inside them):
-    /// ▼ 42% while it runs, ‖ paused, then ✓ or ✕. A running one wins.
+    /// The HUD tag for the transfer running from `tab` (started there):
+    /// ▼ 42%, on that tab only, so tabs transferring at once each show their
+    /// own. Nothing while none runs (paused, queued, done).
     private func activity(_ tab: PaneTab) -> PaneTabItem.Activity? {
-        let shown = [tab.firstLocation, twoPanes ? tab.secondLocation : nil].compactMap { $0 }
-        guard !shown.isEmpty else { return nil }
-        // By the paths alone: this runs every second on the main thread.
-        let touching = transfers.jobs.filter { job in shown.contains(where: job.touches) }
-        if let running = touching.last(where: \.isActive) {
-            let percent = Int((running.progress * 100).rounded())   // as the strip and HUD round
-            return .init(text: "\(running.directionGlyph) \(percent)%", failed: false,
-                         label: "Transfer \(percent) percent")
-        }
-        guard let job = touching.last else { return nil }
-        if job.status == .paused { return .init(text: "‖", failed: false, label: "Transfer paused") }
-        if job.status != .finished || !job.failures.isEmpty || job.notice != nil {
-            return job.status == .queued ? nil : .init(text: "✕", failed: true, label: "Transfer failed")
-        }
-        return .init(text: "✓", failed: false, label: "Transfer done")
+        guard let job = transfers.runningTransfer(on: tab.id) else { return nil }
+        let percent = Int((job.progress * 100).rounded())   // as the strip and HUD round
+        return .init(text: "\(job.directionGlyph) \(percent)%", label: "Transfer \(percent) percent")
     }
 }
 
 private struct PaneTabItem: View {
     struct Activity: Equatable {
         var text: String
-        var failed: Bool
         var label: String
     }
 
@@ -214,7 +201,7 @@ private struct PaneTabItem: View {
             if let activity {
                 hudText(activity.text, glyphSize: 9)
                     .font(HUDFont.terminal(15))
-                    .foregroundStyle(activity.failed ? HUDColor.failureText : HUDColor.bright)
+                    .foregroundStyle(HUDColor.bright)
                     .padding(.horizontal, 5)
                     .frame(height: 16)
                     .background(HUDColor.background, in: RoundedRectangle(cornerRadius: 3))

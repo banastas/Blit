@@ -226,9 +226,10 @@ struct ContentView: View {
     private func drop(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
         let mode: FileOperations.Mode = NSEvent.modifierFlags.contains(.option) ? .copy : .automatic
         let hidden = active?.showHidden ?? false
+        let tab = PaneTabs.shared.current?.id
         Task {
             if let message = await operations.place(sources, into: destination, destinationName: name.isEmpty ? "Folder" : name,
-                                                    mode: mode, includeHidden: hidden) {
+                                                    mode: mode, includeHidden: hidden, tab: tab) {
                 transfers.notice(message, action: mode == .copy ? "COPY" : "MOVE", place: name)
             }
         }
@@ -236,6 +237,7 @@ struct ContentView: View {
 
     private func startTransfer(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
         // Through the same path as a drop, so an existing file prompts Replace / Keep Both.
+        // Files from Finder come from no tab: theirs is the one showing them (TransferManager.tabID).
         let hidden = active?.showHidden ?? false
         Task {
             if let message = await operations.place(sources, into: destination, destinationName: name.isEmpty ? "Folder" : name,

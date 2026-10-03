@@ -143,11 +143,12 @@ final class FileOperations {
 
     // MARK: Moving and copying
 
-    /// Puts `sources` into the folder `destination`. Returns a message when it can't.
+    /// Puts `sources` into the folder `destination`, from the tab `tab` (a
+    /// transfer belongs to it). Returns a message when it can't.
     func place(_ sources: [BrowseLocation], into destination: BrowseLocation, destinationName: String,
-               mode: Mode, includeHidden: Bool = false, fromPasteboard: Bool = false) async -> String? {
+               mode: Mode, includeHidden: Bool = false, fromPasteboard: Bool = false, tab: UUID? = nil) async -> String? {
         let result = await placeChecked(sources, into: destination, destinationName: destinationName, mode: mode,
-                                        includeHidden: includeHidden)
+                                        includeHidden: includeHidden, tab: tab)
         // A pasted Cut is used up only when it worked, and the pasteboard then
         // no longer points at the items' old places (Paste again would fail).
         if fromPasteboard, mode == .move, result == nil {
@@ -158,7 +159,7 @@ final class FileOperations {
     }
 
     private func placeChecked(_ sources: [BrowseLocation], into destination: BrowseLocation, destinationName: String,
-                              mode: Mode, includeHidden: Bool) async -> String? {
+                              mode: Mode, includeHidden: Bool, tab: UUID?) async -> String? {
         // An item inside another selected folder goes with that folder.
         let sources = sources.uniqued().filter { item in
             !sources.contains { $0 != item && Self.location($0, contains: item) }
@@ -180,12 +181,12 @@ final class FileOperations {
             return await moveOnServer(sources.filter { $0.parent != destination }, into: destination)
         case .local(let folder):
             return await placeLocally(sources, into: folder, destinationName: destinationName, mode: mode,
-                                      includeHidden: includeHidden)
+                                      includeHidden: includeHidden, tab: tab)
         }
     }
 
     private func placeLocally(_ sources: [BrowseLocation], into folder: URL, destinationName: String, mode: Mode,
-                              includeHidden: Bool) async -> String? {
+                              includeHidden: Bool, tab: UUID?) async -> String? {
         let here = BrowseLocation.local(folder)
         var local = sources.compactMap(\.localURL)
         var remote = sources.filter { $0.serverID != nil }
@@ -283,7 +284,8 @@ final class FileOperations {
         if !crossing.isEmpty {
             // A drag between devices copies (Finder's rule); a server's items only move within it.
             if let message = transfers.enqueue(crossing, to: here, destinationName: destinationName,
-                                               includeHidden: includeHidden, move: mode == .move, existsRule: existsOverride) {
+                                               includeHidden: includeHidden, move: mode == .move, existsRule: existsOverride,
+                                               tab: tab) {
                 problems.append(message)
             }
         }

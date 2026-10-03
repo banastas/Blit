@@ -1,6 +1,8 @@
 // Tabs of pairs (R2.18): each tab holds its own pair of panes, with their
 // folders, history, sort, selection and scroll, and which side is active.
-// Transfers stay global: the strip and HUD show the whole queue on any tab.
+// Transfers stay global (the queue list shows them all on any tab), but each
+// belongs to the tab it was started from: that tab's tag shows it while it
+// runs, and the HUD follows it there.
 
 import AppKit
 import BlitLocal
@@ -11,7 +13,8 @@ import Observation
 @MainActor
 @Observable
 final class PaneTab: Identifiable {
-    let id = UUID()
+    /// Kept across launches, so a restored transfer finds the tab it came from.
+    let id: UUID
     let first: BrowserModel
     var second: BrowserModel?
     var secondActive = false
@@ -27,13 +30,18 @@ final class PaneTab: Identifiable {
     @ObservationIgnored var firstOpened = false
     @ObservationIgnored var secondOpened = false
 
-    init(first: BrowserModel, second: BrowserModel? = nil) {
+    init(id: UUID = UUID(), first: BrowserModel, second: BrowserModel? = nil) {
+        self.id = id
         self.first = first
         self.second = second
     }
 
     var firstLocation: BrowseLocation? { first.current ?? pendingFirst }
     var secondLocation: BrowseLocation? { second?.current ?? pendingSecond }
+    /// The folders it shows: its second pane's only while the window shows two.
+    var shownLocations: [BrowseLocation] {
+        [firstLocation, Panes.shared.twoPanes ? secondLocation : nil].compactMap { $0 }
+    }
 
     /// The tab's name: the user's, or the pair's folders.
     func title(twoPanes: Bool, servers: ServerStore) -> String {
@@ -83,6 +91,11 @@ final class PaneTabs {
     /// Every pane in every tab (transfers refresh any that show a changed folder).
     var allBrowsers: [BrowserModel] { tabs.flatMap { [$0.first, $0.second].compactMap { $0 } } }
 
+    /// The tab `model` is a pane of.
+    func tab(of model: BrowserModel) -> PaneTab? {
+        tabs.first { $0.first === model || $0.second === model }
+    }
+
     // MARK: Changing tabs
 
     /// The first tab, from last launch's tabs if there were any.
@@ -96,8 +109,11 @@ final class PaneTabs {
             tab.pendingSecond = TransferManager.isIsolated ? nil : PaneMemory.legacy(pane: 1)
             tabs = [tab]
         } else {
+            var ids = Set<UUID>()
             tabs = saved.map { entry in
-                let tab = PaneTab(first: makeBrowser())
+                // Saved before 0.2.41 without one, or twice: a new id.
+                let id = entry.id.flatMap { ids.insert($0).inserted ? $0 : nil } ?? UUID()
+                let tab = PaneTab(id: id, first: makeBrowser())
                 tab.pendingFirst = entry.first
                 tab.pendingSecond = entry.second
                 tab.secondActive = entry.secondActive
@@ -190,6 +206,7 @@ final class PaneTabs {
     // MARK: Saving
 
     private struct Saved: Codable {
+        var id: UUID?
         var first: BrowseLocation?
         var second: BrowseLocation?
         var secondActive: Bool
@@ -200,7 +217,7 @@ final class PaneTabs {
     /// app's defaults (they'd overwrite the user's tabs).
     func save() {
         guard let store = Self.store, !tabs.isEmpty else { return }
-        let saved = tabs.map { Saved(first: $0.firstLocation, second: $0.secondLocation,
+        let saved = tabs.map { Saved(id: $0.id, first: $0.firstLocation, second: $0.secondLocation,
                                      secondActive: $0.secondActive, name: $0.customName) }
         guard let data = try? JSONEncoder().encode(saved) else { return }
         store.set(data, forKey: Self.key)

@@ -190,9 +190,10 @@ extension BrowserModel {
     private func run(sources: [BrowseLocation], into folder: BrowseLocation, name: String, mode: FileOperations.Mode,
                      fromPasteboard: Bool = false) {
         let hidden = showHidden
+        let tab = PaneTabs.shared.tab(of: self)?.id
         Task {
             if let message = await operations.place(sources, into: folder, destinationName: name.isEmpty ? "Folder" : name,
-                                                    mode: mode, includeHidden: hidden, fromPasteboard: fromPasteboard) {
+                                                    mode: mode, includeHidden: hidden, fromPasteboard: fromPasteboard, tab: tab) {
                 report(message, action: mode == .copy ? "COPY" : "MOVE")
             }
         }
@@ -279,7 +280,8 @@ extension BrowserModel {
         }
         let folder = url.deletingLastPathComponent()
         let source = BrowseLocation.remote(server: server.id, path: partial.remotePath.bytes)
-        if let message = operations.transfers.enqueue([source], to: .local(folder), destinationName: folder.lastPathComponent) {
+        if let message = operations.transfers.enqueue([source], to: .local(folder), destinationName: folder.lastPathComponent,
+                                                      tab: PaneTabs.shared.tab(of: self)?.id) {
             report(message, action: "RESUME DOWNLOAD")
         }
     }

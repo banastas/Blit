@@ -337,6 +337,9 @@ final class TransferJob: Identifiable {
     /// file is removed once its copy is verified by SHA-256. Anything not
     /// verified that way stays where it was.
     var deleteSources = false
+    /// The tab it was started from (PaneTabs): that tab's tag shows it while
+    /// it runs, and the HUD follows it there. Nil from a Shortcut.
+    var originTab: UUID?
     /// While waiting for space: bytes in the Trash on the destination drive,
     /// which emptying would free (the strip offers it).
     var destinationTrashBytes: Int64 = 0
@@ -513,7 +516,8 @@ final class TransferManager {
 
     /// The job the strip and HUD show: one picked in the queue list; a running
     /// file operation (so a delete shows over a long download while it runs);
-    /// the shown tab's own transfer (the HUD follows the tab); else the
+    /// the shown tab's own transfer (the HUD follows the tab, as its tag
+    /// does); another tab's running between the shown tab's folders; else the
     /// transfer that's been running longest, so the other lane starting a job
     /// doesn't take over; else the most recent.
     var featured: TransferJob? {
@@ -521,26 +525,50 @@ final class TransferManager {
         let active = jobs.filter(\.isActive)
         let started = { (job: TransferJob) in job.startedAt ?? .distantPast }
         if let operation = active.filter(\.isOperation).max(by: { started($0) < started($1) }) { return operation }
-        // The HUD follows the tab: the transfer the shown tab's folders are
-        // part of (running, then paused, waiting, finished); else as before.
-        let shown = Panes.shared.shownLocations
-        let mine = jobs.filter { job in shown.contains(where: job.touches) }
-        // Between two of the tab's own, the one between more of its folders
-        // (its pair's copy over a download into one of them), then by start.
-        let reach = { (job: TransferJob) in shown.filter(job.touches).count }
-        func best(_ candidates: [TransferJob], earliest: Bool) -> TransferJob? {
-            candidates.max { a, b in
-                reach(a) != reach(b) ? reach(a) < reach(b) : (earliest ? started(a) > started(b) : started(a) < started(b))
+        // The shown tab's own: the running one its tag shows, then paused,
+        // queued, finished.
+        if let here = PaneTabs.shared.current?.id {
+            let mine = jobs.filter { tabID(of: $0) == here }
+            if let job = runningTransfer(on: here)
+                ?? mine.filter({ $0.status == .paused }).max(by: { started($0) < started($1) })
+                ?? mine.first(where: { $0.status == .queued })
+                ?? mine.max(by: { started($0) < started($1) }) {
+                return job
             }
         }
-        if let job = best(mine.filter(\.isActive), earliest: true)
-            ?? best(mine.filter { $0.status == .paused }, earliest: false)
-            ?? best(mine.filter { $0.status == .queued }, earliest: true)
-            ?? best(mine, earliest: false) {
+        // Another tab's, between the shown folders: the one between more of
+        // them (a pair's copy over a download into one), then by start.
+        let shown = Panes.shared.shownLocations
+        let reach = { (job: TransferJob) in shown.filter(job.touches).count }
+        if let job = active.filter({ reach($0) > 0 }).max(by: { a, b in
+            reach(a) != reach(b) ? reach(a) < reach(b) : started(a) > started(b)
+        }) {
             return job
         }
         return active.min { started($0) < started($1) }
             ?? jobs.last(where: { $0.status != .queued }) ?? jobs.first
+    }
+
+    /// The tab a transfer belongs to: the one it was started from, while
+    /// that's open; else (a Shortcut, a closed tab) the tab showing most of
+    /// its folders, the leftmost of equals. File operations belong to none.
+    func tabID(of job: TransferJob) -> UUID? {
+        let tabs = PaneTabs.shared.tabs
+        if let origin = job.originTab, tabs.contains(where: { $0.id == origin }) { return origin }
+        var best: (id: UUID, reach: Int)?
+        for tab in tabs {
+            let reach = tab.shownLocations.filter(job.touches).count
+            if reach > (best?.reach ?? 0) { best = (tab.id, reach) }
+        }
+        return best?.id
+    }
+
+    /// What the tab `tab`'s tag shows (PaneTabBar): its own transfer that's
+    /// been running longest, the one the HUD shows there. Nothing once the
+    /// tab's transfers have stopped (paused, queued, finished).
+    func runningTransfer(on tab: UUID) -> TransferJob? {
+        jobs.filter { $0.isActive && !$0.isOperation && tabID(of: $0) == tab }
+            .min { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
     }
 
     /// Transfers running now, at most one per lane: outgoing (to a share) first.
@@ -631,6 +659,7 @@ final class TransferManager {
         fresh.deleteSources = job.deleteSources
         fresh.existsRule = job.existsRule
         fresh.removedRoots = job.removedRoots
+        fresh.originTab = job.originTab
         let verified = job.verifiedSources.snapshot()
         fresh.verifiedSources.add(local: verified.local, remote: verified.remote)
         fresh.note("RETRY REQUESTED")
@@ -839,10 +868,11 @@ final class TransferManager {
         if jobs.isEmpty { isExpanded = false }
     }
 
-    /// Queues a transfer of `sources` into `destination`. Returns a message
-    /// if it can't be done.
+    /// Queues a transfer of `sources` into `destination`, started from the tab
+    /// `tab`. Returns a message if it can't be done.
     func enqueue(_ sources: [BrowseLocation], to destination: BrowseLocation, destinationName: String,
-                 includeHidden: Bool = false, move: Bool = false, existsRule: ExistsRule? = nil) -> String? {
+                 includeHidden: Bool = false, move: Bool = false, existsRule: ExistsRule? = nil,
+                 tab: UUID? = nil) -> String? {
         // After the trial (or a revoked key), new transfers don't start; queued
         // and running ones still finish (PRD open question 12).
         let license = LicenseManager.shared
@@ -870,6 +900,7 @@ final class TransferManager {
                                   title: Self.title(remote.map(\.lastComponent)), destinationName: destinationName)
             job.includeHidden = includeHidden
             job.deleteSources = move
+            job.originTab = tab
             if let existsRule { job.existsRule = existsRule }   // the answer to Replace / Keep Both
             jobs.append(job)
         }
@@ -877,6 +908,7 @@ final class TransferManager {
             let job = TransferJob(kind: .copy, sources: local.map { .local($0) }, destination: folder,
                                   title: Self.title(local.map(\.lastPathComponent)), destinationName: destinationName)
             job.deleteSources = move
+            job.originTab = tab
             if let existsRule { job.existsRule = existsRule }   // the answer to Replace / Keep Both
             jobs.append(job)
         }
@@ -902,6 +934,7 @@ final class TransferManager {
         var paused: Bool?
         var existsRule: ExistsRule?
         var verify: Bool?
+        var tab: UUID?
     }
 
     private static var queueURL: URL {
@@ -934,7 +967,7 @@ final class TransferManager {
                             verifiedRemote: verified.remote.isEmpty ? nil : verified.remote,
                             removedRoots: job.removedRoots.isEmpty ? nil : Array(job.removedRoots),
                             paused: job.status == .paused ? true : nil, existsRule: job.existsRule,
-                            verify: job.verify ? nil : false)
+                            verify: job.verify ? nil : false, tab: job.originTab)
         }
         let url = Self.queueURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -972,6 +1005,7 @@ final class TransferManager {
             if s.paused == true { job.status = .paused }
             if let rule = s.existsRule { job.existsRule = rule }
             if let verify = s.verify { job.verify = verify }
+            job.originTab = s.tab   // tabs keep their ids across launches
             job.restored = true
             job.note("RESTORED FROM LAST SESSION · RESUMING")
             jobs.append(job)
