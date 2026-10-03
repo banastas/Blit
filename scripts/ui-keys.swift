@@ -9,6 +9,7 @@
 // of 2 for a double-click), presses the key, then touches <log>.sent-N.
 // Modifiers add up: 1 ⌘, 2 ⌃, 4 ⇧. A key code of -1 only clicks.
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
@@ -37,6 +38,9 @@ func testCopyIsFrontmost() -> Bool { NSWorkspace.shared.frontmostApplication?.pr
 guard waitFor(log + ".click", 40), let data = fm.contents(atPath: log + ".click"),
       let c = try? JSONSerialization.jsonObject(with: data) as? [Double], c.count == 2 else { print("no click point"); exit(1) }
 let point = CGPoint(x: c[0], y: c[1])
+// A copy launched from a script can't always take focus from the app in use;
+// bring it forward (it's still checked, as ever).
+if !testCopyOwnsPoint(point, pid: pid) { bringForward(pid) }
 guard testCopyOwnsPoint(point, pid: pid) else {
     print("the test copy's window isn't the one under the click point; stopping")
     fm.createFile(atPath: log + ".aborted", contents: nil)
@@ -52,6 +56,7 @@ for index in 0..<count {
           let k = try? JSONSerialization.jsonObject(with: data) as? [Int], k.count >= 2 else { print("no key \(index)"); exit(1) }
     if k.count >= 4 {
         let target = CGPoint(x: k[2], y: k[3])
+        if !testCopyOwnsPoint(target, pid: pid) { bringForward(pid) }
         guard testCopyOwnsPoint(target, pid: pid) else {
             print("the test copy's window isn't the one under the click point; stopping before key \(index + 1)")
             fm.createFile(atPath: log + ".aborted", contents: nil)
@@ -103,6 +108,19 @@ for index in 0..<count {
 
 /// Whether the frontmost window under `point` (CG coordinates) belongs to the
 /// test copy. Every synthetic click or drag checks this first: with another
+/// Brings the test copy and its window in front, through Accessibility (which
+/// this helper has, to post events).
+func bringForward(_ pid: pid_t) {
+    let app = AXUIElementCreateApplication(pid)
+    AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+    var windows: CFTypeRef?
+    if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windows) == .success,
+       let window = (windows as? [AXUIElement])?.first {
+        AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    }
+    usleep(500_000)
+}
+
 /// app's window on top, the event would land in that app instead.
 func testCopyOwnsPoint(_ point: CGPoint, pid: pid_t) -> Bool {
     let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []

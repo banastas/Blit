@@ -10,6 +10,9 @@ struct TransferHUD: View {
     let job: TransferJob
 
     var body: some View {
+        #if DEBUG
+        let _ = UITestHarness.tick("TransferHUD")
+        #endif
         VStack(alignment: .leading, spacing: 10) {
             header
             HStack(alignment: .top, spacing: 10) {
@@ -55,6 +58,7 @@ struct TransferHUD: View {
             .buttonStyle(.plain)
             .help("Collapse")
             Spacer()
+            if !job.isOperation { JobControls(job: job) }
             if transfers.queuedCount > 0 {
                 Text("\(transfers.queuedCount) QUEUED").font(HUDFont.label()).foregroundStyle(HUDColor.dim)
             }
@@ -557,6 +561,11 @@ private struct QueueRow: View {
                 .foregroundStyle(stateIsFailure ? HUDColor.failureText : HUDColor.dim)
                 .fixedSize()
             controls
+                #if DEBUG
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { _, frame in
+                    UITestHarness.queueControls[job.id] = frame
+                }
+                #endif
         }
         .font(HUDFont.terminal(16))
         .padding(.horizontal, 6)
@@ -600,26 +609,63 @@ private struct QueueRow: View {
 
     @ViewBuilder private var controls: some View {
         HStack(spacing: 6) {
-            switch job.status {
-            case .queued:
-                HUDButton("▲", help: "Move up") { transfers.move(job, by: -1) }
-                HUDButton("▼", help: "Move down") { transfers.move(job, by: 1) }
-                HUDButton("‖", help: "Pause") { transfers.pause(job) }
-                HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
-            case .waiting:
-                HUDButton("RETRY NOW", help: "Try again now (the cause is fixed)") { transfers.retryNow(job) }
-                HUDButton("‖", help: "Pause") { transfers.pause(job) }
-                HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
-            case .preparing, .running, .waitingForSpace:
-                HUDButton("‖ PAUSE") { transfers.pause(job) }
-                HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
-            case .paused:
-                HUDButton("▶ RESUME") { transfers.resume(job) }
-                HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
-            case .failed, .cancelled:
-                HUDButton("RETRY") { transfers.retry(job) }
-            case .finished:
-                EmptyView()
+            if let request = job.stopRequest, job.isActive {
+                Text(request == .cancel ? "CANCELLING…" : "PAUSING…").foregroundStyle(HUDColor.dim).fixedSize()
+            } else {
+                switch job.status {
+                case .queued:
+                    HUDButton("▲", help: "Move up") { transfers.move(job, by: -1) }
+                    HUDButton("▼", help: "Move down") { transfers.move(job, by: 1) }
+                    HUDButton("‖", help: "Pause") { transfers.pause(job) }
+                    HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
+                case .waiting:
+                    HUDButton("RETRY NOW", help: "Try again now (the cause is fixed)") { transfers.retryNow(job) }
+                    HUDButton("‖", help: "Pause") { transfers.pause(job) }
+                    HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
+                case .preparing, .running, .waitingForSpace:
+                    HUDButton("‖ PAUSE") { transfers.pause(job) }
+                    HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
+                case .paused:
+                    HUDButton("▶ RESUME") { transfers.resume(job) }
+                    HUDButton("✕", help: "Cancel") { transfers.cancel(job) }
+                case .failed, .cancelled:
+                    HUDButton("RETRY") { transfers.retry(job) }
+                case .finished:
+                    EmptyView()
+                }
+            }
+        }
+    }
+}
+
+/// Pause or resume, and cancel, for the transfer the HUD or the strip shows
+/// (PRD R5.2); the queue list has its own per row. A stop takes hold at the
+/// copy's next block, which on a NAS can take a moment, so meanwhile it says
+/// it's stopping instead of looking as if the click did nothing.
+struct JobControls: View {
+    @Environment(TransferManager.self) private var transfers
+    let job: TransferJob
+    /// Glyphs only (the strip); words too (the HUD).
+    var compact = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let request = job.stopRequest, job.isActive {
+                Text(request == .cancel ? "CANCELLING…" : "PAUSING…")
+                    .font(HUDFont.label())
+                    .foregroundStyle(HUDColor.dim)
+                    .fixedSize()
+            } else {
+                switch job.status {
+                case .queued, .preparing, .running, .waiting, .waitingForSpace:
+                    HUDButton(compact ? "‖" : "‖ PAUSE", help: "Pause") { transfers.pause(job) }
+                    HUDButton(compact ? "✕" : "✕ CANCEL", help: "Cancel") { transfers.cancel(job) }
+                case .paused:
+                    HUDButton(compact ? "▶" : "▶ RESUME", help: "Resume") { transfers.resume(job) }
+                    HUDButton(compact ? "✕" : "✕ CANCEL", help: "Cancel") { transfers.cancel(job) }
+                case .finished, .failed, .cancelled:
+                    EmptyView()
+                }
             }
         }
     }

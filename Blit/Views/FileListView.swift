@@ -32,6 +32,9 @@ struct FileListView: View {
     /// Column widths, order and visibility (right-click a column header), kept per window.
 
     var body: some View {
+        #if DEBUG
+        let _ = UITestHarness.tick("FileListView")
+        #endif
         Group {
             if let error = browser.error {
                 ContentUnavailableView("Can't Open Folder", systemImage: "exclamationmark.triangle", description: Text(error))

@@ -58,6 +58,9 @@ struct PaneTabBar: View {
     }
 
     private func bar(width: CGFloat) -> some View {
+        #if DEBUG
+        UITestHarness.tick("PaneTabBar")
+        #endif
         let tabs = PaneTabs.shared
         let tabWidth = Self.tabWidth(barWidth: width, count: tabs.tabs.count)
         let step = tabWidth + Self.spacing

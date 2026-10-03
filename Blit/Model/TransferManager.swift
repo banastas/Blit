@@ -1822,7 +1822,8 @@ extension TransferJob {
             let previous = hashed[f.relativePath] ?? 0
             if bytes > previous { hashedTotal += bytes - previous }
             hashed[f.relativePath] = bytes
-            hashSizes[f.relativePath] = f.size
+            // Unchanged values aren't written: every write redraws whatever reads them.
+            if hashSizes[f.relativePath] != f.size { hashSizes[f.relativePath] = f.size }
             return
         }
         if case .fileFinished(let f, let v) = event {

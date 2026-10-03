@@ -2,6 +2,7 @@
 // thread, sorting (newest first by default, PRD R2.4), back/forward history,
 // and the prompts a server connection can need (trust, password).
 
+import AppKit
 import BlitRemote
 import BlitSFTP
 import Foundation
@@ -106,6 +107,7 @@ final class BrowserModel {
     }
 
     private func remember(_ location: BrowseLocation) {
+        guard recents.first != location else { return }
         recents.removeAll { $0 == location }
         recents.insert(location, at: 0)
         if recents.count > 20 { recents.removeLast(recents.count - 20) }
@@ -184,7 +186,12 @@ final class BrowserModel {
             return results
         }
         for (folder, listed) in results {
-            if let listed { children[folder] = listed } else { expanded.remove(folder); children[folder] = nil }
+            if let listed {
+                if children[folder] != listed { children[folder] = listed }
+            } else {
+                expanded.remove(folder)
+                children[folder] = nil
+            }
         }
     }
     var canGoBack: Bool { !backStack.isEmpty }
@@ -242,6 +249,17 @@ final class BrowserModel {
         if let current { show(current) }
     }
 
+    /// Reloads `models` now, or once the mouse button is up: a listing that
+    /// changes under a drag moves the rows (and the folder) under the pointer.
+    static func reloadWhenIdle(_ models: [BrowserModel]) {
+        guard !models.isEmpty else { return }
+        guard NSEvent.pressedMouseButtons & 1 != 0 else { return models.forEach { $0.reload() } }
+        Task { @MainActor in
+            while NSEvent.pressedMouseButtons & 1 != 0 { try? await Task.sleep(for: .milliseconds(250)) }
+            models.forEach { $0.reload() }
+        }
+    }
+
     private func show(_ location: BrowseLocation) {
         if location != current {
             searchText = ""
@@ -254,19 +272,24 @@ final class BrowserModel {
             sortOrder = SortMemory.order(for: location)
             restoringSort = false
         }
-        current = location
-        isLoading = true
-        error = nil
+        // Reloading the folder shown is quiet until something changed: every
+        // write here redraws the list and rebuilds its drop target, which a
+        // drag over it (or a transfer finishing into it) mustn't trip over.
+        let quiet = location == current && !items.isEmpty
+        if current != location { current = location }
+        if !quiet { isLoading = true }
+        if error != nil { error = nil }
         Task {
             do {
                 let listed = try await list(location)
                 guard location == current else { return }
-                items = listed
+                if listed != items { items = listed }
                 if connections.listings.count > 500 { connections.listings.removeAll() }
                 connections.listings[location] = listed
                 if !expanded.isEmpty { await reloadExpanded() }
                 guard location == current else { return }
-                selection.formIntersection(rows.map(\.location))
+                let kept = selection.intersection(rows.map(\.location))
+                if kept != selection { selection = kept }
                 if let renaming, !rows.contains(where: { $0.location == renaming }) { self.renaming = nil }
                 remember(location)
             } catch {
@@ -286,7 +309,7 @@ final class BrowserModel {
                     handle(error, for: location)
                 }
             }
-            isLoading = false
+            if isLoading { isLoading = false }
         }
     }
 

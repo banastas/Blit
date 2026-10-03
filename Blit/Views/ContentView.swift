@@ -44,6 +44,9 @@ struct ContentView: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = UITestHarness.tick("ContentView")
+        #endif
         NavigationSplitView {
             SidebarView(selection: $selection,
                         onAddServer: { editing = EditingServer(server: ServerConfig(), isNew: true) },
@@ -538,7 +541,7 @@ struct ContentView: View {
     /// transfer's destination (and a move's sources), or a file operation's folders.
     private func wireRefresh() {
         let refresh: ([BrowseLocation]) -> Void = { folders in
-            for model in PaneTabs.shared.allBrowsers where folders.contains(where: model.shows) { model.reload() }
+            BrowserModel.reloadWhenIdle(PaneTabs.shared.allBrowsers.filter { model in folders.contains(where: model.shows) })
         }
         operations.onChanged = refresh
         transfers.onFinished = { job in
@@ -588,6 +591,8 @@ struct ContentView: View {
         UITestHarness.runConflictTestIfRequested(transfers: transfers)
         UITestHarness.runCableTestIfRequested(transfers: transfers)
         UITestHarness.runCableLiveTestIfRequested(transfers: transfers)
+        UITestHarness.runBusyTestIfRequested(transfers: transfers)
+        UITestHarness.runQueueClickTestIfRequested(transfers: transfers)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

@@ -50,6 +50,9 @@ struct TransferStrip: View {
     let job: TransferJob
 
     var body: some View {
+        #if DEBUG
+        let _ = UITestHarness.tick("TransferStrip")
+        #endif
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 10) {
                 Button {
@@ -117,7 +120,12 @@ struct TransferStrip: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(job.movingConnections) of \(job.connections) connection\(job.connections == 1 ? "" : "s") active over \(job.link)")
                 .help("\(job.movingConnections) of \(job.connections) connections moving data")
-                if !job.isActive {
+                if !job.isOperation, job.isActive || job.status == .paused || job.status == .queued {
+                    separator
+                    JobControls(job: job, compact: true)
+                }
+                // Clears transfers that ended; a paused or waiting one has its own ✕ (cancel) above.
+                if !job.isActive, job.status != .paused, job.status != .queued {
                     Button {
                         transfers.dismissFinished()
                     } label: {

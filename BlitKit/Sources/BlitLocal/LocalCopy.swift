@@ -417,7 +417,7 @@ public func copy(
                             events(.fileCopied(file))
                             verification = try await verify(part: part, sourceHash: sourceHash, size: file.size,
                                                             nas: options.verify ? nas : nil, verify: options.verify,
-                                                            limiter: hashLimiter) { events(.fileHashProgress(file, $0)) }
+                                                            limiter: hashLimiter, shouldStop: stop) { events(.fileHashProgress(file, $0)) }
                         }
                         guard let verification else { throw POSIXFailure("copy \(file.path)", code: EIO) }
                         if let mtime = file.modificationTime {
@@ -444,7 +444,8 @@ public func copy(
 }
 
 private func verify(part: String, sourceHash: String, size: UInt64, nas: NASVerifier?, verify: Bool,
-                    limiter: AsyncLimiter, progress: @escaping @Sendable (UInt64) -> Void) async throws -> CopyVerification {
+                    limiter: AsyncLimiter, shouldStop: (@Sendable () -> Bool)?,
+                    progress: @escaping @Sendable (UInt64) -> Void) async throws -> CopyVerification {
     guard verify else { return .skipped }
     var fallbackReason: String?
     if let nas {
@@ -468,7 +469,7 @@ private func verify(part: String, sourceHash: String, size: UInt64, nas: NASVeri
             throw CopyMismatch(description: "NAS verification interrupted (\(error))")
         }
     }
-    let readBack = try await Task.detached { try readBackSHA256(path: part, progress: progress) }.value
+    let readBack = try await Task.detached { try readBackSHA256(path: part, progress: progress, shouldStop: shouldStop) }.value
     guard readBack == sourceHash else {
         throw CopyMismatch(description: "SHA-256 mismatch on read-back: source \(sourceHash), copy \(readBack)")
     }

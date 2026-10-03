@@ -126,7 +126,8 @@ enum StreamCopy {
 /// SHA-256 of a file read with the cache bypassed where possible. A weaker check
 /// than hashing on the NAS: an SMB client can still answer from its own cache.
 /// `progress` gets the bytes read so far, about every 64 MB.
-func readBackSHA256(path: String, progress: ((UInt64) -> Void)? = nil) throws -> String {
+func readBackSHA256(path: String, progress: ((UInt64) -> Void)? = nil,
+                    shouldStop: (@Sendable () -> Bool)? = nil) throws -> String {
     let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC)
     guard fd >= 0 else { throw POSIXFailure("open \(path)") }
     defer { Darwin.close(fd) }
@@ -136,6 +137,9 @@ func readBackSHA256(path: String, progress: ((UInt64) -> Void)? = nil) throws ->
     defer { buffer.deallocate() }
     var total: UInt64 = 0, reported: UInt64 = 0
     while true {
+        // A pause or cancel takes hold here too: reading back a 30 GB copy
+        // from a NAS takes minutes, and Pause used to wait for all of it.
+        if shouldStop?() == true { throw StreamCopy.Stopped() }
         let n = read(fd, buffer.baseAddress, StreamCopy.blockSize)
         if n < 0 {
             if errno == EINTR { continue }

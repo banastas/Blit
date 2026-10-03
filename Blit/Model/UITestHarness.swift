@@ -437,11 +437,16 @@ enum UITestHarness {
             return job
         }
         let running = job([]), failed = job(["a.mkv: SHA-256 mismatch"])
+        let paused = job([]); paused.status = .paused
+        let pausing = job([]); pausing.stopRequest = .pause
         transfers.notice("Can't put a folder inside itself.", action: "MOVE", place: "Incoming")
         transfers.notice("“untitled folder” already exists in “Movies”.", action: "NEW FOLDER")
         let notices = transfers.jobs.suffix(2)
         let content = VStack(spacing: 8) {
             TransferStrip(job: running).frame(width: 900)
+            TransferStrip(job: paused).frame(width: 900)
+            TransferStrip(job: pausing).frame(width: 900)
+            TransferHUD(job: running).frame(width: 900)
             TransferStrip(job: failed).frame(width: 900)
             ForEach(Array(notices), id: \.id) { TransferStrip(job: $0).frame(width: 900) }
             MenuBarTransfer(job: failed).frame(width: 296)
@@ -1421,6 +1426,250 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitBusyTest <log> -BlitBusyTestDest <folder on another volume>`: how
+    /// the window keeps up during a real copy (a 1.5 GB file and 400 small
+    /// ones, both panes showing its folders): the main thread's stalls, how
+    /// soon Pause, Resume and Cancel take hold, and a moment for the shell to
+    /// sample the process (<log>.sample, then <log>.sampled).
+    static func runBusyTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitBusyTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitBusyTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-busy-test")
+            try? fm.removeItem(at: root)
+            let pack = root.appendingPathComponent("Pack")
+            try? fm.createDirectory(at: pack, withIntermediateDirectories: true)
+            let dest = URL(filePath: destPath)
+            for name in (try? fm.contentsOfDirectory(atPath: dest.path)) ?? [] { try? fm.removeItem(at: dest.appendingPathComponent(name)) }
+            await Task.detached {
+                let big = FileManager.default.createFile(atPath: pack.appendingPathComponent("Big.mkv").path, contents: nil)
+                if big, let handle = try? FileHandle(forWritingTo: pack.appendingPathComponent("Big.mkv")) {
+                    var chunk = Data(count: 8 << 20)
+                    chunk.withUnsafeMutableBytes { arc4random_buf($0.baseAddress!, $0.count) }
+                    for _ in 0..<768 { try? handle.write(contentsOf: chunk) }   // 6 GB
+                    try? handle.close()
+                }
+                for i in 0..<400 {
+                    FileManager.default.createFile(atPath: pack.appendingPathComponent(String(format: "small-%03d.bin", i)).path,
+                                                   contents: Data(repeating: UInt8(i % 251), count: 64 << 10))
+                }
+            }.value
+            guard let tab = PaneTabs.shared.current, let second = tab.second else { return lines.append("no second pane") }
+            tab.first.open(.local(root))
+            second.open(.local(dest))
+            try? await Task.sleep(for: .seconds(1))
+            // The main thread's stalls: a 20 ms timer, and how late each tick is.
+            var lags: [Double] = []
+            var last = Date()
+            let ticker = Timer(timeInterval: 0.02, repeats: true) { _ in
+                MainActor.assumeIsolated {
+                    let now = Date()
+                    lags.append(max(0, now.timeIntervalSince(last) - 0.02))
+                    last = now
+                }
+            }
+            RunLoop.main.add(ticker, forMode: .common)
+            @MainActor func stalls(_ label: String) {
+                let sorted = lags.sorted()
+                guard !sorted.isEmpty else { return lines.append("\(label): no ticks") }
+                let p95 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+                lines.append(String(format: "%@: %d ticks · late p95 %.0f ms · worst %.0f ms · over 100 ms %d", label, sorted.count,
+                                    p95 * 1000, (sorted.last ?? 0) * 1000, sorted.filter { $0 > 0.1 }.count))
+                lags = []
+            }
+            // Redraws per second, by view, over `seconds`.
+            @MainActor func redraws(_ label: String, seconds: Double) async {
+                let before = bodyCounts
+                try? await Task.sleep(for: .seconds(seconds))
+                let rates = bodyCounts.keys.sorted().map { key in
+                    String(format: "%@ %.1f/s", key, Double((bodyCounts[key] ?? 0) - (before[key] ?? 0)) / seconds)
+                }
+                lines.append("redraws \(label): " + rates.joined(separator: " · "))
+            }
+            // Switching tabs: the cost of the switch, and until the shown tab's panes have their rows.
+            let tabs = PaneTabs.shared
+            tabs.newTab()
+            try? await Task.sleep(for: .seconds(1))
+            tabs.select(index: 0)
+            try? await Task.sleep(for: .seconds(1))
+            @MainActor func switching(_ label: String) async {
+                var costs: [String] = []
+                for index in [1, 0, 1, 0] {
+                    let start = Date()
+                    tabs.select(index: index)
+                    let call = Date().timeIntervalSince(start)
+                    for _ in 0..<100 where (tabs.current?.first.rows.isEmpty ?? true) { try? await Task.sleep(for: .milliseconds(10)) }
+                    try? await Task.sleep(for: .milliseconds(1))
+                    costs.append(String(format: "%.0f/%.0f ms", call * 1000, Date().timeIntervalSince(start) * 1000))
+                }
+                lines.append("switching tabs \(label) (call / rows shown): " + costs.joined(separator: " · "))
+            }
+            await redraws("idle", seconds: 2)
+            await switching("idle")
+            stalls("idle")
+            if let message = transfers.enqueue([.local(pack)], to: .local(dest), destinationName: dest.lastPathComponent) {
+                return lines.append("enqueue: \(message)")
+            }
+            guard let job = transfers.transferJobs.last else { return lines.append("no job") }
+            for _ in 0..<100 where job.status != .running { try? await Task.sleep(for: .milliseconds(100)) }
+            @MainActor func timed(_ label: String, _ action: () -> Void, until done: () -> Bool) async {
+                let start = Date()
+                action()
+                for _ in 0..<300 where !done() { try? await Task.sleep(for: .milliseconds(50)) }
+                lines.append(String(format: "%@: %@ after %.2f s · %@ · %d%%", label, done() ? "took hold" : "NOT YET", Date().timeIntervalSince(start),
+                                    "\(job.status)", Int(job.progress * 100)))
+            }
+            try? await Task.sleep(for: .seconds(1))
+            await timed("pause while copying", { transfers.pause(job) }, until: { job.status == .paused })
+            await timed("resume", { transfers.resume(job) }, until: { job.status == .running })
+            await redraws("copying", seconds: 2)
+            await switching("while copying")
+            stalls("copying")
+            try? Data().write(to: URL(fileURLWithPath: logPath + ".sample"))
+            for _ in 0..<150 where !fm.fileExists(atPath: logPath + ".sampled") { try? await Task.sleep(for: .milliseconds(100)) }
+            stalls("copying (while sampled)")
+            // The big file's read-back: pause while it's being hashed (it used to wait for all of it).
+            for _ in 0..<1200 where job.verifying["Pack/Big.mkv"] == nil && job.status == .running { try? await Task.sleep(for: .milliseconds(25)) }
+            try? await Task.sleep(for: .milliseconds(300))
+            lines.append("verifying: \(job.verifying.keys.sorted().joined(separator: ", "))")
+            await timed("pause while verifying", { transfers.pause(job) }, until: { job.status == .paused })
+            await timed("resume", { transfers.resume(job) }, until: { job.status == .running })
+            try? await Task.sleep(for: .seconds(1))
+            await timed("cancel", { transfers.cancel(job) }, until: { job.status == .cancelled })
+            stalls("pause, resume, cancel")
+            ticker.invalidate()
+            transfers.dismissFinished()
+            try? fm.removeItem(at: root)
+            for name in (try? fm.contentsOfDirectory(atPath: dest.path)) ?? [] { try? fm.removeItem(at: dest.appendingPathComponent(name)) }
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitQueueClickTest <log> -BlitQueueClickTestDest <folder on another
+    /// volume>`: with real clicks (scripts/ui-keys: steps 0–2) on the HUD's
+    /// queue list while a 6 GB copy runs and another waits: ‖ PAUSE, then the
+    /// first button again (▶ RESUME), then ✕. Then, with a copy running, real
+    /// drags (scripts/ui-drag: 0–1) of a file onto a subfolder: one plain, one
+    /// with the pane reloading while it hovers (as when a transfer into it
+    /// finishes). Logs what each click did and where each file landed.
+    static func runQueueClickTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitQueueClickTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitQueueClickTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-queue-click")
+            try? fm.removeItem(at: root)
+            let big = root.appendingPathComponent("Big"), small = root.appendingPathComponent("Small"), drop = root.appendingPathComponent("Drop")
+            for folder in [big, small, drop.appendingPathComponent("Target")] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            for name in ["a.bin", "b.bin"] { fm.createFile(atPath: drop.appendingPathComponent(name).path, contents: Data("x".utf8)) }
+            for i in 1...3 { fm.createFile(atPath: small.appendingPathComponent("\(i).bin").path, contents: Data(count: 1 << 20)) }
+            await Task.detached {
+                let file = big.appendingPathComponent("Big.mkv")
+                FileManager.default.createFile(atPath: file.path, contents: nil)
+                if let handle = try? FileHandle(forWritingTo: file) {
+                    var chunk = Data(count: 8 << 20)
+                    chunk.withUnsafeMutableBytes { arc4random_buf($0.baseAddress!, $0.count) }
+                    for _ in 0..<768 { try? handle.write(contentsOf: chunk) }   // 6 GB
+                    try? handle.close()
+                }
+            }.value
+            let dest = URL(filePath: destPath)
+            for name in (try? fm.contentsOfDirectory(atPath: dest.path)) ?? [] { try? fm.removeItem(at: dest.appendingPathComponent(name)) }
+            guard let pane = BrowserModel.active, let window = BrowserModel.activeWindow, let content = window.contentView else {
+                return lines.append("no browser")
+            }
+            pane.open(.local(drop))
+            PaneTabs.shared.current?.second?.open(.local(dest))
+            for _ in 0..<30 where pane.rows.count < 3 { try? await Task.sleep(for: .milliseconds(200)) }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            window.setFrame(NSRect(x: 120, y: 100, width: 1280, height: 820), display: true)
+            let screenHeight = NSScreen.screens.first?.frame.height ?? 0
+            @MainActor func cg(global point: CGPoint) -> [Int] {   // SwiftUI's global space → CG screen
+                let screen = window.convertPoint(toScreen: NSPoint(x: point.x, y: content.bounds.height - point.y))
+                return [Int(screen.x), Int(screenHeight - screen.y)]
+            }
+            _ = transfers.enqueue([.local(big)], to: .local(dest), destinationName: dest.lastPathComponent)
+            _ = transfers.enqueue([.local(small)], to: .local(dest), destinationName: dest.lastPathComponent)
+            transfers.isExpanded = true
+            guard let jobA = transfers.transferJobs.first(where: { $0.sources.first == .local(big) }) else { return lines.append("no job") }
+            for _ in 0..<100 where jobA.status != .running || queueControls[jobA.id] == nil { try? await Task.sleep(for: .milliseconds(100)) }
+            try? await Task.sleep(for: .seconds(1))
+            lines.append("A \(jobA.status) · queue rows \(transfers.transferJobs.count) · controls at \(queueControls[jobA.id].map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))×\(Int($0.height))" } ?? "?")")
+            // Bring the copy forward with a click on the Target row (it only selects it; ui-keys does it first).
+            if let table = firstTable(in: content), let row = pane.rows.firstIndex(where: { $0.name == "Target" }) {
+                let rect = table.rect(ofRow: row)
+                let screen = window.convertPoint(toScreen: table.convert(NSPoint(x: rect.minX + 90, y: rect.midY), to: nil))
+                try? JSONSerialization.data(withJSONObject: [Int(screen.x), Int(screenHeight - screen.y)]).write(to: URL(fileURLWithPath: logPath + ".click"))
+            }
+            for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".clicked") { try? await Task.sleep(for: .milliseconds(100)) }
+            @MainActor func click(_ step: Int, _ label: String, at x: (CGRect) -> CGFloat) async {
+                transfers.pinnedJobID = nil
+                guard let frame = queueControls[jobA.id] else { return lines.append("\(label): no controls") }
+                let point = cg(global: CGPoint(x: x(frame), y: frame.midY))
+                try? JSONSerialization.data(withJSONObject: [-1, 0] + point).write(to: URL(fileURLWithPath: logPath + ".keys-\(step)"))
+                for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".sent-\(step)") && !fm.fileExists(atPath: logPath + ".aborted") {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                try? await Task.sleep(for: .seconds(2))
+                lines.append("click \(label): A \(jobA.status) · stop request \(jobA.stopRequest.map { "\($0)" } ?? "none") · row pinned \(transfers.pinnedJobID == jobA.id)"
+                             + (fm.fileExists(atPath: logPath + ".aborted") ? " · ui-keys stopped" : ""))
+            }
+            await click(0, "‖ PAUSE", at: { $0.minX + 22 })
+            await click(1, "first button again (▶ RESUME)", at: { $0.minX + 22 })
+            await click(2, "✕", at: { $0.maxX - 8 })
+            // Drags with a copy running: a.bin onto Target, then b.bin onto Target while the pane reloads.
+            _ = transfers.enqueue([.local(big)], to: .local(dest.appendingPathComponent("again")), destinationName: "again")
+            try? fm.createDirectory(at: dest.appendingPathComponent("again"), withIntermediateDirectories: true)
+            for _ in 0..<100 where !transfers.transferJobs.contains(where: { $0.status == .running }) { try? await Task.sleep(for: .milliseconds(100)) }
+            lines.append("copy running for the drags: \(transfers.transferJobs.contains { $0.status == .running })")
+            guard let table = firstTable(in: content) else { return lines.append("no table") }
+            @MainActor func rowPoint(_ name: String) -> [Double]? {
+                guard let row = pane.rows.firstIndex(where: { $0.name == name }) else { return nil }
+                let rect = table.rect(ofRow: row)
+                let screen = window.convertPoint(toScreen: table.convert(NSPoint(x: rect.minX + 90, y: rect.midY), to: nil))
+                return [screen.x, screenHeight - screen.y]
+            }
+            for (index, file) in ["a.bin", "b.bin"].enumerated() {
+                guard let from = rowPoint(file), let to = rowPoint("Target") else { lines.append("drag \(index): rows not found"); continue }
+                UITestHarness.lastDrop = ""
+                try? JSONSerialization.data(withJSONObject: from + to).write(to: URL(fileURLWithPath: logPath + ".points-\(index)"))
+                for _ in 0..<150 where !fm.fileExists(atPath: logPath + ".hover-\(index)") && !fm.fileExists(atPath: logPath + ".aborted") {
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                if index == 1 { pane.reload() }   // as when a transfer into this folder finishes
+                try? await Task.sleep(for: .milliseconds(300))
+                if let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+                    content.cacheDisplay(in: content.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + "-hover-\(index).png"))
+                }
+                var landed = false
+                for _ in 0..<40 {
+                    landed = fm.fileExists(atPath: drop.appendingPathComponent("Target/\(file)").path)
+                    if landed { break }
+                    try? await Task.sleep(for: .milliseconds(150))
+                }
+                lines.append("drag \(file) onto Target\(index == 1 ? " (pane reloading)" : ""): landed in Target \(landed) · in Drop \(fm.fileExists(atPath: drop.appendingPathComponent(file).path)) · drop: \(UITestHarness.lastDrop.isEmpty ? "none" : UITestHarness.lastDrop)")
+                try? await Task.sleep(for: .seconds(1))
+            }
+            for job in transfers.transferJobs where job.isActive || job.status == .queued || job.status == .paused { transfers.cancel(job) }
+            try? await Task.sleep(for: .seconds(1))
+            transfers.dismissFinished()
+            try? fm.removeItem(at: root)
+            for name in (try? fm.contentsOfDirectory(atPath: dest.path)) ?? [] { try? fm.removeItem(at: dest.appendingPathComponent(name)) }
+            lines.append("done")
+        }
+    }
+
     static func runUndoTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitUndoTest") else { return }
         var lines: [String] = [] {
@@ -2333,6 +2582,17 @@ enum UITestHarness {
             try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
         }
     }
+
+    /// How many times each instrumented view's body has run (the busy test
+    /// reads how often the window redraws during a transfer).
+    static var bodyCounts: [String: Int] = [:]
+    @discardableResult static func tick(_ name: String) -> Int {
+        bodyCounts[name, default: 0] += 1
+        return 0
+    }
+
+    /// Where each queue row's buttons sit in the HUD (the queue click test).
+    static var queueControls: [UUID: CGRect] = [:]
 
     /// Where each tab sits in the tab bar (SwiftUI's global space: the
     /// window's content, top-left origin), for the real-input tabs test.
