@@ -127,7 +127,14 @@ struct ContentView: View {
             Task { pane?.open(location) }
         }
         .onChange(of: showSecondPane) { _, shown in
-            if shown { openSecondPaneIfNeeded() } else { secondActive = false }
+            if shown {
+                openSecondPaneIfNeeded()
+            } else {
+                // The AppKit list: the keyboard comes back to the first pane (the
+                // second's list going handed it to the toolbar's search field).
+                if FileListFlags.native, secondActive { browser?.requestKeyboardFocus() }
+                secondActive = false
+            }
             Panes.shared.twoPanes = shown
         }
         .modifier(PaneTracking(tabID: tab?.id, first: browser?.current, second: secondBrowser?.current,
@@ -619,6 +626,7 @@ struct ContentView: View {
         UITestHarness.runNativeCellsTestIfRequested(transfers: transfers)
         UITestHarness.runNativeKeysTestIfRequested()
         UITestHarness.runNativeDropTestIfRequested(transfers: transfers)
+        UITestHarness.runNativeHardeningTestIfRequested(transfers: transfers)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

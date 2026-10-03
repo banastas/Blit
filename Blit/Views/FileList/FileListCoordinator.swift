@@ -291,7 +291,12 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         if window.firstResponder === window || window.firstResponder == nil { window.makeFirstResponder(table) }
     }
 
+    /// The list is going (its pane hidden, or its window closed: SwiftUI
+    /// keeps a closed window's views, still watching their panes, so the table
+    /// says when its window closes). A name being edited is saved.
     func detach() {
+        guard let model else { return }
+        if let field = renameField { controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: field)) }
         watchGeneration += 1
         removeRenameField()
         cancelPendingRename()
@@ -299,11 +304,11 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         decorations = nil
         ticker?.invalidate()
         ticker = nil
-        if let model {
-            model.listScrollOrigin = scrollView.contentView.bounds.origin
-            FileListRegistry.unregister(self, for: model)
-        }
-        model = nil
+        dropHover.exited()
+        model.listScrollOrigin = scrollView.contentView.bounds.origin
+        if model.keyboardTarget === self { model.keyboardTarget = nil }
+        FileListRegistry.unregister(self, for: model)
+        self.model = nil
     }
 
     /// Shows `model`'s rows (another tab's pane, after a switch): all at once,
@@ -438,9 +443,15 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         if dropHover.value != nil { showDropMark() }
     }
 
+    /// `new` is always the model's rows as just read, so its index is the
+    /// model's (kept with them: a tab switch back reuses it).
     private func setRows(_ new: [FileItem]) {
         rows = new
-        rowIndex = Dictionary(new.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        if let index = model?.rowIndex, index.count == new.count {
+            rowIndex = index
+        } else {
+            rowIndex = Dictionary(new.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
     }
 
     private func showSelection(_ selection: Set<BrowseLocation>) {

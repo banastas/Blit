@@ -28,22 +28,20 @@ extension FileListCoordinator {
         return cell.convert(point, from: table).x <= cell.contentEnd
     }
 
-    /// A drag from `row` takes the selection when the row is in it, else just
-    /// the row (as in Finder).
-    private func draggedItems(from row: Int) -> [FileItem] {
-        let selected = table.selectedRowIndexes
-        let indexes = selected.contains(row) ? Array(selected) : [row]
-        return indexes.compactMap { rows.indices.contains($0) ? rows[$0] : nil }
-    }
-
-    /// One pasteboard item per dragged row: its file (local rows), first, as
-    /// other apps take the first type they can use; then Blit's payload with
-    /// every dragged row, which Blit's own drop targets read first.
+    /// One pasteboard item per dragged row (the selection when the row is in
+    /// it, else just the row, as in Finder): its file (local rows), first, as
+    /// other apps take the first type they can use; then Blit's payload, which
+    /// Blit's own drop targets read first. Every target reads every item's, so
+    /// the first dragged row's holds them all and the others just their own
+    /// (each holding all made a 5,000-row drag 25 million entries).
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
         guard rows.indices.contains(row) else { return nil }
         let item = rows[row]
-        let dragged = draggedItems(from: row)
-        let payload = TransferPayload(locations: dragged.map(\.location), folders: dragged.filter(\.isDirectory).map(\.location),
+        let selected = table.selectedRowIndexes
+        let carried = selected.contains(row) && row == selected.first
+            ? selected.compactMap { rows.indices.contains($0) ? rows[$0] : nil }
+            : [item]
+        let payload = TransferPayload(locations: carried.map(\.location), folders: carried.filter(\.isDirectory).map(\.location),
                                       primary: item.location)
         let board = NSPasteboardItem()
         if let url = item.location.localURL { board.setString(url.absoluteString, forType: .fileURL) }

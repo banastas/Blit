@@ -2453,6 +2453,13 @@ enum UITestHarness {
             // 1. What a dragged row carries.
             let pasteboard = board(["a.bin"], from: leftList, in: first)
             lines.append("a.bin's pasteboard: \(pasteboard.pasteboardItems?.map { $0.types.map(\.rawValue) } ?? [])")
+            // Two rows: the first row's payload holds both, the other its own; read together, both.
+            sequence += 1
+            let both = board(["a.bin", "b.bin"], from: leftList, in: first)
+            let payloads = both.pasteboardItems?.compactMap { item in
+                item.data(forType: .blitLocations).flatMap { try? JSONDecoder().decode(TransferPayload.self, from: $0) }
+            } ?? []
+            lines.append("a.bin + b.bin: payloads \(payloads.map { $0.locations.map(\.lastComponent) }) · read as \(DropReader.locations(on: both).map(\.lastComponent))")
             // 2. Hovering a drag of a.bin over the left list.
             sequence += 1
             var drag = StandInDrag(pasteboard: pasteboard, sequence: sequence, window: window)
@@ -2557,6 +2564,197 @@ enum UITestHarness {
             lines.append("HUD open: a click on a row reaches the list \(await clickReaches())")
             transfers.isExpanded = false
             transfers.debugRemove(job)
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitNativeHardeningTest <log>` (with `-BlitNativeList YES` and two
+    /// panes): the AppKit list through the awkward moments, with no real
+    /// input: a tab switch mid-rename (it saves), the full HUD opening
+    /// mid-rename (it carries on), a tab switch mid-drag (the folder stops
+    /// being lit), what VoiceOver reads for a row, and a 10,000-file folder
+    /// (how long it takes to show, to switch tabs to and from, and to scroll).
+    static func runNativeHardeningTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitNativeHardeningTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-native-hardening")
+            try? fm.removeItem(at: root)
+            let left = root.appendingPathComponent("Left"), big = root.appendingPathComponent("Big")
+            for folder in [left.appendingPathComponent("Folder"), big] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            for name in ["one.txt", "two.txt"] { fm.createFile(atPath: left.appendingPathComponent(name).path, contents: Data("x".utf8)) }
+            defer { try? fm.removeItem(at: root) }
+            guard let first = PaneTabs.shared.current?.first, let window = BrowserModel.activeWindow,
+                  let firstTab = PaneTabs.shared.current?.id else { return lines.append("no window") }
+            first.open(.local(left))
+            first.sort(by: .name)
+            for _ in 0..<30 where first.rows.count < 3 { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let list = FileListRegistry.coordinator(for: first) else { return lines.append("no native list (run with -BlitNativeList YES)") }
+            func contents(_ url: URL) -> [String] { ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).sorted() }
+            @MainActor func pause(_ seconds: Double = 0.5) async { try? await Task.sleep(for: .seconds(seconds)) }
+            @MainActor func editor() -> NSTextView? { window.firstResponder as? NSTextView }
+
+            // 1. A tab switch mid-rename saves the name.
+            guard let one = first.rows.first(where: { $0.name == "one.txt" }) else { return lines.append("no one.txt") }
+            first.beginRename(one)
+            await pause()
+            if let editor = editor() {
+                editor.selectAll(nil)
+                editor.insertText("uno.txt", replacementRange: editor.selectedRange())
+            }
+            lines.append("renaming one.txt: field \(list.renameField != nil) · editor \(editor() != nil)")
+            PaneTabs.shared.newTab()
+            await pause(1)
+            lines.append("after ⌘T mid-rename: field \(list.renameField != nil) · renaming \(first.renaming != nil) · on disk \(contents(left))")
+            guard let secondTab = PaneTabs.shared.current?.id, secondTab != firstTab else { return lines.append("no new tab") }
+            PaneTabs.shared.select(firstTab)
+            await pause(1)
+            lines.append("back on tab 1: field \(list.renameField != nil) · rows \(first.rows.map(\.name)) · keyboard on the list \(window.firstResponder === list.table)")
+
+            // 2. The full HUD opening mid-rename: editing carries on, Return saves.
+            guard let two = first.rows.first(where: { $0.name == "two.txt" }) else { return lines.append("no two.txt") }
+            first.beginRename(two)
+            await pause()
+            let job = TransferJob(kind: .copy, sources: [.local(root.appendingPathComponent("x.bin"))], destination: left,
+                                  title: "x.bin", destinationName: "Left")
+            job.persistent = false
+            job.status = .running
+            transfers.debugInsert(job)
+            transfers.isExpanded = true
+            await pause(1.2)
+            lines.append("HUD open mid-rename: field \(list.renameField != nil) · editor \(editor() != nil) · renaming \(first.renaming != nil)")
+            if let editor = editor() {
+                editor.selectAll(nil)
+                editor.insertText("dos.txt", replacementRange: editor.selectedRange())
+                editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+            }
+            await pause(1)
+            lines.append("after Return: field \(list.renameField != nil) · on disk \(contents(left)) · keyboard on the list \(window.firstResponder === list.table)")
+            transfers.isExpanded = false
+            transfers.debugRemove(job)
+            await pause(0.6)
+
+            // 3. A tab switch mid-drag: the folder stops being lit, here and there.
+            let board = NSPasteboard(name: NSPasteboard.Name("blit-native-hardening"))
+            board.clearContents()
+            if let row = first.rows.firstIndex(where: { $0.name == "uno.txt" }),
+               let writer = list.tableView(list.table, pasteboardWriterForRow: row) { board.writeObjects([writer]) }
+            let drag = StandInDrag(pasteboard: board, sequence: 77, window: window)
+            if let row = first.rows.firstIndex(where: { $0.name == "Folder" }) {
+                let rect = list.table.rect(ofRow: row)
+                drag.location = list.table.convert(NSPoint(x: rect.minX + 60, y: rect.midY), to: nil)
+            }
+            list.dragEntered(drag)
+            _ = list.tableView(list.table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
+            lines.append("hovering Folder: rows lit \(list.litRowViews)")
+            PaneTabs.shared.select(secondTab)
+            await pause(1)
+            lines.append("tab 2 mid-drag: rows lit \(list.litRowViews) · outline \(!list.listOutline.isHidden) · hover \(list.dropHover.value == nil ? "none" : "some")")
+            PaneTabs.shared.select(firstTab)
+            await pause(1)
+            lines.append("back on tab 1: rows lit \(list.litRowViews)")
+            PaneTabs.shared.close(secondTab)
+            await pause(0.6)
+
+            // 4. What VoiceOver reads for each column of the first rows.
+            for row in 0..<min(2, list.table.numberOfRows) {
+                var parts: [String] = []
+                for column in 0..<list.table.numberOfColumns where !list.table.tableColumns[column].isHidden {
+                    let cell = list.table.view(atColumn: column, row: row, makeIfNecessary: false)
+                    parts.append("\(list.table.tableColumns[column].title): \(cell?.accessibilityRole()?.rawValue ?? "-") “\(cell?.accessibilityLabel() ?? "")”")
+                }
+                lines.append("VoiceOver row \(row): " + parts.joined(separator: " · "))
+            }
+            lines.append("VoiceOver rows: \(list.table.accessibilityRows()?.count ?? -1) of \(list.table.numberOfRows)")
+            // A picture of the list alone with its first row selected as in the
+            // key window (blue, white text), with -BlitNativeHardeningPictures.
+            if UserDefaults.standard.bool(forKey: "BlitNativeHardeningPictures") {
+                list.table.selectRowIndexes([0], byExtendingSelection: false)
+                list.table.enumerateAvailableRowViews { rowView, _ in rowView.isEmphasized = true }
+                await pause(0.3)
+                let view = list.scrollView
+                if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                    view.cacheDisplay(in: view.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + "-selected.png"))
+                }
+                // The same in light mode, with Folder lit as a drop target.
+                window.appearance = NSAppearance(named: .aqua)
+                let lightDrag = StandInDrag(pasteboard: board, sequence: 78, window: window)
+                if let row = first.rows.firstIndex(where: { $0.name == "Folder" }) {
+                    let rect = list.table.rect(ofRow: row)
+                    lightDrag.location = list.table.convert(NSPoint(x: rect.minX + 60, y: rect.midY), to: nil)
+                }
+                list.dragEntered(lightDrag)
+                _ = list.tableView(list.table, validateDrop: lightDrag, proposedRow: -1, proposedDropOperation: .on)
+                await pause(0.3)
+                if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                    view.cacheDisplay(in: view.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + "-light.png"))
+                }
+                list.dragExited()
+                window.appearance = nil
+                list.table.enumerateAvailableRowViews { rowView, _ in rowView.isEmphasized = false }
+            }
+
+            // 5. A 10,000-file folder.
+            for index in 0..<10_000 { fm.createFile(atPath: big.appendingPathComponent(String(format: "file-%05d.bin", index)).path, contents: nil) }
+            var start = CACurrentMediaTime()
+            first.open(.local(big))
+            for _ in 0..<300 where list.table.numberOfRows < 10_000 { try? await Task.sleep(for: .milliseconds(20)) }
+            lines.append("10,000 files listed in \(Int((CACurrentMediaTime() - start) * 1000)) ms (rows \(list.table.numberOfRows))")
+            await pause(1)
+            @MainActor func settled() async {
+                await withCheckedContinuation { done in DispatchQueue.main.async { DispatchQueue.main.async { done.resume() } } }
+            }
+            PaneTabs.shared.newTab()
+            await pause(1.5)
+            guard let bigTab = Optional(firstTab), let smallTab = PaneTabs.shared.current?.id, smallTab != bigTab else { return lines.append("no tab") }
+            var switches: [Int] = []
+            for index in 0..<6 {
+                start = CACurrentMediaTime()
+                PaneTabs.shared.select(index.isMultiple(of: 2) ? bigTab : smallTab)
+                await settled()
+                switches.append(Int((CACurrentMediaTime() - start) * 1000))
+                await pause(0.4)
+            }
+            lines.append("switches to and from the 10,000-file tab: \(switches.map { "\($0) ms" }.joined(separator: ", "))")
+            PaneTabs.shared.select(bigTab)
+            await pause(0.8)
+            start = CACurrentMediaTime()
+            list.table.scrollRowToVisible(9_999)
+            await settled()
+            lines.append("scroll to the last row: \(Int((CACurrentMediaTime() - start) * 1000)) ms · last visible row \(list.table.rows(in: list.table.visibleRect).upperBound - 1)")
+            lines.append("footprint \(footprintMB()) MB")
+            PaneTabs.shared.close(smallTab)
+            first.open(.local(left))
+            await pause(0.8)
+
+            // 6. The window closed and opened again (File › New Tab, as ⌘T with
+            // no window): the lists go with it and come back, with the keyboard.
+            // A name being edited when the window closes is saved.
+            if let uno = first.rows.first(where: { $0.name == "uno.txt" }) { first.beginRename(uno) }
+            await pause(0.6)
+            if let editor = editor() {
+                editor.selectAll(nil)
+                editor.insertText("un.txt", replacementRange: editor.selectedRange())
+            }
+            window.performClose(nil)
+            await pause(1.5)
+            lines.append("closed mid-rename: on disk \(contents(left)) · renaming \(first.renaming != nil)")
+            lines.append("window closed: visible \(window.isVisible) · windows shown \(NSApp.windows.filter { $0.isVisible && $0.canBecomeMain }.count) · the list detached \(list.model == nil) · in a window \(list.table.window != nil) · registered \(FileListRegistry.coordinator(for: first) != nil)")
+            if let item = NSApp.mainMenu?.items.compactMap(\.submenu).first(where: { $0.title == "File" })?.items.first(where: { $0.title == "New Tab" }),
+               let menu = item.menu {
+                menu.performActionForItem(at: menu.index(of: item))
+            }
+            await pause(2)
+            let reopened = BrowserModel.activeWindow
+            let newList = FileListRegistry.coordinator(for: first)
+            lines.append("reopened: window \(reopened != nil && reopened !== window) · windows shown \(NSApp.windows.filter { $0.isVisible && $0.canBecomeMain }.count) · list \(newList != nil) · rows \(newList?.table.numberOfRows ?? -1) · keyboard on the list \(newList.map { reopened?.firstResponder === $0.table } ?? false) · a new list \(newList !== list) · the old one detached \(list.model == nil)")
             lines.append("done")
         }
     }

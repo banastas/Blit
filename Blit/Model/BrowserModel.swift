@@ -159,7 +159,20 @@ final class BrowserModel {
         rowsCache = built
         return built
     }
-    @ObservationIgnored private var rowsCache: [FileItem]?
+    @ObservationIgnored private var rowsCache: [FileItem]? {
+        didSet { if rowsCache == nil { rowIndexCache = nil } }
+    }
+
+    /// Where each row is in `rows`, kept as long as the rows are: the AppKit
+    /// list finds rows by location, and indexing 10,000 took 12 ms a tab switch.
+    var rowIndex: [BrowseLocation: Int] {
+        let rows = rows
+        if let rowIndexCache { return rowIndexCache }
+        let built = Dictionary(rows.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        rowIndexCache = built
+        return built
+    }
+    @ObservationIgnored private var rowIndexCache: [BrowseLocation: Int]?
 
     /// The toolbar search (⌘F): filters the listing (and expanded folders) by
     /// name, ignoring case and accents. Cleared when moving to another folder.

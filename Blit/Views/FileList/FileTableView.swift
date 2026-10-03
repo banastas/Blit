@@ -31,6 +31,14 @@ final class FileTableView: NSTableView {
     /// A click makes the pane active at once; a click on the only selected
     /// row's name renames it a moment later (FileListRename.swift).
     override func mouseDown(with event: NSEvent) {
+        // ⌃-click: the menu at once, as a right-click does (with rows draggable,
+        // the table first waited for the button to come up; and its right-click
+        // handling ignores a left button).
+        if event.modifierFlags.contains(.control) {
+            coordinator?.cancelPendingRename()
+            if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
+            return
+        }
         coordinator?.noteInteraction()
         coordinator?.pressBegan(event)
         super.mouseDown(with: event)
@@ -81,9 +89,24 @@ final class FileTableView: NSTableView {
         return super.resignFirstResponder()
     }
 
+    private var closeObserver: (any NSObjectProtocol)?
+
+    /// Follows the window it's in: takes the keyboard if it was asked for
+    /// before, and lets go of its pane when the window closes.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { coordinator?.tableMovedToWindow() }
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+        closeObserver = nil
+        guard let window else { return }
+        closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                               queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.coordinator?.detach() }
+        }
+        coordinator?.tableMovedToWindow()
+    }
+
+    isolated deinit {
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
     }
 
     override func becomeFirstResponder() -> Bool {
