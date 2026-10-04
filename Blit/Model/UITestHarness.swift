@@ -1220,12 +1220,19 @@ enum UITestHarness {
         }
     }
 
-    @MainActor private static func firstTable(in view: NSView?) -> NSTableView? {
-        guard let view else { return nil }
-        if let table = view as? NSTableView, table.headerView != nil { return table }
-        for sub in view.subviews { if let found = firstTable(in: sub) { return found } }
-        return nil
+    /// The window's file lists, left to right (the shown ones: a pane with no
+    /// folder keeps its list, hidden).
+    @MainActor static func fileLists(in window: NSWindow?) -> [NSTableView] {
+        var found: [NSTableView] = []
+        func collect(_ view: NSView) {
+            if let table = view as? FileTableView, !table.isHiddenOrHasHiddenAncestor { found.append(table) }
+            view.subviews.forEach(collect)
+        }
+        if let content = window?.contentView { collect(content) }
+        return found.sorted { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
     }
+
+    @MainActor private static func firstTable(in view: NSView?) -> NSTableView? { fileLists(in: view?.window).first }
 
     /// `-BlitConflictTest <log> -BlitConflictTestDest <folder on another volume>`
     /// (with -BlitIsolatedQueue YES): Replace / Keep Both / Skip / Stop for a copy
@@ -1874,13 +1881,8 @@ enum UITestHarness {
             try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
             lines.append("copy running: \(transfers.transferJobs.contains { $0.status == .running }) · rows \(pane.rows.map(\.name))")
             // The left pane's table: the leftmost list in the window.
-            var tables: [NSTableView] = []
-            func collect(_ view: NSView) {
-                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                view.subviews.forEach(collect)
-            }
-            collect(content)
-            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) else {
+            let tables = fileLists(in: window)
+            guard let table = tables.first else {
                 return lines.append("no table")
             }
             let screenHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -1897,7 +1899,7 @@ enum UITestHarness {
                 }
                 UITestHarness.lastDrop = ""
                 UITestHarness.dropTrail = []
-                lines.append("before drag \(index + 1): registered views \(EmptySpaceMenu.debugAnchors(for: pane)) · copy running \(transfers.transferJobs.contains { $0.status == .running })")
+                lines.append("before drag \(index + 1): list registered \(FileListRegistry.coordinator(for: pane) != nil) · copy running \(transfers.transferJobs.contains { $0.status == .running })")
                 if let row = pane.rows.firstIndex(where: { $0.name == "Target" }) {
                     let rect = table.rect(ofRow: row)
                     let inWindow = table.convert(NSPoint(x: rect.minX + 90, y: rect.midY), to: nil)
@@ -2174,13 +2176,8 @@ enum UITestHarness {
                 }
                 try? await Task.sleep(for: .seconds(1))
             }
-            var tables: [NSTableView] = []
-            func collect(_ view: NSView) {
-                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                view.subviews.forEach(collect)
-            }
-            if let content = window.contentView { collect(content) }
-            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) else {
+            let tables = fileLists(in: window)
+            guard let table = tables.first else {
                 return lines.append("no table")
             }
             func f(_ value: CGFloat) -> String { String(format: "%.1f", value) }
@@ -2254,7 +2251,7 @@ enum UITestHarness {
         }
     }
 
-    /// `-BlitNativeKeysTest <log>` (with `-BlitNativeList YES`): the AppKit
+    /// `-BlitNativeKeysTest <log>` (two panes): the AppKit
     /// list's keys and focus, sent straight to the lists (no real input): Tab
     /// and ⇧Tab go to the other pane, → and ← open and close a folder in
     /// place, type-select, Return with two rows selected opens the first, and
@@ -2285,7 +2282,7 @@ enum UITestHarness {
             for _ in 0..<30 where first.rows.count < 4 || second.rows.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
             try? await Task.sleep(for: .milliseconds(500))
             guard let leftTable = FileListRegistry.table(for: first), let rightTable = FileListRegistry.table(for: second) else {
-                return lines.append("no native lists (run with -BlitNativeList YES)")
+                return lines.append("no lists")
             }
             @MainActor func keyboard() -> String {
                 let responder = window.firstResponder
@@ -2381,7 +2378,7 @@ enum UITestHarness {
         }
     }
 
-    /// `-BlitNativeDropTest <log>` (with `-BlitNativeList YES` and two panes):
+    /// `-BlitNativeDropTest <log>` (two panes):
     /// the AppKit list's drag and drop, driven by a stand-in drag (no real
     /// input): what a dragged row puts on the pasteboard, which folder lights
     /// up as it moves (a folder row, the folder holding a file in an expanded
@@ -2417,7 +2414,7 @@ enum UITestHarness {
             for _ in 0..<30 where first.rows.count < 5 { try? await Task.sleep(for: .milliseconds(200)) }
             try? await Task.sleep(for: .milliseconds(600))
             guard let leftList = FileListRegistry.coordinator(for: first), let rightList = FileListRegistry.coordinator(for: second) else {
-                return lines.append("no native lists (run with -BlitNativeList YES)")
+                return lines.append("no lists")
             }
             lines.append("left rows \(first.rows.map { String(repeating: "  ", count: $0.depth) + $0.name }) · right rows \(second.rows.map(\.name))")
             var sequence = 1000
@@ -2568,9 +2565,8 @@ enum UITestHarness {
         }
     }
 
-    /// `-BlitNativeHardeningTest <log>` (with `-BlitNativeList YES` and two
-    /// panes): the AppKit list through the awkward moments, with no real
-    /// input: a tab switch mid-rename (it saves), the full HUD opening
+    /// `-BlitNativeHardeningTest <log>` (two panes): the AppKit list through
+    /// the awkward moments, with no real input: a tab switch mid-rename (it saves), the full HUD opening
     /// mid-rename (it carries on), a tab switch mid-drag (the folder stops
     /// being lit), what VoiceOver reads for a row, and a 10,000-file folder
     /// (how long it takes to show, to switch tabs to and from, and to scroll).
@@ -2594,7 +2590,7 @@ enum UITestHarness {
             first.sort(by: .name)
             for _ in 0..<30 where first.rows.count < 3 { try? await Task.sleep(for: .milliseconds(200)) }
             try? await Task.sleep(for: .milliseconds(500))
-            guard let list = FileListRegistry.coordinator(for: first) else { return lines.append("no native list (run with -BlitNativeList YES)") }
+            guard let list = FileListRegistry.coordinator(for: first) else { return lines.append("no list") }
             func contents(_ url: URL) -> [String] { ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).sorted() }
             @MainActor func pause(_ seconds: Double = 0.5) async { try? await Task.sleep(for: .seconds(seconds)) }
             @MainActor func editor() -> NSTextView? { window.firstResponder as? NSTextView }
@@ -2759,7 +2755,7 @@ enum UITestHarness {
         }
     }
 
-    /// `-BlitNativeCellsTest <log>` (with `-BlitNativeList YES`): the AppKit
+    /// `-BlitNativeCellsTest <log>`: the AppKit
     /// list's rows as its cells show them, through a stand-in transfer's
     /// statuses (after the name, then in the Status column), a verified file,
     /// a folder opened and closed with → and ←, a header-click sort and the
@@ -2781,7 +2777,7 @@ enum UITestHarness {
             model.open(.local(dest))
             model.sort(by: .name)
             try? await Task.sleep(for: .seconds(1.5))
-            guard let table = FileListRegistry.table(for: model) else { return lines.append("no native list (run with -BlitNativeList YES)") }
+            guard let table = FileListRegistry.table(for: model) else { return lines.append("no list") }
             @MainActor func shown(_ label: String) async {
                 try? await Task.sleep(for: .milliseconds(600))
                 var rows: [String] = []
@@ -3484,13 +3480,8 @@ enum UITestHarness {
             try? await Task.sleep(for: .seconds(1))
             // The helper clicks empty space in the left list (brings this copy
             // forward, and makes the left pane the active one) before any key.
-            var tables: [NSTableView] = []
-            func collect(_ view: NSView) {
-                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                view.subviews.forEach(collect)
-            }
-            if let content = window.contentView { collect(content) }
-            guard let leftTable = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) else {
+            let tables = fileLists(in: window)
+            guard let leftTable = tables.first else {
                 return lines.append("no tables")
             }
             let below = leftTable.rect(ofRow: max(0, leftTable.numberOfRows - 1))
@@ -3544,13 +3535,7 @@ enum UITestHarness {
             lines.append("⌘U: left pane shows \(first.current?.lastComponent ?? "?") · right pane shows \(second.current?.lastComponent ?? "?")")
             // 4. View › Columns: hide Size, in both panes.
             @MainActor func visibleColumns() -> [Int] {
-                var tables: [NSTableView] = []
-                func collect(_ view: NSView) {
-                    if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                    view.subviews.forEach(collect)
-                }
-                if let content = window.contentView { collect(content) }
-                return tables.map { $0.tableColumns.filter { !$0.isHidden }.count }
+                fileLists(in: window).map { $0.tableColumns.filter { !$0.isHidden }.count }
             }
             let before = visibleColumns()
             ColumnSettings.shared.toggle("size")
@@ -3583,12 +3568,7 @@ enum UITestHarness {
             try? await Task.sleep(for: .seconds(3))
             if let row = first.rows.first(where: { !$0.isDirectory }) ?? first.rows.first { first.selection = [row.id] }
             try? await Task.sleep(for: .seconds(1))
-            var tables: [NSTableView] = []
-            func collect(_ view: NSView) {
-                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                view.subviews.forEach(collect)
-            }
-            if let content = window.contentView { collect(content) }
+            let tables = fileLists(in: window)
             let widths = tables.map { table in
                 "visible \(Int(table.enclosingScrollView?.contentView.bounds.width ?? 0)): " +
                 table.tableColumns.filter { !$0.isHidden }.map { "\($0.title) \(Int($0.width))" }.joined(separator: ", ")
@@ -3631,21 +3611,7 @@ enum UITestHarness {
             second1.open(.local(folders[1]))
             for _ in 0..<30 where tab1.first.rows.count < 80 { try? await Task.sleep(for: .milliseconds(200)) }
             try? await Task.sleep(for: .seconds(1))
-            @MainActor func clip(_ model: BrowserModel) -> NSClipView? {
-                // The AppKit list knows its own scroll view.
-                if FileListFlags.native { return FileListRegistry.scrollView(for: model)?.contentView }
-                guard let anchor = EmptySpaceMenu.anchorView(for: model), let content = window.contentView else { return nil }
-                let frame = anchor.convert(anchor.bounds, to: nil)
-                let centre = NSPoint(x: frame.midX, y: frame.midY)
-                var found: NSClipView?
-                func search(_ view: NSView) {
-                    if found == nil, let table = view as? NSTableView, table.headerView != nil, let scroll = table.enclosingScrollView,
-                       scroll.convert(scroll.bounds, to: nil).contains(centre) { found = scroll.contentView }
-                    view.subviews.forEach(search)
-                }
-                search(content)
-                return found
-            }
+            @MainActor func clip(_ model: BrowserModel) -> NSClipView? { FileListRegistry.scrollView(for: model)?.contentView }
             clip(tab1.first)?.scroll(to: NSPoint(x: 0, y: 600))
             try? await Task.sleep(for: .milliseconds(300))
             lines.append("tab 1 scrolled to \(Int(clip(tab1.first)?.bounds.origin.y ?? -1))")
@@ -3836,13 +3802,8 @@ enum UITestHarness {
                 return cg(NSPoint(x: frame.midX + 20, y: content.bounds.height - frame.midY))
             }
             // Bring this copy forward with a click on the left list's empty space.
-            var tables: [NSTableView] = []
-            func collect(_ view: NSView) {
-                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                view.subviews.forEach(collect)
-            }
-            if let content = window.contentView { collect(content) }
-            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }) else {
+            let tables = fileLists(in: window)
+            guard let table = tables.first else {
                 return lines.append("no tables")
             }
             let seen = table.visibleRect
@@ -4041,15 +4002,7 @@ enum UITestHarness {
                 }
             }
             defer { NotificationCenter.default.removeObserver(observer) }
-            @MainActor func tables() -> [NSTableView] {
-                var found: [NSTableView] = []
-                func collect(_ view: NSView) {
-                    if let table = view as? NSTableView, table.headerView != nil { found.append(table) }
-                    view.subviews.forEach(collect)
-                }
-                if let content = window.contentView { collect(content) }
-                return found.sorted { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
-            }
+            @MainActor func tables() -> [NSTableView] { fileLists(in: window) }
             @MainActor func click(_ label: String) async {
                 for (side, table) in zip(["left", "right"], tables()) {
                   guard let scroll = table.enclosingScrollView else { continue }
@@ -4068,7 +4021,7 @@ enum UITestHarness {
                     var view = hit
                     while let current = view, chain.count < 6 { chain.append(String(describing: type(of: current))); view = current.superview }
                     let row = table.row(at: table.convert(point, from: nil))
-                    let anchored = (FileListFlags.native ? FileListRegistry.browser(at: point, in: window) : EmptySpaceMenu.browser(at: point, in: window)) != nil
+                    let anchored = FileListRegistry.browser(at: point, in: window) != nil
                     opened = nil
                     guard let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [],
                                                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
@@ -4151,13 +4104,8 @@ enum UITestHarness {
             browser.open(.local(folder))
             browser.sortOrder = [KeyPathComparator(\FileItem.name)]
             try? await Task.sleep(for: .seconds(2))
-            var tables: [NSTableView] = []
-            func collect(_ view: NSView) {
-                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                view.subviews.forEach(collect)
-            }
-            if let content = window.contentView { collect(content) }
-            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }),
+            let tables = fileLists(in: window)
+            guard let table = tables.first,
                   let nameColumn = table.tableColumns.firstIndex(where: { $0.title == "Name" }),
                   let dateColumn = table.tableColumns.firstIndex(where: { $0.title == "Modified" }) else { return lines.append("no table") }
             let names = browser.rows.map(\.name)
@@ -4177,12 +4125,11 @@ enum UITestHarness {
             let cell = table.view(atColumn: nameColumn, row: 0, makeIfNecessary: false)
             let nameRect = table.rect(ofColumn: nameColumn)
             lines.append("name column \(Int(nameRect.minX))…\(Int(nameRect.maxX)) · cell content width \(Int(cell?.fittingSize.width ?? -1))")
-            // The AppKit list decides from its cells; the SwiftUI list from RowDragRule.
-            let native = FileListRegistry.coordinator(for: browser)
-            @MainActor func pressedOffName() -> Bool { native?.pressedOffName ?? RowDragRule.pressedOffName }
+            let list = FileListRegistry.coordinator(for: browser)
+            @MainActor func pressedOffName() -> Bool { list?.pressedOffName ?? false }
             for (label, x) in [("on the name", nameRect.minX + 40), ("blank part of the Name column", nameRect.maxX - 20)] {
                 let local = NSPoint(x: x, y: table.rect(ofRow: 0).midY)
-                lines.append("press \(label): moves files \(native?.dragsFiles(from: local) ?? RowDragRule.isOnName(local, in: table, browser: browser))")
+                lines.append("press \(label): moves files \(list?.dragsFiles(from: local) ?? false)")
             }
             // Press on the date of the first row, move down over three more, release.
             let start = point(row: 0, column: dateColumn)
@@ -4226,13 +4173,8 @@ enum UITestHarness {
             window.makeKeyAndOrderFront(nil)
             window.setFrame(NSRect(x: 120, y: 120, width: 1200, height: 700), display: true)
             try? await Task.sleep(for: .seconds(2))
-            var tables: [NSTableView] = []
-            func collect(_ view: NSView) {
-                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                view.subviews.forEach(collect)
-            }
-            if let content = window.contentView { collect(content) }
-            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }),
+            let tables = fileLists(in: window)
+            guard let table = tables.first,
                   let dateColumn = table.tableColumns.firstIndex(where: { $0.title == "Modified" }) else { return lines.append("no table") }
             let screenHeight = NSScreen.screens.first?.frame.height ?? 0
             @MainActor func cg(row: Int) -> [Double] {
@@ -4517,13 +4459,7 @@ enum UITestHarness {
                 try? await Task.sleep(for: .milliseconds(500))
             }
             try? await Task.sleep(for: .seconds(1))
-            var tables: [NSTableView] = []
-            func collect(_ view: NSView) {
-                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                view.subviews.forEach(collect)
-            }
-            if let content = window.contentView { collect(content) }
-            tables.sort { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }
+            let tables = fileLists(in: window)
             guard tables.count == 2, let row = serverPane.rows.firstIndex(where: { $0.id == file.id }) else { return lines.append("tables \(tables.count)") }
             let height = NSScreen.screens.first?.frame.height ?? 0
             @MainActor func cg(_ table: NSTableView, _ p: NSPoint) -> [Double] {
@@ -4702,13 +4638,8 @@ enum UITestHarness {
             guard let window = BrowserModel.activeWindow, let browser = PaneTabs.shared.current?.first else { return lines.append("no window") }
             browser.open(.local(folder))
             try? await Task.sleep(for: .seconds(1.5))
-            var tables: [NSTableView] = []
-            func collect(_ view: NSView) {
-                if let table = view as? NSTableView, table.headerView != nil { tables.append(table) }
-                view.subviews.forEach(collect)
-            }
-            if let content = window.contentView { collect(content) }
-            guard let table = tables.min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }),
+            let tables = fileLists(in: window)
+            guard let table = tables.first,
                   let row = browser.rows.firstIndex(where: { $0.name == "clip.mp4" }) else { return lines.append("no row") }
             var described: [String] = []
             let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { note in

@@ -128,7 +128,6 @@ final class PaneTabs {
     /// File › New Tab (⌘T): the same pair, beside the current tab.
     func newTab() {
         guard let makeBrowser, let source = current else { return }
-        PaneScroll.save(source)
         let tab = PaneTab(first: makeBrowser())
         tab.pendingFirst = source.firstLocation
         tab.pendingSecond = source.secondLocation
@@ -185,7 +184,6 @@ final class PaneTabs {
     }
 
     private func show(_ tab: PaneTab) {
-        if let current, current.id != tab.id { PaneScroll.save(current) }
         // The window opens a new or restored tab's folders as it shows it.
         selectedID = tab.id
         save()
@@ -228,62 +226,5 @@ final class PaneTabs {
         guard let data = store?.data(forKey: key),
               let saved = try? JSONDecoder().decode([Saved].self, from: data) else { return [] }
         return saved
-    }
-}
-
-/// Where each pane's list was scrolled, kept while its tab is in the
-/// background (a tab's lists are made again when it's shown).
-@MainActor
-enum PaneScroll {
-    private static var offsets: [ObjectIdentifier: NSPoint] = [:]
-
-    static func save(_ tab: PaneTab) {
-        // The AppKit list keeps each pane's scroll itself (BrowserModel.listScrollOrigin).
-        guard !FileListFlags.native else { return }
-        for model in [tab.first, tab.second].compactMap({ $0 }) {
-            if let clip = clipView(for: model) { offsets[ObjectIdentifier(model)] = clip.bounds.origin }
-        }
-    }
-
-    /// Scrolls `tab`'s lists back (to the top for one not scrolled before:
-    /// the same lists show every tab), once they show the tab's own rows.
-    static func restore(_ tab: PaneTab) {
-        guard !FileListFlags.native else { return }
-        for model in [tab.first, tab.second].compactMap({ $0 }) {
-            let origin = offsets.removeValue(forKey: ObjectIdentifier(model))
-            Task { @MainActor in
-                for _ in 0..<20 {
-                    try? await Task.sleep(for: .milliseconds(50))
-                    guard let clip = clipView(for: model), let table = clip.documentView as? NSTableView,
-                          table.numberOfRows == model.rows.count else { continue }
-                    if let origin {
-                        clip.scroll(to: origin)
-                        clip.enclosingScrollView?.reflectScrolledClipView(clip)
-                    } else if table.numberOfRows > 0 {
-                        table.scrollRowToVisible(0)
-                    }
-                    return
-                }
-            }
-        }
-    }
-
-    private static func clipView(for model: BrowserModel) -> NSClipView? {
-        guard let anchor = EmptySpaceMenu.anchorView(for: model), let window = anchor.window,
-              let content = window.contentView else { return nil }
-        let frame = anchor.convert(anchor.bounds, to: nil)
-        let centre = NSPoint(x: frame.midX, y: frame.midY)
-        var found: NSClipView?
-        func search(_ view: NSView) {
-            guard found == nil else { return }
-            if let table = view as? NSTableView, table.headerView != nil, let scroll = table.enclosingScrollView,
-               scroll.convert(scroll.bounds, to: nil).contains(centre) {
-                found = scroll.contentView
-                return
-            }
-            view.subviews.forEach(search)
-        }
-        search(content)
-        return found
     }
 }

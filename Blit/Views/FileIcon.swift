@@ -5,32 +5,7 @@
 
 import AppKit
 import QuickLookThumbnailing
-import SwiftUI
 import UniformTypeIdentifiers
-
-struct FileIcon: View {
-    let item: FileItem
-    @AppStorage("showIconPreviews") private var showPreviews = true
-    @State private var thumbnail: NSImage?
-
-    var body: some View {
-        Image(nsImage: thumbnail ?? IconCache.shared.icon(for: item))
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: 16, height: 16)
-            .task(id: TaskKey(location: item.location, modified: item.modified, enabled: showPreviews)) {
-                thumbnail = nil
-                guard showPreviews, !item.isDirectory, let url = item.location.localURL else { return }
-                thumbnail = await ThumbnailCache.shared.thumbnail(for: url, modified: item.modified)
-            }
-    }
-
-    private struct TaskKey: Equatable {
-        let location: BrowseLocation
-        let modified: Date
-        let enabled: Bool
-    }
-}
 
 @MainActor
 final class ThumbnailCache {

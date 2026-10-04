@@ -19,9 +19,9 @@ extension NSPasteboard.PasteboardType {
 
 extension FileListCoordinator {
     /// Finder's rule for a drag that starts on a row: from the icon or the
-    /// name (with the marks after it, and a little room past them, as the
-    /// SwiftUI list allowed) it moves the files; from the rest of the row it
-    /// selects rows as it goes.
+    /// name (with the marks after it, and a little room past them, as Blit's
+    /// list has allowed since 0.2.26) it moves the files; from the rest of the
+    /// row it selects rows as it goes.
     func dragsFiles(from point: NSPoint) -> Bool {
         let row = table.row(at: point)
         guard rows.indices.contains(row), table.column(at: point) == 0,

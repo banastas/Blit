@@ -9,10 +9,6 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(FileOperations.self) private var operations
     @Environment(\.undoManager) private var undoManager
-    /// Which pane's table has the keyboard. Every way of activating a pane
-    /// (click, right-click, the header, Tab) moves the keyboard here too, so
-    /// arrows and ⌘⌫ always agree on the pane the user is looking at.
-    @FocusState private var focusedPane: PaneFocus?
     @AppStorage("showSecondPane") private var showSecondPane = true
     @State private var nasShare: VolumeLocation?
     @State private var showPalette = false
@@ -62,11 +58,10 @@ struct ContentView: View {
             if let tab, let browser {
                 VStack(spacing: 0) {
                     if PaneTabs.shared.tabs.count > 1 { PaneTabBar(twoPanes: showSecondPane) }
-                    // The same lists show every tab, each tab's own folders, rows and
-                    // selection (its models); scrolls are kept per tab (PaneScroll),
-                    // and the divider stays where it was put. A switch costs the same
-                    // as building the lists afresh per tab (.id): about 0.2 s, all in
-                    // swapping the visible rows (the tab switch test).
+                    // The same lists show every tab, each tab's own folders, rows,
+                    // selection and scroll (its models), and the divider stays where
+                    // it was put. A switch swaps each list's rows in place: about
+                    // 50 ms, from 300 files to 10,000 (the tab switch test).
                     panes(browser)
                 }
                     // Room at the bottom for the transfer HUD, which floats over it.
@@ -130,9 +125,9 @@ struct ContentView: View {
             if shown {
                 openSecondPaneIfNeeded()
             } else {
-                // The AppKit list: the keyboard comes back to the first pane (the
-                // second's list going handed it to the toolbar's search field).
-                if FileListFlags.native, secondActive { browser?.requestKeyboardFocus() }
+                // The keyboard comes back to the first pane (the second's list
+                // going handed it to the toolbar's search field).
+                if secondActive { browser?.requestKeyboardFocus() }
                 secondActive = false
             }
             Panes.shared.twoPanes = shown
@@ -365,8 +360,8 @@ struct ContentView: View {
     @ViewBuilder private func panes(_ browser: BrowserModel) -> some View {
         if showSecondPane, let secondBrowser {
             HSplitView {
-                pane(browser, tag: .first, isActive: !secondActive) { secondActive = false }
-                pane(secondBrowser, tag: .second, isActive: secondActive) { secondActive = true }
+                pane(browser, side: .first, isActive: !secondActive) { secondActive = false }
+                pane(secondBrowser, side: .second, isActive: secondActive) { secondActive = true }
             }
             .padding(.horizontal, 3)
             .padding(.bottom, 3)
@@ -380,7 +375,7 @@ struct ContentView: View {
     /// One pane of the two-pane layout: a card with a header naming the folder
     /// and what it's on. The active card has an accent ring, and a chip on its
     /// inner edge points the way F5 and F6 send.
-    private func pane(_ model: BrowserModel, tag: PaneFocus, isActive: Bool, activate: @escaping () -> Void) -> some View {
+    private func pane(_ model: BrowserModel, side: PaneSide, isActive: Bool, activate: @escaping () -> Void) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: paneSymbol(model)).foregroundStyle(isActive ? Color.accentColor : .secondary)
@@ -403,7 +398,7 @@ struct ContentView: View {
                 // Where F5 / F6 send from here: the other pane's folder.
                 if isActive, let other = Panes.shared.other(than: model), !other.title.isEmpty {
                     HStack(spacing: 4) {
-                        Image(systemName: tag == .first ? "arrowtriangle.right.fill" : "arrowtriangle.left.fill")
+                        Image(systemName: side == .first ? "arrowtriangle.right.fill" : "arrowtriangle.left.fill")
                             .font(.system(size: 7, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: 15, height: 15)
@@ -426,11 +421,11 @@ struct ContentView: View {
                 // Activating from the header also hands the pane the keyboard,
                 // so the arrows don't keep moving the other pane's selection.
                 activate()
-                if FileListFlags.native { model.requestKeyboardFocus() } else { focusedPane = tag }
+                model.requestKeyboardFocus()
             }
             Divider()
-            FileListView(browser: model, onFocus: activate, paneFocus: $focusedPane, paneTag: tag)
-                .simultaneousGesture(TapGesture().onEnded(activate))
+            // Clicks in the list make its pane the active one (BrowserModel.onInteraction).
+            FileListView(browser: model, isSecondPane: side == .second)
         }
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -514,15 +509,7 @@ struct ContentView: View {
             Task { first.open(start) }
         }
         if showSecondPane { openSecondPaneIfNeeded() }
-        PaneScroll.restore(tab)
-        let focus: PaneFocus = showSecondPane && tab.secondActive ? .second : .first
-        // The AppKit list takes the keyboard itself: SwiftUI focus bound to no
-        // view sent it to the toolbar's search field.
-        if FileListFlags.native {
-            (focus == .second ? tab.second : tab.first)?.requestKeyboardFocus()
-        } else {
-            Task { focusedPane = focus }
-        }
+        (showSecondPane && tab.secondActive ? tab.second : tab.first)?.requestKeyboardFocus()
     }
 
     private func makeBrowser() -> BrowserModel {
@@ -553,12 +540,10 @@ struct ContentView: View {
         guard showSecondPane else { return }
         if model === secondBrowser {
             secondActive = true
-            if !FileListFlags.native { focusedPane = .second }
         } else if model === browser {
             secondActive = false
-            if !FileListFlags.native { focusedPane = .first }
         }
-        if FileListFlags.native { model.requestKeyboardFocus() }
+        model.requestKeyboardFocus()
     }
 
     /// Refresh whichever panes show a folder that changed, in any tab: a
@@ -720,9 +705,8 @@ private struct PaneTracking: ViewModifier {
     }
 }
 
-/// Which pane of a two-pane window has the keyboard: the table focus, the pane
-/// headers and right-clicks all move it, and activation follows it.
-enum PaneFocus: Hashable {
+/// The first or second pane of a two-pane window.
+enum PaneSide: Hashable {
     case first, second
 }
 

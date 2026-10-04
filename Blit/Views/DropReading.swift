@@ -93,32 +93,6 @@ enum DragContents {
     /// A drag from a Blit file list began with `payload`.
     static func started(_ payload: TransferPayload) { fromList = payload }
 
-    /// Replaces what SwiftUI put on the drag pasteboard for a drag that's
-    /// starting with Blit's payload alone: no file promise, which other apps
-    /// would accept (Finder wrote the payload out as a file) and which nobody
-    /// fulfils. SwiftUI writes the pasteboard just after asking for the
-    /// providers, so this waits for its promise to appear (up to 1 s).
-    static func keepOnlyPayload(_ data: Data) {
-        let ours = NSPasteboard.PasteboardType(UTType.blitLocations.identifier)
-        let promise = NSPasteboard.PasteboardType("com.apple.NSFilePromiseItemMetaData")
-        // The pasteboard still holds the last drag until SwiftUI writes this one.
-        let before = NSPasteboard(name: .drag).changeCount
-        func attempt(_ tries: Int) {
-            let board = NSPasteboard(name: .drag)
-            let types = board.types ?? []
-            if board.changeCount != before, types.contains(ours), types.contains(promise) {
-                board.clearContents()
-                board.setData(data, forType: ours)
-                #if DEBUG
-                UITestHarness.dropTrail.append("payload only (was \(types.count) types)")
-                #endif
-            } else if tries > 0 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { attempt(tries - 1) }
-            }
-        }
-        DispatchQueue.main.async { attempt(50) }
-    }
-
     /// Whether the drag in progress holds a folder: from a Blit list, what it
     /// began with; from Finder, the file URLs on the drag pasteboard.
     static var hasFolders: Bool {

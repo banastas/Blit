@@ -1,9 +1,9 @@
 // Right-click › Open With, as in Finder: the default app first, then every
 // other app that can open all the selected items, then Other… to pick any
 // app. Local files only (a server's file would have to be downloaded first).
+// The file list's menu (FileList/FileListMenus.swift) lists them.
 
 import AppKit
-import SwiftUI
 import UniformTypeIdentifiers
 
 enum OpenWith {
@@ -70,34 +70,5 @@ enum OpenWith {
         panel.message = urls.count == 1 ? "Choose an app to open “\(urls[0].lastPathComponent)”." : "Choose an app to open \(urls.count) items."
         guard panel.runModal() == .OK, let app = panel.url else { return }
         open(urls, with: app, onProblem: onProblem)
-    }
-}
-
-/// The Open With submenu for local items.
-struct OpenWithMenu: View {
-    let urls: [URL]
-    var onProblem: @MainActor (String) -> Void
-
-    var body: some View {
-        let apps = OpenWith.apps(for: urls)
-        Menu("Open With") {
-            if let primary = apps.primary {
-                button(primary, title: "\(primary.name) (default)")
-                if !apps.others.isEmpty { Divider() }
-            }
-            ForEach(apps.others) { button($0, title: $0.name) }
-            Divider()
-            Button("Other…") { OpenWith.chooseApp(for: urls, onProblem: onProblem) }
-        }
-    }
-
-    private func button(_ app: OpenWith.App, title: String) -> some View {
-        Button {
-            OpenWith.open(urls, with: app.url, onProblem: onProblem)
-        } label: {
-            Label { Text(title) } icon: { Image(nsImage: app.icon) }
-                // Menus drop a label's icon unless asked for both, as Finder shows them.
-                .labelStyle(.titleAndIcon)
-        }
     }
 }

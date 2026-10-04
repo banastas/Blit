@@ -1,6 +1,6 @@
 // The AppKit file list's context menus (PRD R2.12, R2.17): for the row
 // clicked (or the selection, when the click was inside it) and for empty
-// space, the same items as the SwiftUI list's. Built as the menu opens; the
+// space, the items the SwiftUI list had (until 0.2.41). Built as the menu opens; the
 // items hold the model and the rows they act on, never the list.
 
 import AppKit

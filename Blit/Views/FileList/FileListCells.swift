@@ -18,8 +18,8 @@ struct CellContext {
     let iconPreviews: Bool
 }
 
-/// The list's fonts: the SwiftUI list's body font, with even digits where
-/// numbers line up.
+/// The list's fonts: the system body font (what the SwiftUI Table used, until
+/// 0.2.41), with even digits where numbers line up.
 @MainActor
 enum CellFonts {
     static let body = NSFont.systemFont(ofSize: NSFont.systemFontSize)

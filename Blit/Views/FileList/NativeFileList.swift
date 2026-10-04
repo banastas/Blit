@@ -1,20 +1,9 @@
-// The AppKit file list in SwiftUI. Being built to replace the SwiftUI Table
-// (FileListView's): until then it shows only in debug test copies launched
-// with -BlitNativeList YES.
+// The AppKit file list in SwiftUI (an NSTableView, FileListCoordinator.swift):
+// one per pane, showing whichever tab's folder is shown. It replaced SwiftUI's
+// Table, whose tab switches cost 0.2 s (SwiftUI rebuilt every visible cell).
 
 import AppKit
 import SwiftUI
-
-enum FileListFlags {
-    /// `-BlitNativeList YES`: the AppKit list, in debug builds only.
-    static let native: Bool = {
-        #if DEBUG
-        UserDefaults.standard.bool(forKey: "BlitNativeList")
-        #else
-        false
-        #endif
-    }()
-}
 
 /// A list that can take the keyboard for the pane it shows.
 @MainActor

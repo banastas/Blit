@@ -121,7 +121,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     private func setUp() {
         table.coordinator = self
         table.style = .inset
-        // The SwiftUI Table's measured rows: 24.5 pt tall, 17 pt between columns.
+        // Rows as the SwiftUI Table drew them (until 0.2.41): 24.5 pt tall, 17 pt between columns.
         table.rowHeight = 24.5
         table.usesAutomaticRowHeights = false
         table.intercellSpacing = NSSize(width: 17, height: 0)
