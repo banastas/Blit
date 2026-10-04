@@ -19,13 +19,14 @@ extension NSPasteboard.PasteboardType {
 
 extension FileListCoordinator {
     /// Finder's rule for a drag that starts on a row: from the icon or the
-    /// name (with the marks after it) it moves the files; from the rest of
-    /// the row it selects rows as it goes.
+    /// name (with the marks after it, and a little room past them, as the
+    /// SwiftUI list allowed) it moves the files; from the rest of the row it
+    /// selects rows as it goes.
     func dragsFiles(from point: NSPoint) -> Bool {
         let row = table.row(at: point)
         guard rows.indices.contains(row), table.column(at: point) == 0,
               let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? NameCellView else { return false }
-        return cell.convert(point, from: table).x <= cell.contentEnd
+        return cell.convert(point, from: table).x <= min(cell.contentEnd + 18, cell.bounds.width)
     }
 
     /// One pasteboard item per dragged row (the selection when the row is in
