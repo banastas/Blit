@@ -133,12 +133,14 @@ final class NameCellView: DrawnCellView {
     private var verifiedHelp: String?
     private var partialHelp: String?
     private var status: FileStatus?
-    /// The disclosure triangle was clicked.
-    var onToggle: ((FileItem) -> Void)?
     /// Where each part was drawn, for tooltips and the drag rule.
     private(set) var nameRect = NSRect.zero
     private(set) var iconRect = NSRect.zero
     private var disclosureRect = NSRect.zero
+    #if DEBUG
+    /// Where the disclosure triangle is (the tests click it).
+    var disclosureFrame: NSRect { disclosureRect }
+    #endif
     private var verifiedRect = NSRect.zero
     private var partialRect = NSRect.zero
     private var statusRect = NSRect.zero
@@ -257,20 +259,11 @@ final class NameCellView: DrawnCellView {
         return [component]
     }
 
-    // The disclosure triangle takes its own clicks (the row isn't selected), as a button would.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        if let editor, let superview, editor.frame.contains(convert(point, from: superview)) { return super.hitTest(point) }
-        guard item?.isDirectory == true, let superview else { return super.hitTest(point) }
-        return disclosureRect.insetBy(dx: -2, dy: -4).contains(convert(point, from: superview)) ? self : super.hitTest(point)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        if let item, item.isDirectory, disclosureRect.insetBy(dx: -2, dy: -4).contains(point) {
-            onToggle?(item)
-        } else {
-            super.mouseDown(with: event)
-        }
+    /// Whether `point` (this cell's coordinates) is on a folder's disclosure
+    /// triangle, give or take a little. The table takes every click in its rows
+    /// (NSTableView hit-tests them itself), so it asks.
+    func isOnDisclosure(_ point: NSPoint) -> Bool {
+        item?.isDirectory == true && disclosureRect.insetBy(dx: -2, dy: -4).contains(point)
     }
 
     /// Lays the parts out (the name gives up width before the glyphs do).

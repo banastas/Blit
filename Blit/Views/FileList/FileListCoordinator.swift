@@ -558,6 +558,19 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         return true
     }
 
+    /// A press on a folder's disclosure triangle opens or closes the folder and
+    /// does nothing else (the row isn't selected), as a button would.
+    func toggleDisclosure(at event: NSEvent) -> Bool {
+        let point = table.convert(event.locationInWindow, from: nil)
+        let row = table.row(at: point)
+        guard rows.indices.contains(row), table.column(at: point) == 0,
+              let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? NameCellView,
+              cell.isOnDisclosure(cell.convert(point, from: table)) else { return false }
+        cancelPendingRename()
+        model?.toggleExpanded(rows[row])
+        return true
+    }
+
     /// A click or right-click in the list: its pane becomes the active one at
     /// once (SwiftUI's gestures never see the clicks the table takes).
     func noteInteraction() {
@@ -621,9 +634,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         #endif
         switch column {
         case .name:
-            let cell = NameCellView(identifier: column.identifier)
-            cell.onToggle = { [weak self] item in self?.model?.toggleExpanded(item) }
-            return cell
+            return NameCellView(identifier: column.identifier)
         case .modified: return TextCellView(identifier: column.identifier, font: CellFonts.digits, alignment: .left)
         case .size: return TextCellView(identifier: column.identifier, font: CellFonts.digits, alignment: .right)
         case .kind: return TextCellView(identifier: column.identifier, font: CellFonts.body, alignment: .left)

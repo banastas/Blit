@@ -2604,6 +2604,12 @@ enum UITestHarness {
                 editor.insertText("uno.txt", replacementRange: editor.selectedRange())
             }
             lines.append("renaming one.txt: field \(list.renameField != nil) · editor \(editor() != nil)")
+            // A click in the field goes to the field (the table takes clicks on its rows' plain views).
+            if let field = list.renameField {
+                let inTable = field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: list.table)
+                let hit = list.table.hitTest(list.table.convert(inTable, to: list.table.superview))
+                lines.append("a click in the field goes to \(hit.map { $0 === field || $0 is NSText ? "the field" : "\(type(of: $0))" } ?? "nothing")")
+            }
             PaneTabs.shared.newTab()
             await pause(1)
             lines.append("after ⌘T mid-rename: field \(list.renameField != nil) · renaming \(first.renaming != nil) · on disk \(contents(left))")
@@ -2730,6 +2736,23 @@ enum UITestHarness {
             first.open(.local(left))
             await pause(0.8)
 
+            // 6a. The window made wide, then narrow: each list's table keeps to
+            // its visible width (wider would scroll sideways into empty space).
+            @MainActor func widths() -> String {
+                fileLists(in: window).map { table in
+                    "table \(Int(table.frame.width)) · clip \(Int(table.enclosingScrollView?.contentView.bounds.width ?? 0)) · columns \(Int(table.tableColumns.filter { !$0.isHidden }.reduce(0) { $0 + $1.width }))"
+                }.joined(separator: " | ")
+            }
+            let frame = window.frame
+            window.setFrame(NSRect(x: frame.minX, y: frame.minY, width: 1500, height: frame.height), display: true)
+            await pause(1)
+            lines.append("1500 wide: \(widths())")
+            window.setFrame(NSRect(x: frame.minX, y: frame.minY, width: 1100, height: frame.height), display: true)
+            await pause(1)
+            lines.append("then 1100 wide: \(widths())")
+            window.setFrame(frame, display: true)
+            await pause(0.6)
+
             // 6. The window closed and opened again (File › New Tab, as ⌘T with
             // no window): the lists go with it and come back, with the keyboard.
             // A name being edited when the window closes is saved.
@@ -2832,6 +2855,32 @@ enum UITestHarness {
             press(123)
             await shown("← inside Sub")
             lines.append("selected: \(model.selectedItems.map(\.name))")
+            // A click on Sub's disclosure triangle (posted to this copy: the
+            // pointer never moves) opens it; another closes it. The row's
+            // selection stays as it was.
+            @MainActor func clickTriangle() async -> String {
+                guard let row = model.rows.firstIndex(where: { $0.name == "Sub" }),
+                      let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? NameCellView else { return "no Sub cell" }
+                let inCell = NSPoint(x: cell.disclosureFrame.midX, y: cell.disclosureFrame.midY)
+                let at = cell.convert(inCell, to: nil)
+                let hit = table.window?.contentView.map { content in content.hitTest(content.convert(at, from: nil)).map { "\(type(of: $0))" } ?? "nothing" } ?? "-"
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: table.window?.windowNumber ?? 0, context: nil, eventNumber: 0,
+                                                      clickCount: 1, pressure: 1) {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                    try? await Task.sleep(for: .milliseconds(80))
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+                return "hit \(hit)"
+            }
+            model.selection = []
+            let firstClick = await clickTriangle()
+            await shown("click on Sub's triangle (\(firstClick))")
+            let secondClick = await clickTriangle()
+            await shown("click on it again (\(secondClick))")
+            lines.append("selected after the clicks: \(model.selectedItems.map(\.name))")
             // A header click: Size, largest first (as Finder starts it).
             table.sortDescriptors = [FileColumn.size.sortPrototype].compactMap { $0 }
             await shown("sorted by size")

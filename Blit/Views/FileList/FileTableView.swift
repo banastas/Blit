@@ -5,6 +5,17 @@ import AppKit
 final class FileTableView: NSTableView {
     weak var coordinator: FileListCoordinator?
 
+    /// No springs: the table keeps to the pane's width itself (NSTableView
+    /// follows its clip view, and the coordinator fits the columns). AppKit
+    /// gives a scroll view's document view a flexible width and height, which
+    /// kept whatever gap there once was between the table and the pane across
+    /// resizes, and Auto Layout put it back after each fit: a table wider than
+    /// the pane, scrolling sideways into empty space.
+    override var autoresizingMask: NSView.AutoresizingMask {
+        get { [] }
+        set {}
+    }
+
     /// No stripes beyond the ends while the list rubber-bands. AppKit keeps
     /// them in two backgrounds twice the list's size, about 20 MB a list, from
     /// the moment it shows. (This private AppKit method is the one SwiftUI's
@@ -40,6 +51,7 @@ final class FileTableView: NSTableView {
             return
         }
         coordinator?.noteInteraction()
+        if coordinator?.toggleDisclosure(at: event) == true { return }
         coordinator?.pressBegan(event)
         super.mouseDown(with: event)
         // The table's tracking may have taken the mouse-up; else it comes to
@@ -90,6 +102,7 @@ final class FileTableView: NSTableView {
     }
 
     private var closeObserver: (any NSObjectProtocol)?
+
 
     /// Follows the window it's in: takes the keyboard if it was asked for
     /// before, and lets go of its pane when the window closes.
