@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.40</title>
-      <pubDate>Sat, 03 Oct 2026 16:33:24 +0000</pubDate>
-      <sparkle:version>43</sparkle:version>
-      <sparkle:shortVersionString>0.2.40</sparkle:shortVersionString>
+      <title>Blit 0.2.41</title>
+      <pubDate>Sun, 04 Oct 2026 11:13:13 +0000</pubDate>
+      <sparkle:version>44</sparkle:version>
+      <sparkle:shortVersionString>0.2.41</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit now explains Full Disk Access: a one-time welcome sheet (and a row in Settings › General) takes you straight to the setting macOS needs before Blit can move, rename or delete in iCloud Drive, Desktop, Documents, Downloads and the Trash, and a warning macOS caused says so.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.40.zip" type="application/octet-stream" sparkle:edSignature="Nhi6pgA0arYVrWtsCHJxDS/qzZL/YQVOlkxTiDFuPvh+u7jBbub2BBSSLlrGnyW6jrI05kkBJpBnFp/8s9eZCw==" length="5789929" />
+      <description><![CDATA[<p>Faster file lists: the list is now built on AppKit, so switching tabs takes about 50 ms (it was 0.2 s, and about a second in a folder of 10,000 files), and resizing stays just as quick. Dropping onto a folder that's selected in the other pane now works, and dropping onto a file inside an expanded folder lights up the folder it goes into. Tabs switch as soon as the button goes down, and a tab's tag shows only the transfer started from that tab, while it runs.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.41.zip" type="application/octet-stream" sparkle:edSignature="koC/IIlAya7w36XeA0K2Mbn60OWC/hbz5Tpm14woZraT71qXmrrPOre/v4R8g0LcFtPbqKKK28n7eK4ulKAzDQ==" length="5792262" />
     </item>
   </channel>
 </rss>
