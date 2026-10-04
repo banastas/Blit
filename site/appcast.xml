@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.41</title>
-      <pubDate>Sun, 04 Oct 2026 11:13:13 +0000</pubDate>
-      <sparkle:version>44</sparkle:version>
-      <sparkle:shortVersionString>0.2.41</sparkle:shortVersionString>
+      <title>Blit 0.2.42</title>
+      <pubDate>Sun, 04 Oct 2026 14:10:56 +0000</pubDate>
+      <sparkle:version>45</sparkle:version>
+      <sparkle:shortVersionString>0.2.42</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Faster file lists: the list is now built on AppKit, so switching tabs takes about 50 ms (it was 0.2 s, and about a second in a folder of 10,000 files), and resizing stays just as quick. Dropping onto a folder that's selected in the other pane now works, and dropping onto a file inside an expanded folder lights up the folder it goes into. Tabs switch as soon as the button goes down, and a tab's tag shows only the transfer started from that tab, while it runs.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.41.zip" type="application/octet-stream" sparkle:edSignature="koC/IIlAya7w36XeA0K2Mbn60OWC/hbz5Tpm14woZraT71qXmrrPOre/v4R8g0LcFtPbqKKK28n7eK4ulKAzDQ==" length="5792262" />
+      <description><![CDATA[<p>Folders open from their disclosure triangle again: in 0.2.41 a click there selected the folder instead of showing its contents (on servers and drives alike). Also, a file list now keeps to its pane's width after the window is resized, with no empty space to scroll into sideways.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.42.zip" type="application/octet-stream" sparkle:edSignature="OnGrMtPDo9WJ2zOZ4f1Hg5IS86elCubgWAjIUCWL+gHZgbqfesEiLiWfJ9PhacYNBSjBONDYSPB0vyD5fkLLCw==" length="5791968" />
     </item>
   </channel>
 </rss>
