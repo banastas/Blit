@@ -2736,6 +2736,17 @@ enum UITestHarness {
             first.open(.local(left))
             await pause(0.8)
 
+            // 5b. New Folder with Selection from the list: the folder shows up
+            // selected, with its name being edited; one ⌘Z puts things back.
+            first.newFolder(with: first.rows.filter { ["dos.txt", "uno.txt"].contains($0.name) })
+            await pause(1.5)
+            lines.append("new folder with selection: on disk \(contents(left)) · inside \(contents(left.appendingPathComponent("New Folder With Items"))) · selected \(first.selectedItems.map(\.name)) · renaming \(first.renaming?.lastComponent ?? "none") · field \(list.renameField != nil)")
+            first.cancelRename()
+            await pause(0.4)
+            first.operations.undoManager?.undo()
+            await pause(1.2)
+            lines.append("after ⌘Z: on disk \(contents(left)) · rows \(first.rows.map(\.name))")
+
             // 6a. The window made wide, then narrow: each list's table keeps to
             // its visible width (wider would scroll sideways into empty space).
             @MainActor func widths() -> String {
@@ -2938,6 +2949,25 @@ enum UITestHarness {
 
             _ = await operations.moveToTrash([.local(file)])
             lines.append("after trash:  \(listing()) · undo: \(undo.undoActionName)")
+            undo.undo(); await settle()
+            lines.append("after undo:   \(listing())")
+
+            // New Folder with Selection: offered for two or more items in one
+            // folder; the folder and the move are one step to undo.
+            let second = root.appendingPathComponent("c.txt")
+            try? Data("c".utf8).write(to: second)
+            if let browser = BrowserModel.active {
+                @MainActor func item(_ url: URL, isDirectory: Bool = false) -> FileItem {
+                    FileItem(location: .local(url), name: url.lastPathComponent, isDirectory: isDirectory, modified: Date(), size: 1, kind: "Text")
+                }
+                @MainActor func offered(_ items: [FileItem]) -> [String] {
+                    FileMenuBuilder.items(for: items, in: browser).map(\.title).filter { $0.hasPrefix("New Folder with") }
+                }
+                let inside = root.appendingPathComponent("sub/d.txt")
+                lines.append("menu: one item \(offered([item(file)])) · two \(offered([item(file), item(second)])) · two in different folders \(offered([item(file), item(inside)]))")
+            }
+            let made = try? await operations.makeFolder(named: "New Folder With Items", in: .local(root), moving: [.local(file), .local(second)])
+            lines.append("after new folder with selection: \(listing()) · made \(made?.folder.lastComponent ?? "none") · problem \(made?.problem ?? "none") · undo: \(undo.undoActionName)")
             undo.undo(); await settle()
             lines.append("after undo:   \(listing())")
             lines.append("done")

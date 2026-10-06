@@ -42,6 +42,37 @@ extension BrowserModel {
         }
     }
 
+    /// Whether New Folder with Selection applies: several items, all in one
+    /// folder (with folders expanded, a selection can span several).
+    func canMakeFolder(with items: [FileItem]) -> Bool {
+        guard items.count > 1, let folder = items[0].location.parent else { return false }
+        return items.allSatisfy { $0.location.parent.map { FileOperations.same($0, folder) } ?? false }
+    }
+
+    /// New Folder with Selection: "New Folder With Items" (or "… 2"…) next to
+    /// the items, with them moved into it and its name ready to edit, as in
+    /// Finder. One step to undo.
+    func newFolder(with items: [FileItem]) {
+        guard canMakeFolder(with: items), let folder = items[0].location.parent else { return }
+        // What's already in that folder: this one, or a folder expanded in it.
+        let siblings = current.map { FileOperations.same($0, folder) } == true
+            ? self.items : children.first { FileOperations.same($0.key, folder) }?.value ?? []
+        let names = Set(siblings.map { $0.name.lowercased() })
+        var name = "New Folder With Items"
+        var n = 2
+        while names.contains(name.lowercased()) { name = "New Folder With Items \(n)"; n += 1 }
+        Task {
+            do {
+                let made = try await operations.makeFolder(named: name, in: folder, moving: items.map(\.location))
+                selection = [made.folder]
+                renaming = made.folder
+                if let problem = made.problem { report(problem, action: "MOVE") }
+            } catch {
+                report(FileOperations.describe(error), action: "NEW FOLDER")
+            }
+        }
+    }
+
     /// Starts editing an item's name in place (Return, or File › Rename).
     func beginRename(_ item: FileItem) {
         selection = [item.id]

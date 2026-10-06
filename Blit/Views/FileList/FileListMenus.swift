@@ -47,6 +47,10 @@ enum FileMenuBuilder {
         menu.append(action(browser.deleteTitle(for: items)) { browser.requestDelete(items) })
         menu.append(.separator())
         menu.append(action("New Folder") { browser.newFolder() })
+        // Several items in one folder: into a new folder of their own, as in Finder.
+        if browser.canMakeFolder(with: items) {
+            menu.append(action("New Folder with Selection (\(items.count) Items)") { browser.newFolder(with: items) })
+        }
         menu.append(action(items.count == 1 ? "Rename" : "Rename \(items.count) Items…") { browser.beginRename(items) })
         menu += sendMenus(items, browser: browser)
         // The other pane of a two-pane window (F5 / F6 from the keyboard).

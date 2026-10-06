@@ -380,6 +380,57 @@ final class FileOperations {
         return created
     }
 
+    /// New Folder with Selection: a folder named `name` in `folder` with
+    /// `items` (all in `folder`) moved into it, as one step to undo, which
+    /// moves them back and removes the folder if nothing else is in it.
+    /// Returns the folder, and any problem moving the items.
+    func makeFolder(named name: String, in folder: BrowseLocation,
+                    moving items: [BrowseLocation]) async throws -> (folder: BrowseLocation, problem: String?) {
+        // The folder and the move register no undo steps of their own.
+        batching = true
+        let created: BrowseLocation
+        do {
+            created = try await makeFolder(named: name, in: folder)
+        } catch {
+            batching = false
+            throw error
+        }
+        let problem = await place(items, into: created, destinationName: created.lastComponent, mode: .move)
+        batching = false
+        registerUndo("New Folder with Selection") { operations in
+            let inside = items.map { Self.child(of: created, named: $0.lastComponent) }
+            if let problem = await operations.place(inside, into: folder, destinationName: folder.lastComponent, mode: .move) {
+                return problem.isEmpty ? "the move back was stopped" : problem
+            }
+            return await operations.removeIfEmpty(created, in: folder)
+        }
+        return (created, problem?.isEmpty == true ? nil : problem)
+    }
+
+    /// Removes a folder New Folder made, if nothing is in it (Finder's
+    /// .DS_Store doesn't count).
+    private func removeIfEmpty(_ created: BrowseLocation, in folder: BrowseLocation) async -> String? {
+        switch created {
+        case .local(let url):
+            let contents = await Task.detached { (try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? [] }.value
+            guard contents.allSatisfy({ $0 == ".DS_Store" }) else { return "“\(url.lastPathComponent)” isn't empty any more" }
+            let problems = await Task.detached { Self.trash([url]) }.value
+            onChanged?([folder])
+            return report(problems)
+        case .remote(let id, let bytes):
+            guard let server = servers.server(id) else { return "That server no longer exists." }
+            do {
+                let client = try await connections.browseClient(for: server)
+                if try await !client.list(RemotePath(bytes: bytes)).isEmpty { return "“\(created.lastComponent)” isn't empty any more" }
+                try await client.removeDirectory(RemotePath(bytes: bytes))
+                onChanged?([folder])
+                return nil
+            } catch {
+                return Self.describe(error)
+            }
+        }
+    }
+
     func rename(_ item: BrowseLocation, to newName: String) async throws -> BrowseLocation {
         let name = try Self.validated(newName)
         guard let parent = item.parent else { return item }
