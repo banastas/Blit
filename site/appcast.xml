@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.42</title>
-      <pubDate>Sun, 04 Oct 2026 14:10:56 +0000</pubDate>
-      <sparkle:version>45</sparkle:version>
-      <sparkle:shortVersionString>0.2.42</sparkle:shortVersionString>
+      <title>Blit 0.2.43</title>
+      <pubDate>Tue, 06 Oct 2026 23:23:06 +0000</pubDate>
+      <sparkle:version>46</sparkle:version>
+      <sparkle:shortVersionString>0.2.43</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Folders open from their disclosure triangle again: in 0.2.41 a click there selected the folder instead of showing its contents (on servers and drives alike). Also, a file list now keeps to its pane's width after the window is resized, with no empty space to scroll into sideways.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.42.zip" type="application/octet-stream" sparkle:edSignature="OnGrMtPDo9WJ2zOZ4f1Hg5IS86elCubgWAjIUCWL+gHZgbqfesEiLiWfJ9PhacYNBSjBONDYSPB0vyD5fkLLCw==" length="5791968" />
+      <description><![CDATA[<p>New Folder with Selection, as in Finder: select two or more items in a folder, then right-click › New Folder with Selection, or choose File › New Folder with Selection (Control-Command-N). They move into a new folder beside them, with its name ready to type. Edit › Undo puts them back in one step.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.43.zip" type="application/octet-stream" sparkle:edSignature="KuU2t9BYhfKzBlQCzS89lVz7gMS65FTosZwssoq2PjSKXWsNSomDya69/2AypY3H1Id6G2rIqYIdwA7Dei9lAQ==" length="5800317" />
     </item>
   </channel>
 </rss>
