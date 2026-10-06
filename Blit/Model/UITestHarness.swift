@@ -2738,6 +2738,14 @@ enum UITestHarness {
 
             // 5b. New Folder with Selection from the list: the folder shows up
             // selected, with its name being edited; one ⌘Z puts things back.
+            // (The File menu has it too, ⌃⌘N; it acts only in the key window.)
+            if let item = NSApp.mainMenu?.items.compactMap(\.submenu).first(where: { $0.title == "File" })?
+                .items.first(where: { $0.title.hasPrefix("New Folder with Selection") }) {
+                let keys = (item.keyEquivalentModifierMask.contains(.control) ? "⌃" : "") + (item.keyEquivalentModifierMask.contains(.command) ? "⌘" : "")
+                lines.append("File menu: “\(item.title)” \(keys)\(item.keyEquivalent.uppercased())")
+            } else {
+                lines.append("File menu: no New Folder with Selection")
+            }
             first.newFolder(with: first.rows.filter { ["dos.txt", "uno.txt"].contains($0.name) })
             await pause(1.5)
             lines.append("new folder with selection: on disk \(contents(left)) · inside \(contents(left.appendingPathComponent("New Folder With Items"))) · selected \(first.selectedItems.map(\.name)) · renaming \(first.renaming?.lastComponent ?? "none") · field \(list.renameField != nil)")

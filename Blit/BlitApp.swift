@@ -327,6 +327,13 @@ struct FileCommands: Commands {
             Button("New Folder") { onFiles { $0.newFolder() } }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(browser?.current == nil)
+            // Finder's: several items in one folder into a new folder of their own.
+            Button((browser?.selection.count ?? 0) > 1
+                   ? "New Folder with Selection (\(browser?.selection.count ?? 0) Items)" : "New Folder with Selection") {
+                onFiles { $0.newFolder(with: $0.selectedItems) }
+            }
+            .keyboardShortcut("n", modifiers: [.command, .control])
+            .disabled(!(browser?.canMakeFolderWithSelection ?? false))
             Divider()
             Button("Quick Look") { onFiles { $0.togglePreview() } }
                 .keyboardShortcut("y")

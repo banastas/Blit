@@ -44,9 +44,17 @@ extension BrowserModel {
 
     /// Whether New Folder with Selection applies: several items, all in one
     /// folder (with folders expanded, a selection can span several).
-    func canMakeFolder(with items: [FileItem]) -> Bool {
-        guard items.count > 1, let folder = items[0].location.parent else { return false }
-        return items.allSatisfy { $0.location.parent.map { FileOperations.same($0, folder) } ?? false }
+    func canMakeFolder(with items: [FileItem]) -> Bool { Self.oneFolder(holding: items.map(\.location)) != nil }
+
+    /// The same for the selection (File › New Folder with Selection, ⌃⌘N),
+    /// from the selected locations alone.
+    var canMakeFolderWithSelection: Bool { Self.oneFolder(holding: Array(selection)) != nil }
+
+    /// The folder holding all of `locations`, when there are several and they
+    /// share one.
+    private static func oneFolder(holding locations: [BrowseLocation]) -> BrowseLocation? {
+        guard locations.count > 1, let folder = locations[0].parent else { return nil }
+        return locations.allSatisfy { $0.parent.map { FileOperations.same($0, folder) } ?? false } ? folder : nil
     }
 
     /// New Folder with Selection: "New Folder With Items" (or "… 2"…) next to
