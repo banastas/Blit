@@ -133,6 +133,8 @@ final class BrowserModel {
     @ObservationIgnored var wantsKeyboard = false
     /// Server files already downloaded for Quick Look this session, oldest first.
     @ObservationIgnored var previewDownloads: [(location: BrowseLocation, url: URL)] = []
+    /// Folders' summary pages for Quick Look, and when each was made.
+    @ObservationIgnored var folderSummaryPages: [BrowseLocation: (made: Date, url: URL)] = [:]
 
     func toggleHidden() {
         showHidden.toggle()

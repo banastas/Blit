@@ -1,6 +1,6 @@
 // Quick Look (PRD R2.17): Space (or ⌘Y) previews the selection, as in Finder.
 // Local files preview in place; small files on a server are downloaded to a
-// temporary folder first.
+// temporary folder first; a folder shows a summary (BrowserModel+FolderSummary).
 
 import AppKit
 import BlitRemote
@@ -36,10 +36,10 @@ extension BrowserModel {
     /// files goes through the list's selection (↑/↓), so the two stay in step.
     var previewURLs: [URL] { previewURL.map { [$0] } ?? [] }
 
-    /// Files Quick Look can show: any local file, and server files small
-    /// enough to download for a preview. Folders are skipped.
+    /// What Quick Look can show: any local file, server files small enough
+    /// to download for a preview, and folders (as a summary).
     func isPreviewable(_ item: FileItem) -> Bool {
-        !item.isDirectory && (item.location.localURL != nil || item.size <= Self.remotePreviewLimit)
+        item.isDirectory || item.location.localURL != nil || item.size <= Self.remotePreviewLimit
     }
 
     /// ↑/↓ while Quick Look is open: select the previous or next previewable
@@ -75,10 +75,11 @@ extension BrowserModel {
 
     /// Removes files downloaded for Quick Look (at launch and quit).
     static func cleanUpPreviewDownloads() {
-        try? FileManager.default.removeItem(at: previewFolder)
+        try? FileManager.default.removeItem(at: quickLookFolder)
     }
 
-    private static var previewFolder: URL {
+    /// Where files made for Quick Look go: server files' downloads, folder summaries.
+    static var quickLookFolder: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("Blit Quick Look", isDirectory: true)
     }
 
@@ -91,11 +92,12 @@ extension BrowserModel {
             previewLoading = nil
             return
         }
+        if item.isDirectory { return previewFolder(item) }
         switch item.location {
         case .local(let url):
             previewURL = url
         case .remote(let id, let bytes):
-            guard !item.isDirectory, let server = servers.server(id) else { return }
+            guard let server = servers.server(id) else { return }
             guard item.size <= Self.remotePreviewLimit else {
                 previewURL = nil
                 report("“\(item.name)” is \(item.size.formatted(.byteCount(style: .file))). Quick Look previews server files up to \(Self.remotePreviewLimit.formatted(.byteCount(style: .file))); download it to preview it.", action: "QUICK LOOK")
@@ -139,9 +141,9 @@ extension BrowserModel {
         }
     }
 
-    private func downloadForPreview(_ path: RemotePath, name: String, size: UInt64, from server: ServerConfig) async throws -> URL {
+    func downloadForPreview(_ path: RemotePath, name: String, size: UInt64, from server: ServerConfig) async throws -> URL {
         let client = try await connections.browseClient(for: server)
-        let folder = Self.previewFolder.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let folder = Self.quickLookFolder.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let target = folder.appendingPathComponent(name)
         let file = try PartFile.create(at: target.path, size: size)

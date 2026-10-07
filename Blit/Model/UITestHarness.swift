@@ -2939,6 +2939,77 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitFolderSummaryTest <log> -BlitFolderSummaryTestVideo <header.mkv>`:
+    /// Space on a release folder (PRD R2.17): a big episode made from a real
+    /// HDR10 header, a smaller one, a sample, a hidden file and a DOS-encoded
+    /// .nfo. The page's text, Space again closing it, and the page reused
+    /// when it's fresh. Writes <log>.wid with Quick Look's window for a picture.
+    static func runFolderSummaryTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitFolderSummaryTest"),
+              let header = UserDefaults.standard.string(forKey: "BlitFolderSummaryTestVideo") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-folder-summary")
+            try? fm.removeItem(at: root)
+            let pack = root.appendingPathComponent("Show.S01.2160p.WEB-DL.DV-GRP")
+            try? fm.createDirectory(at: pack.appendingPathComponent("Sample"), withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: root) }
+            @MainActor func sparse(_ name: String, _ size: UInt64, from source: String? = nil) {
+                let url = pack.appendingPathComponent(name)
+                if let source { try? fm.copyItem(atPath: source, toPath: url.path) } else { fm.createFile(atPath: url.path, contents: nil) }
+                let handle = try? FileHandle(forWritingTo: url)
+                try? handle?.truncate(atOffset: size)
+                try? handle?.close()
+            }
+            sparse("Show.S01E01.mkv", 3_000_000_000, from: header)
+            sparse("Show.S01E02.mkv", 2_500_000_000)
+            sparse("Sample/show.sample.mkv", 50_000_000)
+            sparse(".DS_Store", 6_148)
+            // ╔══╗ / ║ GRP ║ / ╚══╝ in code page 437, with DOS line ends.
+            let nfo: [UInt8] = [0xC9, 0xCD, 0xCD, 0xCD, 0xCD, 0xCD, 0xBB, 13, 10, 0xBA] + Array(" GRP ".utf8) + [0xBA, 13, 10,
+                                0xC8, 0xCD, 0xCD, 0xCD, 0xCD, 0xCD, 0xBC, 13, 10]
+            fm.createFile(atPath: pack.appendingPathComponent("show.nfo").path, contents: Data(nfo))
+            guard let model = PaneTabs.shared.current?.first else { return lines.append("no pane") }
+            model.open(.local(root))
+            for _ in 0..<20 where model.items.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+            guard let folder = model.items.first(where: { $0.name == pack.lastPathComponent }) else { return lines.append("no folder") }
+            lines.append("previewable: folder \(model.isPreviewable(folder))")
+            model.selection = [folder.location]
+            let started = Date()
+            model.togglePreview()   // Space
+            for _ in 0..<50 where model.previewURL == nil { try? await Task.sleep(for: .milliseconds(100)) }
+            guard let page = model.previewURL else { return lines.append("no page after \(Int(Date().timeIntervalSince(started) * 1000)) ms") }
+            lines.append("page: \(page.lastPathComponent) · in Quick Look's folder \(page.path.hasPrefix(BrowserModel.quickLookFolder.path))")
+            let html = (try? String(contentsOf: page, encoding: .utf8)) ?? ""
+            let text = html.components(separatedBy: "<body>").last?
+                .replacingOccurrences(of: "<br>", with: " / ")
+                .replacing(/<[^>]+>/, with: "")
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } ?? []
+            for line in text { lines.append("  " + line) }
+            lines.append("hidden file listed: \(html.contains(".DS_Store"))")
+            // A picture of Quick Look: the shell captures the window once it sees <log>.wid.
+            try? await Task.sleep(for: .seconds(1.5))
+            if let panel = NSApp.windows.first(where: { $0.isVisible && String(describing: type(of: $0)).contains("QLPreviewPanel") }) {
+                try? String(panel.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+                for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+                lines.append("Quick Look panel shown")
+            } else {
+                lines.append("Quick Look panel not found")
+            }
+            model.togglePreview()   // Space again
+            lines.append("Space again: closed \(model.previewURL == nil)")
+            model.togglePreview()
+            lines.append("and again within 30 s: the same page \(model.previewURL == page)")
+            model.togglePreview()
+            lines.append("done")
+        }
+    }
+
     /// `-BlitDropSpaceTest <log> -BlitDropSpaceTestDest <folder>` (with
     /// `-showSecondPane YES`, the folder on a small volume such as a 300 MB
     /// disk image): what a drop target says about free space (PRD R2.10) as
