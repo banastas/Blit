@@ -366,6 +366,14 @@ struct FileCommands: Commands {
             Button("Move to Other Pane") { onFiles { $0.sendToOtherPane(move: true) } }
                 .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF6FunctionKey)!)), modifiers: [])
                 .disabled(!(browser?.canSendToOtherPane ?? false))
+            // Where items like these went last (PRD R2.23).
+            let suggestion = browser?.suggestedDestinations.first
+            Button(suggestion.map { "Copy to “\($0.name)”" } ?? "Copy to Suggested Folder") { onFiles { $0.sendToSuggestion(move: false) } }
+                .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF5FunctionKey)!)), modifiers: [.shift])
+                .disabled(suggestion == nil)
+            Button(suggestion.map { "Move to “\($0.name)”" } ?? "Move to Suggested Folder") { onFiles { $0.sendToSuggestion(move: true) } }
+                .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF6FunctionKey)!)), modifiers: [.shift])
+                .disabled(suggestion == nil)
             Button("Open in Other Pane") { onFiles { $0.openSelectionInOtherPane() } }
                 .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
                 .disabled(!(browser.map { $0.selection.count == 1 && $0.selectedItems.first?.isDirectory == true } ?? false)

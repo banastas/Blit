@@ -121,6 +121,34 @@ extension BrowserModel {
         drop(items.map(\.location), into: folder, name: name, copy: !move)
     }
 
+    /// Where the selection might go, from where items like it went (PRD R2.23).
+    var suggestedDestinations: [DestinationMemory.Suggestion] {
+        DestinationMemory.shared.suggestions(for: selectedItems)
+    }
+
+    /// Copy or move `items` into a suggested folder, making a new season's
+    /// folder first if it isn't there yet.
+    func send(_ items: [FileItem], to suggestion: DestinationMemory.Suggestion, move: Bool) {
+        guard suggestion.mayBeNew, let url = suggestion.folder.localURL else {
+            return send(items, to: suggestion.folder, name: suggestion.name, move: move)
+        }
+        Task {
+            let made = await Task.detached {
+                (try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)) != nil
+            }.value
+            guard made else {
+                return report("Couldn't make the folder “\(suggestion.name)” in “\(suggestion.detail ?? "")”.", action: move ? "MOVE" : "COPY")
+            }
+            send(items, to: suggestion.folder, name: suggestion.name, move: move)
+        }
+    }
+
+    /// ⇧F5 / ⇧F6: the selection to the first suggested folder.
+    func sendToSuggestion(move: Bool) {
+        guard let suggestion = suggestedDestinations.first else { return }
+        send(selectedItems, to: suggestion, move: move)
+    }
+
     /// Copy (F5) or move (F6) the selection into the folder the other pane shows.
     func sendToOtherPane(move: Bool) {
         guard !selection.isEmpty, let other = BrowserModel.oppositePane?(self), let there = other.current,
@@ -239,6 +267,7 @@ extension BrowserModel {
 
     private func run(sources: [BrowseLocation], into folder: BrowseLocation, name: String, mode: FileOperations.Mode,
                      fromPasteboard: Bool = false) {
+        DestinationMemory.shared.learn(sources, into: folder)
         let hidden = showHidden
         let tab = PaneTabs.shared.tab(of: self)?.id
         Task {

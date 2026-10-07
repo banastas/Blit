@@ -2939,6 +2939,118 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitSuggestTest <log>`: suggested destinations (PRD R2.23). How
+    /// release names read; then moves in a temporary "SSD" and "NAS": a show's
+    /// next episode offered its season folder, the next season a new folder
+    /// beside it (made at the move), a movie filed in its own folder teaching
+    /// the shelf, 4K and 1080p kept apart, and the menus' items.
+    static func runSuggestTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitSuggestTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            for name in ["South.Park.S29E02.1080p.WEB.h264-GRP.mkv", "South-Park_S29E02.mkv", "south park - s29e02 - title.mkv",
+                         "The.Office.US.3x07.HDTV.avi", "Severance.S02.2160p.ATVP.WEB-DL.DDP5.1.DV.H.265-GRP",
+                         "Doctor.Who.2005.S14E01.1080p.mkv", "The.Gentlemen.2019.UHD.BluRay.2160p.x265-GRP.mkv",
+                         "2001.A.Space.Odyssey.1968.1080p.BluRay.x264-GRP", "Heat (1995).mkv", "IMG_2019.jpg", "notes.txt",
+                         "Season 03", "S01E01.mkv"] {
+                let described: String
+                if let release = ReleaseName(name) {
+                    switch release.key {
+                    case .show(let show): described = "show “\(show)”" + (release.season.map { ", season \($0)" } ?? "")
+                    case .movie(let resolution): described = "movie (\(resolution))" + (release.year.map { ", \($0)" } ?? "")
+                    }
+                } else {
+                    described = "nothing"
+                }
+                lines.append("\(name): \(described)")
+            }
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-suggest")
+            try? fm.removeItem(at: root)
+            let ssd = root.appendingPathComponent("SSD"), nas = root.appendingPathComponent("NAS")
+            for folder in ["TV/South Park/Season 29", "Movies 4K/The Gentlemen (2019)", "Movies"] {
+                try? fm.createDirectory(at: nas.appendingPathComponent(folder), withIntermediateDirectories: true)
+            }
+            try? fm.createDirectory(at: ssd, withIntermediateDirectories: true)
+            for name in ["South.Park.S29E01.1080p.WEB.h264-GRP.mkv", "South.Park.S29E02.1080p.WEB.h264-GRP.mkv", "South-Park_S30E01.mkv",
+                         "The.Gentlemen.2019.2160p.UHD.BluRay.x265-GRP.mkv", "Another.Movie.2021.2160p.WEB-DL.DDP5.1.mkv",
+                         "Old.Movie.1999.1080p.BluRay.mkv", "Newer.Movie.2024.1080p.WEB.mkv", "IMG_2019.jpg"] {
+                fm.createFile(atPath: ssd.appendingPathComponent(name).path, contents: Data("x".utf8))
+            }
+            defer { try? fm.removeItem(at: root) }
+            guard let model = PaneTabs.shared.current?.first else { return lines.append("no pane") }
+            DestinationMemory.shared.reset()
+            @MainActor func show() async {
+                model.open(.local(ssd))
+                model.reload()
+                try? await Task.sleep(for: .milliseconds(700))
+            }
+            await show()
+            @MainActor func item(_ prefix: String) -> FileItem? { model.items.first { $0.name.hasPrefix(prefix) } }
+            @MainActor func suggested(_ prefixes: [String]) -> String {
+                let items = prefixes.compactMap(item)
+                let found = DestinationMemory.shared.suggestions(for: items)
+                return found.isEmpty ? "nothing" : found.map { $0.title + ($0.mayBeNew ? " (worked out)" : "") }.joined(separator: " | ")
+            }
+            @MainActor func move(_ prefix: String, to path: String) async {
+                guard let file = item(prefix) else { return lines.append("no \(prefix)") }
+                let folder = BrowseLocation.local(nas.appendingPathComponent(path))
+                model.send([file], to: folder, name: folder.lastComponent, move: true)
+                for _ in 0..<40 where fm.fileExists(atPath: file.location.localURL!.path) { try? await Task.sleep(for: .milliseconds(100)) }
+                await show()
+            }
+            lines.append("before anything was filed, S29E02: \(suggested(["South.Park.S29E02"]))")
+            await move("South.Park.S29E01", to: "TV/South Park/Season 29")
+            lines.append("after S29E01 went to Season 29: S29E02 → \(suggested(["South.Park.S29E02"])) · S30E01 → \(suggested(["South-Park_S30E01"]))")
+            if let next = item("South-Park_S30E01"), let suggestion = DestinationMemory.shared.suggestions(for: [next]).first {
+                lines.append("  why: \(suggestion.reason)")
+                model.send([next], to: suggestion, move: true)
+                for _ in 0..<40 where fm.fileExists(atPath: next.location.localURL!.path) { try? await Task.sleep(for: .milliseconds(100)) }
+                await show()
+            }
+            let seasons = ((try? fm.contentsOfDirectory(atPath: nas.appendingPathComponent("TV/South Park").path)) ?? []).sorted()
+            let season30 = (try? fm.contentsOfDirectory(atPath: nas.appendingPathComponent("TV/South Park/Season 30").path)) ?? []
+            lines.append("moved S30E01 by the suggestion: South Park has \(seasons) · Season 30 has \(season30)")
+            await move("The.Gentlemen", to: "Movies 4K/The Gentlemen (2019)")
+            lines.append("after a 4K movie went into a folder of its own: 2160p movie → \(suggested(["Another.Movie"])) · 1080p movie → \(suggested(["Old.Movie"]))")
+            await move("Old.Movie", to: "Movies")
+            lines.append("after a 1080p movie went to Movies: 1080p → \(suggested(["Newer.Movie"])) · 2160p → \(suggested(["Another.Movie"]))")
+            lines.append("a photo: \(suggested(["IMG_2019"])) · a show and a movie together: \(suggested(["South.Park.S29E02", "Another.Movie"]))")
+            // The menus, for the next episode.
+            if let episode = item("South.Park.S29E02") {
+                let menu = FileMenuBuilder.items(for: [episode], in: model)
+                if let suggestion = menu.first(where: { $0.image != nil && $0.title.hasPrefix("Move to “") }) {
+                    lines.append("context menu: \(suggestion.title) · help: \(suggestion.toolTip ?? "-")")
+                }
+                if let moveTo = menu.first(where: { $0.title == "Move To" })?.submenu {
+                    lines.append("Move To ▸ " + moveTo.items.prefix(3).map { $0.isSeparatorItem ? "—" : $0.title }.joined(separator: " | "))
+                }
+                model.selection = [episode.location]
+                try? await Task.sleep(for: .milliseconds(300))
+                // The File menu's items (their titles follow the key window's pane,
+                // which an inactive test copy hasn't got), then ⇧F6's action.
+                if let file = NSApp.mainMenu?.items.compactMap(\.submenu).first(where: { $0.title == "File" }) {
+                    file.delegate?.menuNeedsUpdate?(file)
+                    let entries = file.items.filter { item in
+                        item.keyEquivalentModifierMask.contains(.shift)
+                            && [UInt32(NSF5FunctionKey), UInt32(NSF6FunctionKey)].contains(item.keyEquivalent.unicodeScalars.first?.value ?? 0)
+                    }
+                    lines.append("File menu: " + entries.map { item in
+                        "\(item.title) [⇧\(item.keyEquivalent.unicodeScalars.first?.value == UInt32(NSF5FunctionKey) ? "F5" : "F6")]"
+                    }.joined(separator: " · ") + (NSApp.isActive ? "" : " (not the key window: titles not checked)"))
+                }
+                model.sendToSuggestion(move: true)
+                for _ in 0..<40 where fm.fileExists(atPath: episode.location.localURL!.path) { try? await Task.sleep(for: .milliseconds(100)) }
+                let season29 = ((try? fm.contentsOfDirectory(atPath: nas.appendingPathComponent("TV/South Park/Season 29").path)) ?? []).sorted()
+                lines.append("⇧F6 on S29E02: Season 29 has \(season29)")
+            }
+            lines.append("done")
+        }
+    }
+
     /// `-BlitFinishTest <log>`: the finish moment. Which queues earn it, then
     /// the flourish over the strip of a finished stand-in transfer: drawn
     /// while it plays, nothing drawn once it's over. <log>.wid-N (N = 1, 2)

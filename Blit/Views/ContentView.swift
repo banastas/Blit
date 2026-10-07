@@ -234,6 +234,7 @@ struct ContentView: View {
     /// A drop onto the sidebar: Finder's rules (move within a volume or server,
     /// copy across), ⌥ copies.
     private func drop(_ sources: [BrowseLocation], to destination: BrowseLocation, name: String) {
+        DestinationMemory.shared.learn(sources, into: destination)
         let mode: FileOperations.Mode = NSEvent.modifierFlags.contains(.option) ? .copy : .automatic
         let hidden = active?.showHidden ?? false
         let tab = PaneTabs.shared.current?.id
@@ -627,6 +628,7 @@ struct ContentView: View {
         UITestHarness.runFolderSummaryTestIfRequested()
         UITestHarness.runMonthlyTotalsTestIfRequested()
         UITestHarness.runFinishTestIfRequested(transfers: transfers)
+        UITestHarness.runSuggestTestIfRequested()
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

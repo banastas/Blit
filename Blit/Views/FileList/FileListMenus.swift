@@ -62,6 +62,14 @@ enum FileMenuBuilder {
                 menu.append(action("Open in Other Pane") { other.open(items[0].location) })
             }
         }
+        // Where items like these went last (⇧F6 from the keyboard).
+        if let suggestion = DestinationMemory.shared.suggestions(for: items).first {
+            let item = action("Move to “\(suggestion.name)”", help: suggestion.reason + (suggestion.mayBeNew ? " (made as it's moved, if it isn't there yet)" : "")) {
+                browser.send(items, to: suggestion, move: true)
+            }
+            item.image = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Suggested")
+            menu.append(item)
+        }
         if urls.count == items.count { menu.append(action("Duplicate") { browser.duplicate(items) }) }
         menu.append(.separator())
         menu.append(action("Cut") { browser.copy(items, cut: true) })
@@ -149,13 +157,25 @@ enum FileMenuBuilder {
         return submenu("Open With", items)
     }
 
-    /// Copy To ▸ and Move To ▸: the sidebar's favorites (NAS folders first) and
-    /// Other Folder…, for archiving reviewed items without dragging.
+    /// Copy To ▸ and Move To ▸: suggested folders (where items like these went
+    /// last), the sidebar's favorites (NAS folders first) and Other Folder…,
+    /// for archiving reviewed items without dragging.
     private static func sendMenus(_ items: [FileItem], browser: BrowserModel) -> [NSMenuItem] {
         let parents = Set(items.compactMap(\.location.parent))
         let places = BrowserModel.destinations().filter { !parents.contains($0.location) }
+        let suggestions = DestinationMemory.shared.suggestions(for: items)
         return [false, true].map { move in
-            var entries = places.map { place in
+            var entries: [NSMenuItem] = []
+            if !suggestions.isEmpty {
+                entries.append(.sectionHeader(title: "Suggested"))
+                for suggestion in suggestions {
+                    entries.append(action(suggestion.title, help: suggestion.reason + (suggestion.mayBeNew ? " (made as it's moved, if it isn't there yet)" : "")) {
+                        browser.send(items, to: suggestion, move: move)
+                    })
+                }
+                entries.append(.separator())
+            }
+            entries += places.map { place in
                 action(place.detail.map { "\(place.name) — \($0)" } ?? place.name) {
                     browser.send(items, to: place.location, name: place.name, move: move)
                 }
