@@ -2939,6 +2939,103 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitImportTest <log>`: Import Servers (PRD R1.8) from written
+    /// stand-ins: a Transmit store (an archive with Transmit's class names: a
+    /// group in a group, SFTP and FTP favorites, history, a class nobody
+    /// knows), Transmit's metadata files, and ForkLift favorites as JSON and
+    /// as a property list, all under a stand-in home folder; with
+    /// `-BlitImportHome` set to that folder, the sheet over them too. Nothing
+    /// is ever imported (that would write the user's own server list). With `-BlitImportTestReal YES`, also this Mac's own
+    /// Transmit store, counted only (no names, hosts or users in the log).
+    static func runImportTestIfRequested(servers: ServerStore) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitImportTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let fm = FileManager.default
+            let home = fm.temporaryDirectory.appendingPathComponent("blit-import-home")
+            try? fm.removeItem(at: home)
+            defer { try? fm.removeItem(at: home) }
+            func describe(_ list: [ImportedServer]) -> String {
+                list.map { "\($0.source): \($0.name) = \($0.username)@\($0.host):\($0.port)\($0.path.isEmpty ? "" : " " + $0.path)\($0.keyPath.map { " key " + $0 } ?? "")" }
+                    .joined(separator: " · ")
+            }
+            // A Transmit store, written with Transmit's class names.
+            let inner = ArchiveGroupStandIn(name: "Seedboxes")
+            inner.connections = [ArchiveConnectionStandIn(name: "Box", address: "box.example.net", port: 2222, sftp: true, user: "ann",
+                                                           path: "/home/ann/files", key: "~/.ssh/id_ed25519")]
+            let global = ArchiveGroupStandIn(name: "Favorites")
+            global.connections = [ArchiveConnectionStandIn(name: "NAS", address: "nas.local", port: 22, sftp: true, user: "admin", path: "", key: nil),
+                                  ArchiveConnectionStandIn(name: "Old FTP", address: "ftp.example.org", port: 21, sftp: false, user: "x", path: "", key: nil),
+                                  inner]
+            for case let connection as ArchiveConnectionStandIn in global.connections { connection.parent = global }
+            let archiver = NSKeyedArchiver(requiringSecureCoding: false)
+            archiver.setClassName("TRConnectionItem", for: ArchiveConnectionStandIn.self)
+            archiver.setClassName("TRConnectionGroup", for: ArchiveGroupStandIn.self)
+            archiver.setClassName("TRSomethingNew", for: ArchiveUnknownStandIn.self)
+            let root = NSMutableDictionary(dictionary: ["globalConnectionGroup": global, "keys": Data([1, 2, 3]),
+                                                        "historyConnections": [ArchiveUnknownStandIn()]])
+            archiver.encode(root, forKey: NSKeyedArchiveRootObjectKey)
+            archiver.finishEncoding()
+            let transmitFolder = ServerImport.transmitFolders(home: home)[0]
+            try? fm.createDirectory(at: transmitFolder.appendingPathComponent("Metadata"), withIntermediateDirectories: true)
+            try? archiver.encodedData.write(to: transmitFolder.appendingPathComponent("Connections.transmitstore"))
+            let fromStore = ServerImport.transmit(home: home)
+            lines.append("Transmit store: \(describe(fromStore))")
+            // Without the store: its Spotlight files.
+            try? fm.removeItem(at: transmitFolder.appendingPathComponent("Connections.transmitstore"))
+            let metadata: [String: Any] = ["com_panic_transmit_nickname": "Box", "com_panic_transmit_server": "box.example.net",
+                                           "com_panic_transmit_port": 2222, "com_panic_transmit_protocol": "SFTP",
+                                           "com_panic_transmit_username": "ann", "com_panic_transmit_remotePath": "/home/ann/files"]
+            let ftp: [String: Any] = ["com_panic_transmit_server": "ftp.example.org", "com_panic_transmit_protocol": "FTP"]
+            for (index, plist) in [metadata, ftp].enumerated() {
+                let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+                try? data?.write(to: transmitFolder.appendingPathComponent("Metadata/\(index).favoriteMetadata"))
+            }
+            lines.append("Transmit metadata: \(describe(ServerImport.transmit(home: home)))")
+            // ForkLift: JSON with a group, and an older property list.
+            let forkLift = home.appendingPathComponent("Library/Application Support/ForkLift/Favorites")
+            try? fm.createDirectory(at: forkLift, withIntermediateDirectories: true)
+            let json = #"[{"title":"Work","children":[{"title":"Box","server":"box.example.net","port":2222,"protocol":"sftp","username":"ann","path":"/home/ann/files"},{"title":"Web","server":"web.example.com","protocol":"webdav"}]},{"title":"Pi","host":"pi.local","port":"22","user":"pi"}]"#
+            try? Data(json.utf8).write(to: forkLift.appendingPathComponent("Favorites.json"))
+            let plist: [[String: Any]] = [["name": "Mini", "hostname": "mini.local", "type": "SFTP", "login": "me", "remotePath": "/Users/me"]]
+            try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+                .write(to: forkLift.appendingPathComponent("favorites-old.plist"))
+            lines.append("ForkLift: \(describe(ServerImport.forkLift(home: home)))")
+            let all = ServerImport.find(home: home)
+            lines.append("together, the same login once: \(all.count) · \(describe(all))")
+            var existing = ServerConfig()
+            existing.host = "NAS.local"
+            existing.port = 22
+            existing.username = "admin"
+            lines.append("already in Blit (nas.local as NAS.local): \(fromStore.filter { $0.matches(existing) }.map(\.name))")
+            lines.append("as a server: \(all.first.map { "\($0.config.displayName) · \($0.config.username)@\($0.config.host):\($0.config.port) · start \($0.config.startPath.isEmpty ? "home" : $0.config.startPath)" } ?? "-")")
+            if UserDefaults.standard.bool(forKey: "BlitImportTestReal") {
+                let real = ServerImport.transmit(home: URL(fileURLWithPath: NSHomeDirectory()))
+                lines.append("this Mac's Transmit: \(real.count) SFTP favorite\(real.count == 1 ? "" : "s"), each with host \(real.allSatisfy { !$0.host.isEmpty }), user \(real.allSatisfy { !$0.username.isEmpty }), a port other than 22 \(real.filter { $0.port != 22 }.count)")
+            }
+            // The sheet, over the stand-in home (-BlitImportHome): what it offers. Never imports.
+            if UserDefaults.standard.string(forKey: "BlitImportHome") == home.path {
+                let before = servers.servers.count
+                try? archiver.encodedData.write(to: transmitFolder.appendingPathComponent("Connections.transmitstore"))
+                NotificationCenter.default.post(name: .blitImportServers, object: nil)
+                try? await Task.sleep(for: .seconds(2))
+                // (No picture: a sheet's capture brings the whole window, the user's folders in it.)
+                if let sheet = NSApp.windows.first(where: { $0.isVisible && $0.sheetParent != nil }) {
+                    lines.append("sheet shown: \(Int(sheet.frame.width)) × \(Int(sheet.frame.height))")
+                } else {
+                    lines.append("no sheet")
+                }
+                NotificationCenter.default.post(name: .blitCloseImportServers, object: nil)
+                try? await Task.sleep(for: .seconds(1))
+                lines.append("sheet closed: \(!NSApp.windows.contains { $0.isVisible && $0.sheetParent != nil }) · servers in Blit unchanged \(servers.servers.count == before)")
+            }
+            lines.append("done")
+        }
+    }
+
     /// `-BlitSuggestTest <log>`: suggested destinations (PRD R2.23). How
     /// release names read; then moves in a temporary "SSD" and "NAS": a show's
     /// next episode offered its season folder, the next season a new folder
@@ -5704,6 +5801,53 @@ enum UITestHarness {
 #endif
 
 #if DEBUG
+/// Archived as Transmit's TRConnectionItem (the import test): the port inline,
+/// the protocol as an object, as either may be.
+final class ArchiveConnectionStandIn: NSObject, NSCoding {
+    let name: String, address: String, user: String, path: String, key: String?
+    let port: Int, sftp: Bool
+    weak var parent: ArchiveGroupStandIn?
+
+    init(name: String, address: String, port: Int, sftp: Bool, user: String, path: String, key: String?) {
+        (self.name, self.address, self.port, self.sftp, self.user, self.path, self.key) = (name, address, port, sftp, user, path, key)
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    func encode(with coder: NSCoder) {
+        coder.encode(name, forKey: "name")
+        coder.encode(address, forKey: "address")
+        coder.encode(port, forKey: "port")
+        coder.encode(NSNumber(value: sftp ? 0x5346_5450 : 0x4654_5020), forKey: "protocol")
+        coder.encode(user, forKey: "username")
+        coder.encode(path, forKey: "remotePath")
+        coder.encode(key, forKey: "privateKey")
+        coder.encode(true, forKey: "passwordInKeychain")
+        coder.encode(parent, forKey: "parent")
+    }
+}
+
+/// Archived as Transmit's TRConnectionGroup.
+final class ArchiveGroupStandIn: NSObject, NSCoding {
+    let name: String
+    var connections: [NSObject] = []
+
+    init(name: String) { self.name = name }
+    required init?(coder: NSCoder) { return nil }
+
+    func encode(with coder: NSCoder) {
+        coder.encode(name, forKey: "name")
+        coder.encode(connections, forKey: "connections")
+    }
+}
+
+/// A class the importer has never heard of.
+final class ArchiveUnknownStandIn: NSObject, NSCoding {
+    override init() {}
+    required init?(coder: NSCoder) { return nil }
+    func encode(with coder: NSCoder) { coder.encode("whatever", forKey: "thing") }
+}
+
 /// A drag for the native drop test: where it is and what it carries.
 @MainActor
 final class StandInDrag: NSObject, @MainActor NSDraggingInfo {

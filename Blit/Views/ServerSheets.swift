@@ -199,3 +199,78 @@ struct PasswordSheet: View {
         dismiss()
     }
 }
+
+/// Import Servers (PRD R1.8): the SFTP favorites found in Transmit and
+/// ForkLift, each ticked unless Blit has it already; the chosen ones become
+/// Blit servers. Passwords stay in those apps: Blit asks on first connect.
+struct ImportServersView: View {
+    @Environment(ServerStore.self) private var servers
+    @Environment(\.dismiss) private var dismiss
+    /// Called with what was imported (the window selects the first).
+    var onImported: ([ServerConfig]) -> Void = { _ in }
+    @State private var found: [ImportedServer]?
+    @State private var chosen: Set<UUID> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Import Servers").font(.headline)
+            Text("SFTP favorites saved in Transmit and ForkLift. Passwords aren't brought over: Blit asks for each one the first time it connects.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Group {
+                if let found {
+                    if found.isEmpty {
+                        Text("No SFTP favorites found in Transmit or ForkLift.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 80)
+                    } else {
+                        List(found) { server in row(server) }
+                            .listStyle(.bordered(alternatesRowBackgrounds: true))
+                            .frame(height: min(320, CGFloat(found.count) * 44 + 12))
+                    }
+                } else {
+                    ProgressView("Looking…").frame(maxWidth: .infinity, minHeight: 80)
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(chosen.isEmpty ? "Import" : "Import \(chosen.count) Server\(chosen.count == 1 ? "" : "s")") { importChosen() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(chosen.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 500)
+        .task {
+            let list = await Task.detached(priority: .userInitiated) { ServerImport.find() }.value
+            found = list
+            chosen = Set(list.filter { !inBlit($0) }.map(\.id))
+        }
+    }
+
+    private func inBlit(_ server: ImportedServer) -> Bool { servers.servers.contains(where: server.matches) }
+
+    private func row(_ server: ImportedServer) -> some View {
+        let already = inBlit(server)
+        return Toggle(isOn: Binding(get: { chosen.contains(server.id) },
+                                    set: { if $0 { chosen.insert(server.id) } else { chosen.remove(server.id) } })) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(server.name)
+                Text("\(server.username.isEmpty ? "" : server.username + "@")\(server.host)\(server.port == 22 ? "" : ":\(server.port)") · \(already ? "already in Blit" : "from \(server.source)")\(server.keyPath == nil ? "" : " · key file")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .disabled(already)
+    }
+
+    private func importChosen() {
+        let imported = (found ?? []).filter { chosen.contains($0.id) && !inBlit($0) }.map(\.config)
+        for server in imported { servers.save(server, password: nil) }
+        dismiss()
+        onImported(imported)
+    }
+}

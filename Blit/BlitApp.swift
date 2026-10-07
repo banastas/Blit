@@ -169,6 +169,9 @@ struct BlitApp: App {
                     .keyboardShortcut(.delete, modifiers: [.command, .shift])
             }
             CommandGroup(after: .importExport) {
+                Button("Import Servers from Transmit or ForkLift…") {
+                    NotificationCenter.default.post(name: .blitImportServers, object: nil)
+                }
                 Button("Export Transfer Log…") { TransferLog.export() }
             }
             TransferLogCommands()
@@ -219,6 +222,12 @@ extension Notification.Name {
     static let blitFocusSearch = Notification.Name("BlitFocusSearch")
     /// Go › Go to… (⌘K): open the jump palette.
     static let blitShowPalette = Notification.Name("BlitShowPalette")
+    /// File › Import Servers…: the import sheet (PRD R1.8).
+    static let blitImportServers = Notification.Name("BlitImportServers")
+    #if DEBUG
+    /// Closes the import sheet (the tests never import).
+    static let blitCloseImportServers = Notification.Name("BlitCloseImportServers")
+    #endif
 }
 
 extension FocusedValues {

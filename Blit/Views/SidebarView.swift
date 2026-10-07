@@ -33,6 +33,7 @@ struct SidebarView: View {
     /// the one you picked.
     @State private var pickedRow: SidebarRow?
     var onAddServer: () -> Void
+    var onImportServers: () -> Void
     var onEditServer: (ServerConfig) -> Void
     var onRemoveServer: (ServerConfig) -> Void
     var onTransfer: ([BrowseLocation], BrowseLocation, String) -> Void
@@ -86,15 +87,26 @@ struct SidebarView: View {
                     Button("Add Server…", action: onAddServer)
                         .buttonStyle(.link)
                         .selectionDisabled()
+                    Button("Import from Transmit or ForkLift…", action: onImportServers)
+                        .buttonStyle(.link)
+                        .selectionDisabled()
                 }
             } header: {
                 HStack {
                     Text("Servers")
                     Spacer()
-                    Button(action: onAddServer) { Image(systemName: "plus") }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Add Server")
+                    Menu {
+                        Button("New Server…", action: onAddServer)
+                        Button("Import from Transmit or ForkLift…", action: onImportServers)
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .foregroundStyle(.secondary)
+                    .help("Add or import servers")
                 }
             }
 

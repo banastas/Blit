@@ -15,6 +15,7 @@ struct ContentView: View {
     @FocusState private var searchFocused: Bool
     @State private var selection: BrowseLocation?
     @State private var editing: EditingServer?
+    @State private var importingServers = false
     /// The first launch's Full Disk Access sheet (PRD R2.20).
     @State private var offeringFullDiskAccess = false
     @State private var removing: ServerConfig?
@@ -48,6 +49,7 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(selection: $selection,
                         onAddServer: { editing = EditingServer(server: ServerConfig(), isNew: true) },
+                        onImportServers: { importingServers = true },
                         onEditServer: { editing = EditingServer(server: $0, isNew: false) },
                         onRemoveServer: { removing = $0 },
                         onTransfer: drop,
@@ -114,6 +116,7 @@ struct ContentView: View {
         .searchFocused($searchFocused)
         .onReceive(NotificationCenter.default.publisher(for: .blitFocusSearch)) { _ in searchFocused = true }
         .onReceive(NotificationCenter.default.publisher(for: .blitShowPalette)) { _ in showPalette = true }
+        .modifier(ImportServersHost(importing: $importingServers, selection: $selection))
         .onChange(of: selection) { _, location in
             // A tick later: the sidebar's list can still be mid-update when its
             // selection changes, and reloading a pane's table from inside that
@@ -629,6 +632,7 @@ struct ContentView: View {
         UITestHarness.runMonthlyTotalsTestIfRequested()
         UITestHarness.runFinishTestIfRequested(transfers: transfers)
         UITestHarness.runSuggestTestIfRequested()
+        UITestHarness.runImportTestIfRequested(servers: servers)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)
@@ -771,5 +775,25 @@ private struct PaneCoordination: ViewModifier {
             .onChange(of: browser?.previewURL) { _, url in if url != nil { secondBrowser?.previewURL = nil } }
             .onChange(of: secondBrowser?.previewURL) { _, url in if url != nil { browser?.previewURL = nil } }
             .focusedSceneValue(\.browser, active)
+    }
+}
+
+/// File › Import Servers… and the sidebar's +: the import sheet (PRD R1.8),
+/// selecting the first server brought in.
+private struct ImportServersHost: ViewModifier {
+    @Binding var importing: Bool
+    @Binding var selection: BrowseLocation?
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .blitImportServers)) { _ in importing = true }
+            #if DEBUG
+            .onReceive(NotificationCenter.default.publisher(for: .blitCloseImportServers)) { _ in importing = false }
+            #endif
+            .sheet(isPresented: $importing) {
+                ImportServersView { imported in
+                    if let first = imported.first { selection = first.startLocation }
+                }
+            }
     }
 }
