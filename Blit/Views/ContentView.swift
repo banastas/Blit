@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var selection: BrowseLocation?
     @State private var editing: EditingServer?
     @State private var importingServers = false
+    @State private var showingWelcome = false
     /// The first launch's Full Disk Access sheet (PRD R2.20).
     @State private var offeringFullDiskAccess = false
     @State private var removing: ServerConfig?
@@ -117,6 +118,7 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .blitFocusSearch)) { _ in searchFocused = true }
         .onReceive(NotificationCenter.default.publisher(for: .blitShowPalette)) { _ in showPalette = true }
         .modifier(ImportServersHost(importing: $importingServers, selection: $selection))
+        .modifier(WelcomeHost(showing: $showingWelcome))
         .onChange(of: selection) { _, location in
             // A tick later: the sidebar's list can still be mid-update when its
             // selection changes, and reloading a pane's table from inside that
@@ -633,6 +635,7 @@ struct ContentView: View {
         UITestHarness.runFinishTestIfRequested(transfers: transfers)
         UITestHarness.runSuggestTestIfRequested()
         UITestHarness.runImportTestIfRequested(servers: servers)
+        UITestHarness.runWelcomeTestIfRequested()
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)
@@ -686,8 +689,14 @@ struct ContentView: View {
         wireRefresh()
         // The shown tab's folders (a window made again keeps its tabs).
         tabShown()
-        // First launch: offer Full Disk Access once, after the window is up.
-        if FullDiskAccess.shared.shouldOffer {
+        // First launch: the Welcome on a fresh install (Full Disk Access is one
+        // of its steps), else Full Disk Access once, after the window is up.
+        if Welcome.shouldShow(servers: servers.servers, favorites: sidebar.favorites) {
+            Task {
+                try? await Task.sleep(for: .seconds(1))
+                showingWelcome = true
+            }
+        } else if FullDiskAccess.shared.shouldOffer {
             Task {
                 try? await Task.sleep(for: .seconds(1))
                 offeringFullDiskAccess = true
@@ -795,5 +804,23 @@ private struct ImportServersHost: ViewModifier {
                     if let first = imported.first { selection = first.startLocation }
                 }
             }
+    }
+}
+
+/// Help › Welcome to Blit… and the first launch: the Welcome (PRD R2.24).
+private struct WelcomeHost: ViewModifier {
+    @Binding var showing: Bool
+    @State private var step = WelcomeView.Step.welcome
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .blitShowWelcome)) { note in
+                step = (note.object as? Int).flatMap(WelcomeView.Step.init(rawValue:)) ?? .welcome
+                showing = true
+            }
+            #if DEBUG
+            .onReceive(NotificationCenter.default.publisher(for: .blitCloseImportServers)) { _ in showing = false }
+            #endif
+            .sheet(isPresented: $showing) { WelcomeView(step: step) }
     }
 }

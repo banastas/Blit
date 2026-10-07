@@ -176,6 +176,9 @@ struct BlitApp: App {
             }
             TransferLogCommands()
             TabCommands()
+            CommandGroup(after: .help) {
+                Button("Welcome to Blit…") { NotificationCenter.default.post(name: .blitShowWelcome, object: nil) }
+            }
 
         }
 
@@ -224,6 +227,9 @@ extension Notification.Name {
     static let blitShowPalette = Notification.Name("BlitShowPalette")
     /// File › Import Servers…: the import sheet (PRD R1.8).
     static let blitImportServers = Notification.Name("BlitImportServers")
+    /// Help › Welcome to Blit…: the first-run Welcome (PRD R2.24); the object
+    /// may be the step to open at.
+    static let blitShowWelcome = Notification.Name("BlitShowWelcome")
     #if DEBUG
     /// Closes the import sheet (the tests never import).
     static let blitCloseImportServers = Notification.Name("BlitCloseImportServers")

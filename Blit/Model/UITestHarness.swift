@@ -2939,6 +2939,47 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitWelcomeTest <log>`: the first-run Welcome (PRD R2.24). When it
+    /// shows at launch; then each step opened in turn, at its size. For pictures, <log>.wid-N and
+    /// <log>.rect-N (the sheet within the window, in points) for the steps
+    /// with nothing of the user's on them (welcome, access, ready).
+    static func runWelcomeTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitWelcomeTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            for (servers, favorites, shown) in [(0, 0, false), (1, 0, false), (0, 2, false), (0, 0, true)] {
+                let decision = Welcome.decide(servers: servers, favorites: favorites, shown: shown)
+                lines.append("\(servers) servers, \(favorites) favorites, shown before \(shown): show \(decision.show) · mark as shown \(decision.markShown)")
+            }
+            lines.append("a test copy at launch: \(Welcome.shouldShow(servers: [], favorites: []) ? "shows" : "doesn't show")")
+            for step in WelcomeView.Step.allCases {
+                NotificationCenter.default.post(name: .blitShowWelcome, object: step.rawValue)
+                try? await Task.sleep(for: .seconds(1.2))
+                guard let sheet = NSApp.windows.first(where: { $0.isVisible && $0.sheetParent != nil }), let parent = sheet.sheetParent else {
+                    lines.append("step \(step): no sheet")
+                    continue
+                }
+                // (Its text isn't readable here: SwiftUI builds accessibility only for a client.)
+                lines.append("step \(step.rawValue + 1) \(step): \(Int(sheet.frame.width)) × \(Int(sheet.frame.height))")
+                if [.welcome, .access, .ready].contains(step) {
+                    let rect = "\(sheet.frame.minX - parent.frame.minX),\(parent.frame.maxY - sheet.frame.maxY),\(sheet.frame.width),\(sheet.frame.height)"
+                    try? rect.write(toFile: logPath + ".rect-\(step.rawValue)", atomically: true, encoding: .utf8)
+                    try? String(parent.windowNumber).write(toFile: logPath + ".wid-\(step.rawValue)", atomically: true, encoding: .utf8)
+                    for _ in 0..<40 where !FileManager.default.fileExists(atPath: logPath + ".shot-\(step.rawValue)") {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                }
+                NotificationCenter.default.post(name: .blitCloseImportServers, object: nil)
+                try? await Task.sleep(for: .seconds(0.8))
+            }
+            lines.append("closed: \(!NSApp.windows.contains { $0.isVisible && $0.sheetParent != nil })")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitImportTest <log>`: Import Servers (PRD R1.8) from written
     /// stand-ins: a Transmit store (an archive with Transmit's class names: a
     /// group in a group, SFTP and FTP favorites, history, a class nobody
