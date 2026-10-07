@@ -97,6 +97,10 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     var dropWatch: Task<Void, Never>?
     var dragged: (sequence: Int, locations: [BrowseLocation])?
     let listOutline = PixelAntsView(cell: 2)
+    /// Spring loading: the closed folder a drag rests on, opened in place
+    /// once it has rested there a moment.
+    var springFolder: BrowseLocation?
+    var springTimer: Timer?
     #if DEBUG
     /// The last press was on a row but off its icon and name, where a drag
     /// selects rows (the drag tests).
@@ -118,6 +122,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         decorations?.cancel()
         dropWatch?.cancel()
         ticker?.invalidate()
+        springTimer?.invalidate()
     }
 
     private func setUp() {
@@ -323,6 +328,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
             cancelPendingRename()
             dropHover.exited()
             showDropMark()
+            springLoad(nil)
             old.listScrollOrigin = scrollView.contentView.bounds.origin
             if old.keyboardTarget === self { old.keyboardTarget = nil }
             FileListRegistry.unregister(self, for: old)

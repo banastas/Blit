@@ -105,6 +105,34 @@ extension FileListCoordinator {
         #endif
         dropHover.exited()
         showDropMark()
+        springLoad(nil)
+    }
+
+    /// Spring loading, as in Finder (System Settings' switch and delay): a
+    /// drag resting on a closed folder opens it in place, so it can go
+    /// deeper without letting go.
+    func springLoad(_ target: ListDrop?) {
+        let folder: BrowseLocation? = if case .folder(let location) = target { location } else { nil }
+        guard folder != springFolder else { return }
+        springTimer?.invalidate()
+        springTimer = nil
+        springFolder = folder
+        let defaults = UserDefaults.standard
+        guard let folder, let model, !model.expanded.contains(folder),
+              defaults.object(forKey: "com.apple.springing.enabled") as? Bool ?? true else { return }
+        let delay = defaults.object(forKey: "com.apple.springing.delay") as? Double ?? 0.5
+        let timer = Timer(timeInterval: max(0.2, delay), repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.springFolder == folder, self.dropHover.value == .folder(folder),
+                      let model = self.model, !model.expanded.contains(folder) else { return }
+                #if DEBUG
+                UITestHarness.dropTrail.append("spring-loaded \(folder.lastComponent)")
+                #endif
+                model.setExpanded(folder, true)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)   // a drag runs the loop in its tracking mode
+        springTimer = timer
     }
 
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
@@ -122,6 +150,7 @@ extension FileListCoordinator {
         #endif
         dropHover.moved(target)
         showDropMark()
+        springLoad(target)
         return NSEvent.modifierFlags.contains(.option) ? .copy : .move
     }
 
@@ -131,6 +160,7 @@ extension FileListCoordinator {
         let copy = NSEvent.modifierFlags.contains(.option)
         dropHover.dropped()
         showDropMark()
+        springLoad(nil)
         guard let model else { return false }
         #if DEBUG
         let started = Date()

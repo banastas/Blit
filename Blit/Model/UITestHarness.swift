@@ -2475,6 +2475,14 @@ enum UITestHarness {
                 lines.append("a.bin over \(name ?? "empty space"): lights \(lit(leftList))")
                 if name == "Other" || name == "b.bin" { picture(name == "Other" ? "folder" : "list") }
             }
+            // Spring loading: resting on the closed folder Other opens it in place.
+            drag.location = point("Other", in: leftList, model: first)
+            _ = leftList.tableView(leftList.table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
+            let opened = first.rows.first { $0.name == "Other" }.map { first.expanded.contains($0.location) } ?? false
+            try? await Task.sleep(for: .seconds(1))
+            let afterRest = first.rows.first { $0.name == "Other" }.map { first.expanded.contains($0.location) } ?? false
+            lines.append("resting on Other: open at once \(opened) · after a moment \(afterRest)")
+            if let other = first.rows.first(where: { $0.name == "Other" }) { first.setExpanded(other.location, false) }
             leftList.dragExited()
             lines.append("after it left: lights \(lit(leftList))")
             // 3. Dragging Sub: Sub and the file inside it don't take it.
