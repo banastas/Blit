@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.43</title>
-      <pubDate>Tue, 06 Oct 2026 23:23:06 +0000</pubDate>
-      <sparkle:version>46</sparkle:version>
-      <sparkle:shortVersionString>0.2.43</sparkle:shortVersionString>
+      <title>Blit 0.2.44</title>
+      <pubDate>Wed, 07 Oct 2026 00:27:44 +0000</pubDate>
+      <sparkle:version>47</sparkle:version>
+      <sparkle:shortVersionString>0.2.44</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>New Folder with Selection, as in Finder: select two or more items in a folder, then right-click › New Folder with Selection, or choose File › New Folder with Selection (Control-Command-N). They move into a new folder beside them, with its name ready to type. Edit › Undo puts them back in one step.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.43.zip" type="application/octet-stream" sparkle:edSignature="KuU2t9BYhfKzBlQCzS89lVz7gMS65FTosZwssoq2PjSKXWsNSomDya69/2AypY3H1Id6G2rIqYIdwA7Dei9lAQ==" length="5800317" />
+      <description><![CDATA[<p>Renaming no longer drops out on its own: if a folder reloaded while you were renaming something in it (on a NAS, often a transfer finishing into it), the list could re-sort and end the rename before you could type. The list now holds still while a name is being edited, and catches up once you press Return or Escape.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.44.zip" type="application/octet-stream" sparkle:edSignature="wTPOCC8vyPCP4ysZtMzAPkvgqO9hjoTr6EYsfyt8DBk/HT4HGf0Jb5RTkpEO+ug7+9Qg1j3bz7DDvNyG9kFfBg==" length="5800923" />
     </item>
   </channel>
 </rss>
