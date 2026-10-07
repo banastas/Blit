@@ -35,6 +35,15 @@ struct WatchState: Codable, Equatable {
     var lastCheck: Date?
     var lastFetched: String?
     var problem: String?
+    /// qBittorrent's records (BT_backup) for this server, when found, and the
+    /// watched folder's full path they name it by; looked for at most daily.
+    var records: String?
+    var recordsChecked: Date?
+    var folderPath: String?
+    /// Items never fetched: qBittorrent's incomplete folder, where it's inside the watched one.
+    var excluded: Set<String> = []
+    /// New items qBittorrent is still downloading, and how far along.
+    var downloading: [String: Double] = [:]
 }
 
 struct WatchSnapshot: Codable, Equatable {
@@ -60,6 +69,9 @@ final class SeedboxWatch {
     private(set) var rules: [WatchRule] = []
     private(set) var states: [UUID: WatchState] = [:]
     @ObservationIgnored private var checking: Set<UUID> = []
+    /// Each records file's torrent names, by file name, with the time it had then.
+    @ObservationIgnored private var torrentNames: [String: (modified: Date?, names: Set<String>)] = [:]
+    @ObservationIgnored private var resumes: [String: (modified: Date?, state: (savePath: String, finished: Bool, fraction: Double))] = [:]
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let connections: ConnectionManager
@@ -176,14 +188,30 @@ final class SeedboxWatch {
         // Gone from the server: forgotten (handled stays bounded).
         state.handled.formIntersection(names)
         state.pending = state.pending.filter { names.contains($0.key) }
+        state.downloading = state.downloading.filter { names.contains($0.key) }
+        let fresh = names.subtracting(state.handled)
+        // What qBittorrent says about the new items, where it keeps records here.
+        let claims = await torrentClaims(for: fresh, rule: rule, state: &state)
         var ready: [WatchEntry] = []
         for (name, location) in items.sorted(by: { $0.key < $1.key }) where !state.handled.contains(name) {
-            if Self.isPartial(name) { continue }
+            if Self.isPartial(name) || state.excluded.contains(name) { continue }
             // Fetched by hand already: nothing to do.
             let there = destination.appendingPathComponent(name)
             if await Task.detached(operation: { FileManager.default.fileExists(atPath: there.path) }).value {
                 state.handled.insert(name)
                 state.pending[name] = nil
+                state.downloading[name] = nil
+                continue
+            }
+            // A torrent of qBittorrent's: finished when it says so, however quiet its files.
+            if let torrents = claims[name] {
+                if torrents.allSatisfy(\.finished) {
+                    state.downloading[name] = nil
+                    ready.append(WatchEntry(name: name, location: location, size: 0, newest: nil, incomplete: false))
+                } else {
+                    state.downloading[name] = torrents.map(\.fraction).min() ?? 0
+                    state.pending[name] = nil
+                }
                 continue
             }
             guard let entry = try? await look(at: name, location) else { continue }
@@ -203,6 +231,151 @@ final class SeedboxWatch {
         publish(id, state)
         if !ready.isEmpty, let problem = await fetch(ready.map(\.location), destination) {
             states[id]?.problem = problem
+        }
+    }
+
+    // MARK: qBittorrent's records
+
+    /// For each of `names` that a torrent in qBittorrent's records saves into
+    /// the watched folder, those torrents. Empty where there are no records.
+    private func torrentClaims(for names: Set<String>, rule: WatchRule, state: inout WatchState) async -> [String: [TorrentRecord]] {
+        guard !names.isEmpty, let access = try? await recordAccess(rule.source) else { return [:] }
+        // Found once, looked for again daily (qBittorrent may come later).
+        if state.records == nil, Date().timeIntervalSince(state.recordsChecked ?? .distantPast) > 86_400 {
+            state.recordsChecked = Date()
+            state.records = await access.find()
+            state.folderPath = try? await access.absolute()
+            if let records = state.records, let watched = state.folderPath, let settings = await access.settings(records) {
+                state.excluded = Self.incompleteFolders(in: settings, watched: watched)
+            }
+        }
+        guard let folder = state.records, let watched = state.folderPath,
+              let files = try? await access.list(folder) else { return [:] }
+        var claims: [String: [TorrentRecord]] = [:]
+        for torrent in files where torrent.name.hasSuffix(".torrent") {
+            let key = folder + "/" + torrent.name
+            if torrentNames[key]?.modified != torrent.modified || torrentNames[key] == nil {
+                guard let data = try? await access.read(key, torrent.size), let found = TorrentRecords.names(torrent: data) else { continue }
+                torrentNames[key] = (torrent.modified, found)
+            }
+            guard let claimed = torrentNames[key]?.names.intersection(names), !claimed.isEmpty else { continue }
+            let resumeName = String(torrent.name.dropLast(".torrent".count)) + ".fastresume"
+            guard let resume = files.first(where: { $0.name == resumeName }) else { continue }
+            let resumeKey = folder + "/" + resumeName
+            if resumes[resumeKey]?.modified != resume.modified || resumes[resumeKey] == nil {
+                guard let data = try? await access.read(resumeKey, resume.size), let read = TorrentRecords.state(resume: data) else { continue }
+                resumes[resumeKey] = (resume.modified, read)
+            }
+            guard let record = resumes[resumeKey]?.state, record.savePath == watched else { continue }
+            for name in claimed {
+                claims[name, default: []].append(TorrentRecord(names: torrentNames[key]?.names ?? [], savePath: record.savePath,
+                                                               finished: record.finished, fraction: record.fraction))
+            }
+        }
+        return claims
+    }
+
+    /// qBittorrent's incomplete folder (Session\TempPath, or Downloads\TempPath
+    /// in older versions), by name, if it's directly in the watched folder:
+    /// it holds unfinished downloads, so it's never fetched.
+    static func incompleteFolders(in settings: String, watched: String) -> Set<String> {
+        var names: Set<String> = []
+        for line in settings.split(whereSeparator: \.isNewline) {
+            for key in ["Session\\TempPath=", "Downloads\\TempPath="] where line.hasPrefix(key) {
+                var path = String(line.dropFirst(key.count))
+                while path.hasSuffix("/") { path.removeLast() }
+                let parent = (path as NSString).deletingLastPathComponent
+                if !path.isEmpty, parent == watched { names.insert((path as NSString).lastPathComponent) }
+            }
+        }
+        return names
+    }
+
+    private struct RecordFile {
+        var name: String
+        var size: UInt64
+        var modified: Date?
+    }
+
+    /// Reading qBittorrent's records where the watched folder is: over SFTP,
+    /// or (a test copy's stand-in) on this Mac, with -BlitWatchRecordsHome.
+    private struct RecordAccess {
+        var find: () async -> String?
+        var absolute: () async throws -> String
+        var list: (String) async throws -> [RecordFile]
+        var read: (String, UInt64) async throws -> Data
+        /// qBittorrent's settings file, beside its records or in ~/.config.
+        var settings: (String) async -> String?
+    }
+
+    /// qBittorrent.conf beside BT_backup (a seedbox's app folder), or where Linux keeps it.
+    nonisolated static func settingsCandidates(_ records: String) -> [String] {
+        [(records as NSString).deletingLastPathComponent + "/qBittorrent.conf", ".config/qBittorrent/qBittorrent.conf"]
+    }
+
+    private static func readRemote(_ file: String, size: UInt64, client: SFTPClient) async throws -> Data {
+        guard size <= 32 << 20 else { throw CocoaError(.fileReadTooLarge) }
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("blit-records-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let part = try PartFile.create(at: scratch.path, size: size)
+        defer { part.close() }
+        if size > 0 { _ = try await client.download(RemotePath(file), range: 0..<size, into: part) { _ in } }
+        return try Data(contentsOf: scratch)
+    }
+
+    private func recordAccess(_ source: BrowseLocation) async throws -> RecordAccess {
+        switch source {
+        case .remote(let id, let path):
+            guard let server = servers.server(id) else { throw CocoaError(.fileNoSuchFile) }
+            let client = try await connections.browseClient(for: server)
+            return RecordAccess(
+                find: {
+                    for candidate in TorrentRecords.candidates {
+                        if let attributes = try? await client.stat(RemotePath(candidate)), attributes.isDirectory { return candidate }
+                    }
+                    return nil
+                },
+                absolute: { try await client.realpath(RemotePath(bytes: path.isEmpty ? Array(".".utf8) : path)).description },
+                list: { folder in
+                    try await client.list(RemotePath(folder)).map { entry in
+                        RecordFile(name: entry.filename.description, size: entry.attributes.size ?? 0,
+                                   modified: entry.attributes.modificationTime.map { Date(timeIntervalSince1970: TimeInterval($0)) })
+                    }
+                },
+                read: { file, size in try await Self.readRemote(file, size: size, client: client) },
+                settings: { records in
+                    for candidate in Self.settingsCandidates(records) {
+                        guard let size = try? await client.stat(RemotePath(candidate)).size,
+                              let data = try? await Self.readRemote(candidate, size: size, client: client) else { continue }
+                        return String(decoding: data, as: UTF8.self)
+                    }
+                    return nil
+                })
+        case .local(let url):
+            #if DEBUG
+            guard TransferManager.isIsolated, let home = UserDefaults.standard.string(forKey: "BlitWatchRecordsHome") else {
+                throw CocoaError(.featureUnsupported)
+            }
+            let base = URL(fileURLWithPath: home)
+            return RecordAccess(
+                find: { TorrentRecords.candidates.first { FileManager.default.fileExists(atPath: base.appendingPathComponent($0).path) } },
+                absolute: { url.path },
+                list: { folder in
+                    let directory = base.appendingPathComponent(folder)
+                    return try FileManager.default.contentsOfDirectory(atPath: directory.path).map { name in
+                        let attributes = try? FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(name).path)
+                        return RecordFile(name: name, size: (attributes?[.size] as? NSNumber)?.uint64Value ?? 0,
+                                          modified: attributes?[.modificationDate] as? Date)
+                    }
+                },
+                read: { file, _ in try Data(contentsOf: base.appendingPathComponent(file)) },
+                settings: { records in
+                    Self.settingsCandidates(records).lazy.compactMap { try? String(contentsOf: base.appendingPathComponent($0), encoding: .utf8) }.first
+                })
+            #else
+            _ = url
+            throw CocoaError(.featureUnsupported)
+            #endif
         }
     }
 
@@ -292,6 +465,18 @@ final class SeedboxWatch {
     }
 
     #if DEBUG
+    /// What a look would decide for everything in `source` now, fetching
+    /// nothing (the dry run against a real server): by qBittorrent's records,
+    /// finished or still downloading; else left to the timing rules.
+    func dryRun(_ source: BrowseLocation) async -> (items: Int, finished: Int, downloading: Int, unclaimed: Int, records: String?, excluded: Int)? {
+        guard let items = try? await topLevel(source) else { return nil }
+        let rule = WatchRule(source: source, destination: "/")
+        var state = WatchState()
+        let claims = await torrentClaims(for: Set(items.keys), rule: rule, state: &state)
+        let finished = claims.values.filter { $0.allSatisfy(\.finished) }.count
+        return (items.count, finished, claims.count - finished, items.count - claims.count, state.records, state.excluded.count)
+    }
+
     /// Watching nothing (the tests).
     func reset() {
         rules = []

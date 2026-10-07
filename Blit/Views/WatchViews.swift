@@ -29,11 +29,11 @@ struct WatchSetupView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Watch “\(source.lastComponent.isEmpty ? "Home" : source.lastComponent)” for New Downloads").font(.headline)
-            Text("Blit looks here every few minutes and downloads what's new to a folder on this Mac, while it's still in the server's cache. It waits until an item has stopped changing for two minutes and has no partial files in it. What's here now isn't fetched; nothing is ever deleted from the server.")
+            Text("Blit looks here every few minutes and downloads what's new to a folder on this Mac, while it's still in the server's cache. If qBittorrent runs on the server, Blit reads its own records and fetches a torrent only once qBittorrent has finished it, so a stalled one waits however quiet it is. Anything else waits until it has stopped changing for two minutes and has no partial files in it. What's here now isn't fetched; nothing is ever deleted from the server.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Best pointed at the folder your torrent client moves finished downloads into.")
+            Text("With another torrent client, best pointed at the folder it moves finished downloads into.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -129,9 +129,11 @@ private struct WatchRow: View {
                 if let problem = state?.problem {
                     Text(problem).foregroundStyle(Color.failureText)
                 } else if let state, let last = state.lastCheck {
-                    let waiting = state.pending.count
+                    let waiting = state.pending.count, downloading = state.downloading.count
                     Text("Looked \(last.formatted(.relative(presentation: .named)))"
-                         + (waiting > 0 ? " · \(waiting) new, waiting to finish" : "")
+                         + (state.records != nil ? " · reading qBittorrent's records" : "")
+                         + (downloading > 0 ? " · \(downloading) still downloading in qBittorrent" : "")
+                         + (waiting > 0 ? " · \(waiting) new, waiting to settle" : "")
                          + (state.lastFetched.map { " · last fetched “\($0)”" } ?? ""))
                         .foregroundStyle(.secondary)
                 } else {

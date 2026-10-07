@@ -2939,6 +2939,209 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitSeedboxProbe <log>`: a read-only look at the first saved server's
+    /// torrent client (qBittorrent): its process, the settings that matter for
+    /// watch mode, and whether its Web API answers on localhost, with torrent
+    /// counts by state (never names). Runs only when asked for by hand.
+    static func runSeedboxProbeIfRequested(servers: ServerStore, connections: ConnectionManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitSeedboxProbe") else { return }
+        Task { @MainActor in
+            var out = ""
+            defer { try? (out + "done\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+            guard let server = servers.browsable.first else { out = "no server\n"; return }
+            // -BlitSeedboxProbeWatch <folder>: watch mode's dry run there (counts only, nothing fetched).
+            if let folder = UserDefaults.standard.string(forKey: "BlitSeedboxProbeWatch") {
+                let watch = SeedboxWatch(servers: servers, connections: connections) { _, _ in "not fetching: a dry run" }
+                let started = Date()
+                if let result = await watch.dryRun(.remote(server: server.id, path: Array(folder.utf8))) {
+                    out += "items \(result.items) · qBittorrent finished \(result.finished) · still downloading \(result.downloading) · no torrent \(result.unclaimed) · records \(result.records ?? "not found") · incomplete folders named in its settings, inside this folder: \(result.excluded) · \(Int(Date().timeIntervalSince(started))) s\n"
+                } else {
+                    out += "couldn't list the folder\n"
+                }
+                return
+            }
+            let script = UserDefaults.standard.bool(forKey: "BlitSeedboxProbeWide") ? Self.wideProbe
+                : UserDefaults.standard.bool(forKey: "BlitSeedboxProbeApps") ? Self.appsProbe
+                : UserDefaults.standard.bool(forKey: "BlitSeedboxProbeResume") ? Self.resumeProbe
+                : UserDefaults.standard.bool(forKey: "BlitSeedboxProbeUnclaimed") ? Self.unclaimedProbe : Self.qbittorrentProbe
+            do {
+                let credential = try server.credential()
+                let connection = try await SSHConnection.connect(to: server.endpoint, credential: credential, verifier: connections.verifier)
+                defer { Task { await connection.close() } }
+                let result = try await connection.run(script)
+                out += String(decoding: result.stdout, as: UTF8.self)
+                let errors = String(decoding: result.stderr, as: UTF8.self)
+                if !errors.isEmpty { out += "== stderr\n" + errors }
+                out += "exit \(result.exitStatus.map(String.init) ?? "?")\n"
+            } catch {
+                out += "failed: \(error)\n"
+            }
+        }
+    }
+
+    private static let qbittorrentProbe = #"""
+            set +e
+            echo "== tools"; for t in curl python3 qbittorrent-nox; do printf '%s: ' "$t"; command -v "$t" >/dev/null && echo yes || echo no; done
+            echo "== processes"; ps -u "$(id -un)" -o args= 2>/dev/null | grep -i qbittorrent | grep -v grep | sed "s#$HOME#~#g" | cut -c1-200
+            echo "== configs"
+            confs=$(find "$HOME/.config" "$HOME/.local/share" -maxdepth 5 -name 'qBittorrent.conf' 2>/dev/null)
+            for f in $confs; do
+              echo "-- $f" | sed "s#$HOME#~#g"
+              grep -E '^(WebUI\\(Port|Address|LocalHostAuth|HTTPS\\Enabled|AuthSubnetWhitelistEnabled)|Downloads\\(SavePath|TempPath|TempPathEnabled|UseIncompleteExtension|PreAllocation|FinishedTorrentExportDir)|Session\\(DefaultSavePath|TempPath|TempPathEnabled|AddExtensionToIncompleteFiles|Preallocation|FinishedTorrentExportDirectory|QueueingSystemEnabled))=' "$f" | sed "s#$HOME#~#g"
+            done
+            echo "== api"
+            ports=$(grep -h -E '^WebUI\\Port=' $confs 2>/dev/null | cut -d= -f2)
+            [ -z "$ports" ] && ports=8080
+            for port in $ports; do
+              code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "http://127.0.0.1:$port/api/v2/app/version")
+              echo "port $port: version endpoint HTTP $code"
+              if [ "$code" = 200 ]; then
+                echo "version: $(curl -s -m 5 "http://127.0.0.1:$port/api/v2/app/version")"
+                curl -s -m 30 "http://127.0.0.1:$port/api/v2/torrents/info" | python3 -c '
+            import json, sys, collections
+            t = json.load(sys.stdin)
+            print("torrents:", len(t))
+            print("states:", dict(collections.Counter(x.get("state") for x in t)))
+            print("progress below 1:", sum(1 for x in t if x.get("progress", 0) < 1))
+            print("fields:", " ".join(sorted(t[0].keys())) if t else "-")
+            '
+              fi
+            done
+            """#
+
+    /// A wider read-only look: this user's process names, listening ports,
+    /// where qBittorrent's files are, and how the machine describes itself.
+    private static let wideProbe = #"""
+    set +e
+    echo "== system"; uname -sr; (cat /etc/os-release 2>/dev/null | grep -E '^(NAME|VERSION_ID)=') ; echo "container: $( [ -f /.dockerenv ] && echo docker || (grep -qa 'container=' /proc/1/environ 2>/dev/null && echo yes) || echo no)"
+    echo "== my processes (names)"; ps -u "$(id -un)" -o comm= 2>/dev/null | sort | uniq -c | sort -rn | head -30
+    echo "== all visible processes matching torrent clients"; ps -eo user=,comm= 2>/dev/null | grep -i -E 'qbit|rtorrent|deluge|transmission' | awk '{print ($1=="'"$(id -un)"'" ? "me" : "other") " " $2}' | sort | uniq -c
+    echo "== listening on localhost"; (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | awk 'NR>1 {print $4}' | grep -E '127\.0\.0\.1|\[::1\]|0\.0\.0\.0|\*' | sed -E 's/.*://' | sort -n | uniq | tr '\n' ' '; echo
+    echo "== home (top level)"; ls -a "$HOME" 2>/dev/null | grep -v -E '^\.{1,2}$' | head -60 | tr '\n' ' '; echo
+    echo "== qBittorrent files"; find "$HOME" -maxdepth 6 \( -name 'qBittorrent*.conf' -o -name '*.fastresume' -o -iname 'qbittorrent' \) 2>/dev/null | sed "s#$HOME#~#g" | sed -E 's#/[0-9a-f]{40}\.fastresume#/<hash>.fastresume#' | sort | uniq -c | head -20
+    """#
+
+    /// qBittorrent in its own app container (~/.apps/qbittorrent): the
+    /// settings that matter, and whether its Web API answers from here (on
+    /// the ports it names and the ones listening), with counts only.
+    private static let appsProbe = #"""
+    set +e
+    conf="$HOME/.apps/qbittorrent/qBittorrent/qBittorrent.conf"
+    echo "== settings"
+    grep -E '^(WebUI\\(Port|Address|LocalHostAuth|HTTPS\\Enabled|AuthSubnetWhitelistEnabled|AuthSubnetWhitelist|ReverseProxySupportEnabled|HostHeaderValidation)|Downloads\\(SavePath|TempPath|TempPathEnabled|UseIncompleteExtension|PreAllocation|FinishedTorrentExportDir)|Session\\(DefaultSavePath|TempPath|TempPathEnabled|AddExtensionToIncompleteFiles|Preallocation|FinishedTorrentExportDirectory|QueueingSystemEnabled|Port))=' "$conf" | sed "s#$HOME#~#g"
+    echo "== version"; grep -h -E '^(Version|LastVersion)' "$HOME/.apps/qbittorrent/qBittorrent/qBittorrent-data.conf" 2>/dev/null | head -3
+    echo "== resume files"; ls "$HOME/.apps/qbittorrent/qBittorrent/BT_backup" 2>/dev/null | sed -E 's/^[0-9a-f]{40}//' | sort | uniq -c
+    echo "== api from here"
+    ports="$(grep -h -E '^WebUI\\Port=' "$conf" | cut -d= -f2) $( (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null) | awk 'NR>1 {print $4}' | sed -E 's/.*://' | sort -u | tr '\n' ' ')"
+    for port in $ports; do
+      for host in 127.0.0.1 172.17.0.1 host.docker.internal; do
+        code=$(curl -s -o /dev/null -m 4 -w '%{http_code}' "http://$host:$port/api/v2/app/version")
+        [ "$code" != 000 ] && echo "$host:$port → HTTP $code"
+      done
+    done
+    echo "(tried ports: $ports)"
+    """#
+
+    /// qBittorrent's own records (BT_backup): whether "finished" can be read
+    /// from them. Counts only: for each torrent, its completed time, whether
+    /// every piece is there, paused or not, and whether its download is in
+    /// the save folder; never a name.
+    private static let resumeProbe = #"""
+    python3 - <<'PY'
+    import os, glob, collections, time
+    def bdecode(data, i=0):
+        c = data[i:i+1]
+        if c == b'i':
+            j = data.index(b'e', i); return int(data[i+1:j]), j + 1
+        if c == b'l':
+            i += 1; out = []
+            while data[i:i+1] != b'e':
+                v, i = bdecode(data, i); out.append(v)
+            return out, i + 1
+        if c == b'd':
+            i += 1; out = {}
+            while data[i:i+1] != b'e':
+                k, i = bdecode(data, i); v, i = bdecode(data, i); out[k] = v
+            return out, i + 1
+        j = data.index(b':', i); n = int(data[i:j]); return data[j+1:j+1+n], j + 1 + n
+    home = os.path.expanduser('~')
+    backup = home + '/.apps/qbittorrent/qBittorrent/BT_backup'
+    rows = collections.Counter(); keys = collections.Counter(); ages = []
+    for resume in glob.glob(backup + '/*.fastresume'):
+        try:
+            r, _ = bdecode(open(resume, 'rb').read())
+            t, _ = bdecode(open(resume[:-11] + '.torrent', 'rb').read())
+        except Exception as e:
+            rows['unreadable'] += 1; continue
+        keys.update(k.decode() for k in r.keys())
+        info = t.get(b'info', {})
+        name = (info.get(b'name.utf-8') or info.get(b'name') or b'').decode('utf-8', 'replace')
+        save = (r.get(b'qBt-savePath') or r.get(b'save_path') or b'').decode('utf-8', 'replace').rstrip('/')
+        pieces = r.get(b'pieces', b'')
+        complete_pieces = bool(pieces) and all(b & 1 for b in pieces)
+        done_time = r.get(b'completed_time', 0)
+        paused = r.get(b'paused', 0) or r.get(b'stop_when_ready', 0)
+        here = os.path.exists(os.path.join(save.replace('~', home), name)) if name else False
+        where = 'downloads' if save.replace(home, '~').rstrip('/') == '~/files/downloads' else 'elsewhere'
+        rows[(('completed' if done_time else 'never completed'), ('all pieces' if complete_pieces else 'pieces missing'), ('paused' if paused else 'active'), where, ('on disk' if here else 'not on disk'))] += 1
+        if done_time: ages.append(int((time.time() - done_time) / 86400))
+    for k, v in sorted(rows.items(), key=lambda x: -x[1]): print(v, ' · '.join(k) if isinstance(k, tuple) else k)
+    print('resume keys:', ' '.join(sorted(k for k in keys if k in ('completed_time','finished_time','pieces','paused','qBt-savePath','save_path','total_downloaded','qBt-state','qBt-name','name'))))
+    print('days since completed (min/max):', (min(ages), max(ages)) if ages else '-')
+    print('backup files modified in the last hour:', sum(1 for f in glob.glob(backup + '/*.fastresume') if time.time() - os.path.getmtime(f) < 3600))
+    PY
+    """#
+
+    /// The items in ~/files/downloads no qBittorrent torrent claims: what kind
+    /// each is (folder or file, extension, size, how long quiet, whether it's
+    /// qBittorrent's incomplete folder), never its name.
+    private static let unclaimedProbe = #"""
+    python3 - <<'PY'
+    import os, glob, time
+    def bdecode(data, i=0):
+        c = data[i:i+1]
+        if c == b'i':
+            j = data.index(b'e', i); return int(data[i+1:j]), j + 1
+        if c in (b'l', b'd'):
+            i += 1; out = [] if c == b'l' else {}
+            while data[i:i+1] != b'e':
+                if c == b'l':
+                    v, i = bdecode(data, i); out.append(v)
+                else:
+                    k, i = bdecode(data, i); v, i = bdecode(data, i); out[k] = v
+            return out, i + 1
+        j = data.index(b':', i); n = int(data[i:j]); return data[j+1:j+1+n], j + 1 + n
+    home = os.path.expanduser('~')
+    folder = home + '/files/downloads'
+    claimed = set()
+    for t in glob.glob(home + '/.apps/qbittorrent/qBittorrent/BT_backup/*.torrent'):
+        try:
+            info = bdecode(open(t, 'rb').read())[0].get(b'info', {})
+        except Exception:
+            continue
+        claimed.add((info.get(b'name.utf-8') or info.get(b'name') or b'').decode('utf-8', 'replace'))
+        for f in info.get(b'files', []):
+            p = f.get(b'path.utf-8') or f.get(b'path') or []
+            if p: claimed.add(p[0].decode('utf-8', 'replace'))
+    temp = ''
+    for line in open(home + '/.apps/qbittorrent/qBittorrent/qBittorrent.conf', errors='replace'):
+        if line.startswith(('Session\\TempPath=', 'Downloads\\TempPath=')): temp = line.split('=', 1)[1].strip().rstrip('/')
+    for name in sorted(os.listdir(folder)):
+        if name.startswith('.') or name in claimed: continue
+        path = os.path.join(folder, name)
+        if os.path.isdir(path):
+            files = [os.path.join(r, f) for r, _, fs in os.walk(path) for f in fs]
+            size = sum(os.path.getsize(f) for f in files if os.path.exists(f))
+            newest = max([os.path.getmtime(f) for f in files] or [os.path.getmtime(path)])
+            exts = sorted({os.path.splitext(f)[1].lower() for f in files})[:6]
+            kind = 'folder, %d files %s' % (len(files), ' '.join(exts))
+        else:
+            size = os.path.getsize(path); newest = os.path.getmtime(path); kind = 'file ' + os.path.splitext(name)[1].lower()
+        what = "qBittorrent's incomplete folder" if temp and os.path.realpath(path) == os.path.realpath(temp.replace('~', home)) else ''
+        print('%s · %.1f GB · quiet %d days %s' % (kind, size / 1e9, (time.time() - newest) / 86400, what))
+    PY
+    """#
+
     /// `-BlitTuneTest <log>`: connection auto-tune (PRD R3.2) without a
     /// server: the count chosen from measured rates, a run over stand-in
     /// measurements (one count refused, then all), servers saved before
@@ -3046,6 +3249,70 @@ enum UITestHarness {
             watch.setEnabled(rule.id, true)
             try? await Task.sleep(for: .milliseconds(500))
             lines.append("off and on: \(watch.states[rule.id]?.handled.contains("While.Off.mkv") == true ? "what came meanwhile counts as seen" : "would fetch what came meanwhile")")
+            // qBittorrent's records: a stand-in BT_backup under -BlitWatchRecordsHome.
+            if let recordsHome = UserDefaults.standard.string(forKey: "BlitWatchRecordsHome") {
+                let home = URL(fileURLWithPath: recordsHome)
+                try? fm.removeItem(at: home)
+                defer { try? fm.removeItem(at: home) }
+                let backup = home.appendingPathComponent(".apps/qbittorrent/qBittorrent/BT_backup")
+                let downloads = root.appendingPathComponent("downloads")
+                for folder in [backup, downloads] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+                func bencode(_ value: Any) -> Data {
+                    switch value {
+                    case let number as Int: return Data("i\(number)e".utf8)
+                    case let text as String: return Data("\(text.utf8.count):".utf8) + Data(text.utf8)
+                    case let data as Data: return Data("\(data.count):".utf8) + data
+                    case let list as [Any]: return list.reduce(Data("l".utf8)) { $0 + bencode($1) } + Data("e".utf8)
+                    case let dictionary as [String: Any]:
+                        return dictionary.keys.sorted().reduce(Data("d".utf8)) { $0 + bencode($1) + bencode(dictionary[$1]!) } + Data("e".utf8)
+                    default: return Data()
+                    }
+                }
+                func record(_ hash: String, name: String, files: [String]? = nil, pieces: [UInt8], completed: Int) {
+                    var info: [String: Any] = ["name": name, "piece length": 16_384, "pieces": Data(count: 20 * pieces.count)]
+                    if let files { info["files"] = files.map { ["length": 1, "path": [$0]] } } else { info["length"] = 1 }
+                    try? bencode(["info": info]).write(to: backup.appendingPathComponent(hash + ".torrent"))
+                    let resume: [String: Any] = ["qBt-savePath": downloads.path, "save_path": downloads.path, "pieces": Data(pieces),
+                                                 "completed_time": completed, "paused": 0]
+                    try? bencode(resume).write(to: backup.appendingPathComponent(hash + ".fastresume"))
+                }
+                fetched = []
+                let qb = SeedboxWatch(servers: servers, connections: connections) { sources, _ in
+                    fetched += sources.map(\.lastComponent)
+                    return nil
+                }
+                qb.settle = 2
+                qb.add(WatchRule(source: .local(downloads), destination: ssd.path, minutes: 60))
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let rule = qb.rules.first else { return lines.append("no qBittorrent rule") }
+                let quiet = Date(timeIntervalSinceNow: -3600)
+                write("Stalled.Movie.2024.mkv", 1_000, in: downloads)
+                try? fm.setAttributes([.modificationDate: quiet], ofItemAtPath: downloads.appendingPathComponent("Stalled.Movie.2024.mkv").path)
+                record(String(repeating: "a", count: 40), name: "Stalled.Movie.2024.mkv", pieces: [1, 0, 1, 0, 0], completed: 0)
+                write("Done.Show.S01/e01.mkv", 500, in: downloads)
+                write("Done.Show.S01/e02.mkv", 500, in: downloads)
+                record(String(repeating: "b", count: 40), name: "Done.Show.S01", files: ["e01.mkv", "e02.mkv"], pieces: [1, 1, 1],
+                       completed: Int(Date().timeIntervalSince1970) - 60)
+                // qBittorrent's incomplete folder inside the watched one, holding quiet stalled data.
+                try? "[BitTorrent]\nSession\\TempPath=\(downloads.path)/incomplete/\nSession\\TempPathEnabled=true\n"
+                    .write(to: backup.deletingLastPathComponent().appendingPathComponent("qBittorrent.conf"), atomically: true, encoding: .utf8)
+                write("incomplete/Half.Done.mkv", 300, in: downloads)
+                try? fm.setAttributes([.modificationDate: quiet], ofItemAtPath: downloads.appendingPathComponent("incomplete/Half.Done.mkv").path)
+                write("Loose.File.mkv", 100, in: downloads)
+                try? fm.setAttributes([.modificationDate: quiet], ofItemAtPath: downloads.appendingPathComponent("Loose.File.mkv").path)
+                @MainActor func qbLook(_ label: String) async {
+                    await qb.check(rule.id)
+                    let state = qb.states[rule.id]
+                    let downloading = (state?.downloading ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key) \(Int($0.value * 100))%" }
+                    lines.append("qBittorrent, \(label): fetched \(fetched) · downloading \(downloading) · settling \(state?.pending.keys.sorted() ?? [])")
+                }
+                await qbLook("first look")
+                lines.append("  records found at \(qb.states[rule.id]?.records ?? "-") · never fetched: \(qb.states[rule.id]?.excluded.sorted() ?? [])")
+                try? await Task.sleep(for: .seconds(2.5))
+                await qbLook("2.5 s later, the stalled one an hour quiet")
+                record(String(repeating: "a", count: 40), name: "Stalled.Movie.2024.mkv", pieces: [1, 1, 1, 1, 1], completed: Int(Date().timeIntervalSince1970))
+                await qbLook("after qBittorrent finished it")
+            }
             lines.append("a server folder's title: \(watch.title(of: WatchRule(source: .remote(server: UUID(), path: Array("/home/x/completed".utf8)), destination: "/tmp")))")
             lines.append("partial names: \(["a.mkv.part", "b.!qB", "c.mkv", "d.CRDOWNLOAD"].map { "\($0) \(SeedboxWatch.isPartial($0))" }.joined(separator: ", "))")
             lines.append("done")
