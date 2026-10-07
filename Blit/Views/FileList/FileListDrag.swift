@@ -56,6 +56,7 @@ extension FileListCoordinator {
         let dragged = rowIndexes.compactMap { rows.indices.contains($0) ? rows[$0] : nil }
         DragContents.started(TransferPayload(locations: dragged.map(\.location),
                                              folders: dragged.filter(\.isDirectory).map(\.location)))
+        if let model { DragSize.shared.measure(dragged, in: model) }
         #if DEBUG
         UITestHarness.dropTrail.append("drag began \(dragged.map(\.name))")
         #endif
@@ -94,6 +95,7 @@ extension FileListCoordinator {
         #if DEBUG
         UITestHarness.dropTrail.append("entered")
         #endif
+        DragSize.shared.note(info.draggingPasteboard)
         dropHover.entered(dropTarget(info))
         showDropMark()
     }
@@ -209,14 +211,48 @@ extension FileListCoordinator {
             guard let rowView = rowView as? FileRowView else { return }
             rowView.isDropTarget = self.rows.indices.contains(row) && value == .folder(self.rows[row].location)
         }
+        showDropSpace(value)
+    }
+
+    /// The free space the drop would leave, at the foot of the list.
+    private func showDropSpace(_ value: ListDrop?) {
+        let destination: BrowseLocation? = switch value {
+        case .folder(let folder): folder
+        case .list: model?.current
+        case nil: nil
+        }
+        guard let destination, let summary = DropSpace.summary(into: destination, compact: false) else {
+            dropSpace.isHidden = true
+            return
+        }
+        dropSpace.show(summary)
+        let size = dropSpace.fittingSize
+        let bounds = scrollView.bounds
+        // Just above the path bar, whichever way the scroll view counts.
+        let gap = scrollView.contentInsets.bottom + 10
+        dropSpace.frame = NSRect(x: (bounds.midX - size.width / 2).rounded(),
+                                 y: scrollView.isFlipped ? bounds.maxY - gap - size.height : bounds.minY + gap,
+                                 width: size.width, height: size.height)
+        if scrollView.subviews.last !== dropSpace { scrollView.addSubview(dropSpace, positioned: .above, relativeTo: nil) }
+        dropSpace.isHidden = false
     }
 
     /// Follows the hover's own clearing (no mouse button down for a moment:
-    /// a drag that ended somewhere AppKit didn't say).
+    /// a drag that ended somewhere AppKit didn't say), and, while a drop would
+    /// land here, the drag's size and the free space as they come in.
     func watchDropHover() {
         let hover = dropHover
         dropWatch = Task { [weak self] in
-            for await _ in Observations({ hover.value }) {
+            for await _ in Observations({ () -> Int in
+                var hasher = Hasher()
+                hasher.combine(hover.value == nil)
+                if case .folder(let folder) = hover.value { hasher.combine(folder) }
+                if hover.value != nil {
+                    hasher.combine(DragSize.shared.bytes)
+                    hasher.combine(FreeSpace.shared.bytes)
+                }
+                return hasher.finalize()
+            }) {
                 self?.showDropMark()
             }
         }
@@ -233,6 +269,43 @@ extension FileListCoordinator {
 }
 
 // MARK: The marks
+
+/// "1.2 TB free → 0.9 TB after" over the foot of a list while a drop would
+/// go into it (PRD R2.10): in the drop marks' accent colour, or orange when it
+/// won't fit. Never in the way: it takes no clicks or drags.
+final class DropSpaceLabel: NSView {
+    private(set) var summary: DropSpace.Summary?
+    private static let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+
+    init() {
+        super.init(frame: .zero)
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var isFlipped: Bool { true }
+
+    func show(_ summary: DropSpace.Summary) {
+        guard summary != self.summary else { return }
+        self.summary = summary
+        setAccessibilityLabel(summary.text)
+        needsDisplay = true
+    }
+
+    override var fittingSize: NSSize {
+        NSSize(width: CellDrawing.width(summary?.text ?? "", font: Self.font) + 16, height: CellDrawing.lineHeight(Self.font) + 6)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        (summary?.fits == false ? NSColor.systemOrange : NSColor.controlAccentColor).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+        CellDrawing.draw(summary?.text ?? "", in: bounds.insetBy(dx: 8, dy: 0), font: Self.font, color: .white,
+                         alignment: .center, lineBreak: .byClipping)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
 
 /// A row of the AppKit file list. When a drop would go into its folder, its
 /// Name cell lights up: the accent fill behind it and marching ants around it.

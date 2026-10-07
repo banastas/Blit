@@ -100,6 +100,8 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     var dropWatch: Task<Void, Never>?
     var dragged: (sequence: Int, locations: [BrowseLocation])?
     let listOutline = PixelAntsView(cell: 2)
+    /// The free space a drop would leave, at the list's foot (PRD R2.10).
+    let dropSpace = DropSpaceLabel()
     /// Spring loading: the closed folder a drag rests on, opened in place
     /// once it has rested there a moment.
     var springFolder: BrowseLocation?

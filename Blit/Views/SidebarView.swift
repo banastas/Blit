@@ -271,6 +271,28 @@ private struct TransferTarget: ViewModifier {
             .background { SidebarDropMark(hover: hover, part: .fill) }
             .overlay { SidebarDropMark(hover: hover, part: .outline) }
             .overlay { SidebarDropMark(hover: hover, part: .line) }
+            .overlay(alignment: .trailing) { SidebarDropSpace(hover: hover, location: location) }
+    }
+}
+
+/// What a drop into the row would leave free (PRD R2.10), at its end: "→ 0.9 TB
+/// free", or "Needs 340 GB" in orange.
+private struct SidebarDropSpace: View {
+    let hover: DragHover<DropZone>
+    let location: BrowseLocation
+
+    var body: some View {
+        if hover.value == .into, let summary = DropSpace.summary(into: location, compact: true) {
+            Text(summary.text)
+                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(summary.fits ? Color.accentColor : Color.orange, in: RoundedRectangle(cornerRadius: 4))
+                .fixedSize()
+                .padding(.trailing, 2)
+                .allowsHitTesting(false)
+        }
     }
 }
 
@@ -346,7 +368,10 @@ private struct RowDropDelegate: DropDelegate {
         return nil
     }
 
-    func dropEntered(info: DropInfo) { hover.entered(zone(for: info)) }
+    func dropEntered(info: DropInfo) {
+        DragSize.shared.note(NSPasteboard(name: .drag))
+        hover.entered(zone(for: info))
+    }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         hover.moved(zone(for: info))

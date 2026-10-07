@@ -2939,6 +2939,106 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitDropSpaceTest <log> -BlitDropSpaceTestDest <folder>` (with
+    /// `-showSecondPane YES`, the folder on a small volume such as a 300 MB
+    /// disk image): what a drop target says about free space (PRD R2.10) as
+    /// stand-in drags come over the right pane: a file, a folder (summed in
+    /// the background) onto one of its folders, a file too big for the volume,
+    /// and a file from that same volume, which needs no room; with a sidebar
+    /// row's shorter wording each time. Sparse files: sizes without the bytes.
+    static func runDropSpaceTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitDropSpaceTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitDropSpaceTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let source = fm.temporaryDirectory.appendingPathComponent("blit-drop-space")
+            let dest = URL(fileURLWithPath: destPath)
+            let elsewhere = dest.deletingLastPathComponent().appendingPathComponent(dest.lastPathComponent + "-elsewhere")
+            for folder in [source, dest, elsewhere] { try? fm.removeItem(at: folder) }
+            for folder in [source.appendingPathComponent("Pack"), dest.appendingPathComponent("Inside"), elsewhere] {
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            }
+            @MainActor func sparse(_ url: URL, _ size: UInt64) {
+                fm.createFile(atPath: url.path, contents: nil)
+                let handle = try? FileHandle(forWritingTo: url)
+                try? handle?.truncate(atOffset: size)
+                try? handle?.close()
+            }
+            sparse(source.appendingPathComponent("small.bin"), 10_000_000)
+            sparse(source.appendingPathComponent("big.bin"), 5_000_000_000)
+            sparse(source.appendingPathComponent("Pack/a.bin"), 20_000_000)
+            sparse(source.appendingPathComponent("Pack/b.bin"), 30_000_000)
+            sparse(elsewhere.appendingPathComponent("same.bin"), 100_000_000)
+            defer { for folder in [source, dest, elsewhere] { try? fm.removeItem(at: folder) } }
+            guard let first = PaneTabs.shared.current?.first, let window = BrowserModel.activeWindow,
+                  let second = BrowserModel.oppositePane?(first) else { return lines.append("no second pane (showSecondPane off?)") }
+            @MainActor func show(_ model: BrowserModel, _ url: URL) async {
+                model.open(.local(url))
+                model.sort(by: .name)
+                for _ in 0..<30 where model.current?.localURL?.lastPathComponent != url.lastPathComponent || model.items.isEmpty {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+            }
+            await show(first, source)
+            await show(second, dest)
+            for _ in 0..<30 where FreeSpace.shared.free(at: dest) == nil { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let leftList = FileListRegistry.coordinator(for: first), let rightList = FileListRegistry.coordinator(for: second) else {
+                return lines.append("no lists")
+            }
+            var sequence = 2000
+            /// Drags `names` from the left pane over `target` in the right one
+            /// (nil: its empty space); what the list and a sidebar row say.
+            @MainActor func hover(_ names: [String], over target: String?) async {
+                sequence += 1
+                let items = first.rows.filter { names.contains($0.name) }
+                DragSize.shared.measure(items, in: first)   // as the drag starts
+                for _ in 0..<50 where DragSize.shared.measuring { try? await Task.sleep(for: .milliseconds(100)) }
+                let board = NSPasteboard(name: NSPasteboard.Name("blit-drop-space-\(sequence)"))
+                board.clearContents()
+                board.writeObjects(first.rows.indices.filter { names.contains(first.rows[$0].name) }
+                    .compactMap { leftList.tableView(leftList.table, pasteboardWriterForRow: $0) })
+                let drag = StandInDrag(pasteboard: board, sequence: sequence, window: window)
+                let table = rightList.table
+                if let target, let row = second.rows.firstIndex(where: { $0.name == target }) {
+                    let rect = table.rect(ofRow: row)
+                    drag.location = table.convert(NSPoint(x: rect.minX + 60, y: rect.midY), to: nil)
+                } else {
+                    let last = table.rect(ofRow: max(0, table.numberOfRows - 1))
+                    drag.location = table.convert(NSPoint(x: last.minX + 60, y: last.maxY + 40), to: nil)
+                }
+                rightList.dragEntered(drag)
+                _ = rightList.tableView(table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
+                try? await Task.sleep(for: .milliseconds(400))
+                let label = rightList.dropSpace
+                let onto = if case .folder(let folder) = rightList.dropHover.value { folder.lastComponent } else { "the list" }
+                let shown = label.isHidden ? "no label" : "“\(label.summary?.text ?? "")”\(label.summary?.fits == false ? " in orange" : "")"
+                let sidebar = DropSpace.summary(into: second.current!, compact: true).map { "“\($0.text)”" } ?? "nothing"
+                lines.append("\(names.joined(separator: " + ")) over \(onto): \(shown) · a sidebar row: \(sidebar)")
+                // -BlitDropSpacePictures YES: the right list alone, as it looks.
+                if UserDefaults.standard.bool(forKey: "BlitDropSpacePictures"),
+                   let rep = rightList.scrollView.bitmapImageRepForCachingDisplay(in: rightList.scrollView.bounds) {
+                    rightList.scrollView.cacheDisplay(in: rightList.scrollView.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: logPath + "-\(sequence).png"))
+                }
+                rightList.dragExited()
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            await hover(["small.bin"], over: nil)
+            await hover(["Pack"], over: "Inside")
+            await hover(["big.bin"], over: nil)
+            await hover(["small.bin", "Pack"], over: nil)
+            lines.append("after the drag left: label hidden \(rightList.dropSpace.isHidden)")
+            await show(first, elsewhere)
+            await hover(["same.bin"], over: nil)
+            lines.append("done")
+        }
+    }
+
     /// `-BlitVideoColumnTest <log> -BlitVideoColumnTestDir <fixtures>`: the
     /// Video column over BlitMedia's test files (copied in with a folder, a
     /// text file and an .mkv that isn't one): each row's text and tooltip as
