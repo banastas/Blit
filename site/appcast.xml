@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.44</title>
-      <pubDate>Wed, 07 Oct 2026 00:27:44 +0000</pubDate>
-      <sparkle:version>47</sparkle:version>
-      <sparkle:shortVersionString>0.2.44</sparkle:shortVersionString>
+      <title>Blit 0.2.45</title>
+      <pubDate>Wed, 07 Oct 2026 15:53:30 +0000</pubDate>
+      <sparkle:version>48</sparkle:version>
+      <sparkle:shortVersionString>0.2.45</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Renaming no longer drops out on its own: if a folder reloaded while you were renaming something in it (on a NAS, often a transfer finishing into it), the list could re-sort and end the rename before you could type. The list now holds still while a name is being edited, and catches up once you press Return or Escape.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.44.zip" type="application/octet-stream" sparkle:edSignature="wTPOCC8vyPCP4ysZtMzAPkvgqO9hjoTr6EYsfyt8DBk/HT4HGf0Jb5RTkpEO+ug7+9Qg1j3bz7DDvNyG9kFfBg==" length="5800923" />
+      <description><![CDATA[<p>Fourteen additions. Compare Panes (View menu, ⌃⌘C) marks what's only here, the same, or verified in the other pane's folder. A Video column (View › Columns) shows resolution, HDR or Dolby Vision, codec, audio and running time. Dragging onto a drive or NAS shows the free space the drop would leave. Space on a folder shows a summary: its size, the main video, the largest files and the .nfo. Suggested destinations: Move To and ⇧F6 offer the folder where the same show or kind of movie went last. Watch mode fetches new finished downloads from a server folder to this Mac (right-click a folder › Watch for New Downloads). Also: Rename With Preset in the right-click menu, spring-loaded folders, a dot on what's new since your last visit, monthly totals in the Transfer Log and the menu bar, a pixel flourish when a big queue finishes verified, importing servers from Transmit and ForkLift, a Welcome for new installs, and measuring the best number of connections for a server (server editor › Measure…).</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.45.zip" type="application/octet-stream" sparkle:edSignature="tPoOhWsXPcgRBZwZvwFvZqw84Soxk3whNdl0aQMAjCxDR0AW8cbQf/gmLkU3paU6UXUj/9xOv9X5poDS62aVCA==" length="6199060" />
     </item>
   </channel>
 </rss>
