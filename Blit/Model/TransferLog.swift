@@ -24,7 +24,10 @@ struct TransferRecord: Codable, Sendable {
 @MainActor
 enum TransferLog {
     static var url: URL {
-        URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Blit/transfers.jsonl")
+        #if DEBUG
+        if let path = UserDefaults.standard.string(forKey: "BlitTransferLogPath") { return URL(fileURLWithPath: path) }
+        #endif
+        return URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Blit/transfers.jsonl")
     }
 
     private static let encoder: JSONEncoder = {
@@ -40,7 +43,10 @@ enum TransferLog {
     static func append(_ record: TransferRecord) {
         guard !TransferManager.isIsolated else { return }   // a test copy: keep the real log clean
         VerifiedIndex.shared.record(record)
-        defer { NotificationCenter.default.post(name: didAppend, object: nil) }
+        defer {
+            NotificationCenter.default.post(name: didAppend, object: nil)
+            TransferStats.shared.changed()
+        }
         guard var line = try? encoder.encode(record) else { return }
         line.append(0x0A)
         let fm = FileManager.default

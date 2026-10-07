@@ -89,6 +89,15 @@ struct MenuBarPanel: View {
             if transfers.isKeepingAwake || transfers.queuedCount > 0 || pausedCount > 0 {
                 footer
             }
+            // "October: 24.3 TB · 2,180 files · all verified · downloads 81 MB/s" (PRD R4.4).
+            if let month = TransferStats.shared.thisMonth, month.files > 0 {
+                Text("\(month.start.formatted(.dateTime.month(.wide))): \(month.summary)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help("What Blit moved this month. Window › Transfer Log › Months has every month.")
+            }
             Divider()
             HStack {
                 if let job = transfers.activeTransfers.first(where: { if case .waiting = $0.status { true } else { false } }) {

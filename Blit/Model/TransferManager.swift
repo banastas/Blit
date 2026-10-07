@@ -190,6 +190,12 @@ final class TransferJob: Identifiable {
     var startedAt: Date?
     var finishedAt: Date?
     @ObservationIgnored let counter = ByteCounter()
+    /// Seconds in which bytes moved (for the months' speeds), and what of
+    /// those and of the counter the jobs log already has (a job paused and
+    /// resumed ends more than once).
+    @ObservationIgnored var movingSeconds: Double = 0
+    @ObservationIgnored var loggedSeconds: Double = 0
+    @ObservationIgnored var loggedBytes = 0
 
     init(kind: Kind, sources: [BrowseLocation], destination: URL, title: String, destinationName: String) {
         self.kind = kind
@@ -1243,6 +1249,7 @@ final class TransferManager {
         }
         job.finishedAt = Date()
         job.rate = 0
+        JobLog.append(job)
     }
 
     // MARK: Free space (PRD R5.8)
@@ -1455,6 +1462,7 @@ final class TransferManager {
             let bytes = job.counter.total
             let seconds = max(now.timeIntervalSince(last.time), 0.001)
             let rate = Double(bytes - last.bytes) / seconds / 1e6
+            if bytes > last.bytes, job.status == .running { job.movingSeconds += seconds }
             last = (now, bytes)
             let per = job.connectionCounters.map(\.total)
             if lastPer.count == per.count {

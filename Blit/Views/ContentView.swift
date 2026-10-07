@@ -624,6 +624,7 @@ struct ContentView: View {
         UITestHarness.runVideoColumnTestIfRequested()
         UITestHarness.runDropSpaceTestIfRequested()
         UITestHarness.runFolderSummaryTestIfRequested()
+        UITestHarness.runMonthlyTotalsTestIfRequested()
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)
@@ -636,6 +637,8 @@ struct ContentView: View {
             openWindow(id: "about")
             openWindow(id: "acknowledgements")
         }
+        // -BlitShowTransferLog: Window › Transfer Log, for a picture.
+        if UserDefaults.standard.bool(forKey: "BlitShowTransferLog") { openWindow(id: "transfer-log") }
         UITestHarness.runMediaExtensionTestIfRequested()
         UITestHarness.runDropTestIfRequested()
         UITestHarness.runSidebarDropTestIfRequested(sidebar: sidebar)

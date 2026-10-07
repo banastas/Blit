@@ -1,6 +1,7 @@
 // Window › Transfer Log (⌥⌘L, PRD R4.4): every file Blit has transferred,
 // newest first, searchable, with how each was verified, its SHA-256 and its
-// source: a per-file answer to "was this one checked?".
+// source: a per-file answer to "was this one checked?". Months sums them up:
+// what moved each month, how much was verified, and how fast.
 
 import AppKit
 import SwiftUI
@@ -42,6 +43,7 @@ struct TransferLogView: View {
     }
 
     @State private var entries: [LogEntry] = []
+    @AppStorage("transferLogShowsMonths") private var showsMonths = false
     @State private var search = ""
     @State private var filter = Filter.all
     @State private var selection: LogEntry.ID?
@@ -65,49 +67,29 @@ struct TransferLogView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Table(shown, selection: $selection, sortOrder: $sortOrder) {
-                TableColumn("") { entry in
-                    Image(nsImage: (entry.failed ? PixelGlyph.cross : entry.hashVerified ? PixelGlyph.check : PixelGlyph.arrow)
-                        .image(size: 10))
-                        .foregroundStyle(entry.failed ? Color.failureText : entry.hashVerified ? .primary : .secondary)
-                        .help(entry.method)
-                }
-                .width(16)
-                TableColumn("Time", value: \.record.time) { entry in
-                    Text(entry.record.time, format: .dateTime.year().month(.abbreviated).day().hour().minute())
-                        .monospacedDigit().foregroundStyle(.secondary)
-                }
-                .width(min: 120, ideal: 150)
-                TableColumn("Name", value: \.name) { entry in Text(entry.name).lineLimit(1) }
-                    .width(min: 160, ideal: 320)
-                TableColumn("Verification", value: \.method) { entry in
-                    Text(entry.method).foregroundStyle(entry.failed ? Color.failureText : .secondary)
-                }
-                .width(min: 110, ideal: 160)
-                TableColumn("Size", value: \.record.size) { entry in
-                    Text(Int64(entry.record.size).formatted(.byteCount(style: .file)))
-                        .monospacedDigit().foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                }
-                .width(min: 60, ideal: 80)
-                TableColumn("Destination", value: \.folder) { entry in
-                    Text(entry.folder).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                }
-                .width(min: 120, ideal: 260)
-            }
-            .tableStyle(.inset(alternatesRowBackgrounds: true))
-            if let entry = entries.first(where: { $0.id == selection }) {
-                Divider()
-                detail(entry)
+            if showsMonths {
+                MonthsTable()
+            } else {
+                files
             }
         }
         .searchable(text: $search, prompt: "Name, path or SHA-256")
+        .onChange(of: search) { if !search.isEmpty, showsMonths { showsMonths = false } }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Picker("View", selection: $showsMonths) {
+                    Text("Files").tag(false)
+                    Text("Months").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .help("Every file, or each month's totals")
+            }
             ToolbarItem {
                 Picker("Show", selection: $filter) {
                     ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .disabled(showsMonths)
             }
             ToolbarItem {
                 Button("Export CSV…", systemImage: "square.and.arrow.up") { TransferLog.export() }
@@ -115,11 +97,56 @@ struct TransferLogView: View {
             }
         }
         .navigationTitle("Transfer Log")
-        .navigationSubtitle("\(shown.count) of \(entries.count) files")
+        .navigationSubtitle(showsMonths ? monthsSubtitle : "\(shown.count) of \(entries.count) files")
         .frame(minWidth: 760, minHeight: 360)
         .task { await reload() }
         .onReceive(NotificationCenter.default.publisher(for: TransferLog.didAppend)) { _ in
             Task { await reload() }
+        }
+    }
+
+    /// "312 TB in 14 months".
+    private var monthsSubtitle: String {
+        let months = TransferStats.shared.months
+        let bytes = months.reduce(Int64(0)) { $0 + $1.bytes }
+        return "\(bytes.formatted(.byteCount(style: .file))) in \(months.count) month\(months.count == 1 ? "" : "s")"
+    }
+
+    @ViewBuilder private var files: some View {
+        Table(shown, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("") { entry in
+                Image(nsImage: (entry.failed ? PixelGlyph.cross : entry.hashVerified ? PixelGlyph.check : PixelGlyph.arrow)
+                    .image(size: 10))
+                    .foregroundStyle(entry.failed ? Color.failureText : entry.hashVerified ? .primary : .secondary)
+                    .help(entry.method)
+            }
+            .width(16)
+            TableColumn("Time", value: \.record.time) { entry in
+                Text(entry.record.time, format: .dateTime.year().month(.abbreviated).day().hour().minute())
+                    .monospacedDigit().foregroundStyle(.secondary)
+            }
+            .width(min: 120, ideal: 150)
+            TableColumn("Name", value: \.name) { entry in Text(entry.name).lineLimit(1) }
+                .width(min: 160, ideal: 320)
+            TableColumn("Verification", value: \.method) { entry in
+                Text(entry.method).foregroundStyle(entry.failed ? Color.failureText : .secondary)
+            }
+            .width(min: 110, ideal: 160)
+            TableColumn("Size", value: \.record.size) { entry in
+                Text(Int64(entry.record.size).formatted(.byteCount(style: .file)))
+                    .monospacedDigit().foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .width(min: 60, ideal: 80)
+            TableColumn("Destination", value: \.folder) { entry in
+                Text(entry.folder).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+            }
+            .width(min: 120, ideal: 260)
+        }
+        .tableStyle(.inset(alternatesRowBackgrounds: true))
+        if let entry = entries.first(where: { $0.id == selection }) {
+            Divider()
+            detail(entry)
         }
     }
 
@@ -176,5 +203,59 @@ struct TransferLogView: View {
         let url = TransferLog.url
         let records = await Task.detached { TransferLog.readRecords(at: url) }.value
         entries = records.enumerated().map { LogEntry(id: $0.offset, record: $0.element) }
+    }
+}
+
+/// Transfer Log › Months: each month's totals, newest first (PRD R4.4).
+private struct MonthsTable: View {
+    var body: some View {
+        let months = TransferStats.shared.months
+        Table(months) {
+            TableColumn("") { month in
+                Image(nsImage: (month.failed > 0 ? PixelGlyph.cross : month.verified == month.files ? PixelGlyph.check : PixelGlyph.arrow)
+                    .image(size: 10))
+                    .foregroundStyle(month.failed > 0 ? Color.failureText : month.verified == month.files ? .primary : .secondary)
+                    .help(month.failed > 0 ? "\(month.failed) failed" : month.verification)
+            }
+            .width(16)
+            TableColumn("Month") { month in Text(month.title) }
+                .width(min: 110, ideal: 130)
+            TableColumn("Moved") { month in
+                Text(month.bytes.formatted(.byteCount(style: .file))).monospacedDigit()
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .width(min: 70, ideal: 90)
+            TableColumn("Files") { month in
+                Text(month.files.formatted()).monospacedDigit().foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .width(min: 50, ideal: 70)
+            TableColumn("Verification") { month in Text(month.verification).foregroundStyle(.secondary) }
+                .width(min: 120, ideal: 190)
+            TableColumn("Downloads") { month in
+                Text(month.downloadRate.map(MonthTotals.rate) ?? "—").monospacedDigit().foregroundStyle(.secondary)
+                    .help("While bytes were moving: waits, pauses and checksums don't count")
+            }
+            .width(min: 70, ideal: 90)
+            TableColumn("Copies") { month in
+                Text(month.copyRate.map(MonthTotals.rate) ?? "—").monospacedDigit().foregroundStyle(.secondary)
+                    .help("While bytes were moving: waits, pauses and checksums don't count")
+            }
+            .width(min: 60, ideal: 80)
+            TableColumn("Already there") { month in
+                Text(month.present > 0 ? month.present.formatted() : "—").monospacedDigit().foregroundStyle(.secondary)
+            }
+            .width(min: 60, ideal: 90)
+            TableColumn("Failed") { month in
+                Text(month.failed > 0 ? month.failed.formatted() : "—").monospacedDigit()
+                    .foregroundStyle(month.failed > 0 ? Color.failureText : .secondary)
+            }
+            .width(min: 50, ideal: 60)
+        }
+        .tableStyle(.inset(alternatesRowBackgrounds: true))
+        .overlay {
+            if months.isEmpty { ContentUnavailableView("Nothing moved yet", systemImage: "calendar") }
+        }
+        .onAppear { TransferStats.shared.load() }
     }
 }

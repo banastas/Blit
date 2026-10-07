@@ -2939,6 +2939,82 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitMonthlyTotalsTest <log> -BlitTransferLogPath <file> -BlitJobLogPath <file>`:
+    /// the months (PRD R4.4) from a written transfer log and jobs log: two
+    /// months' totals, verification and speeds, this month's line, and a
+    /// record written later showing up. With `-BlitShowTransferLog YES
+    /// -transferLogShowsMonths YES`, <log>.wid has the Transfer Log window.
+    static func runMonthlyTotalsTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitMonthlyTotalsTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            guard TransferLog.url.path.hasPrefix(NSTemporaryDirectory()) || TransferLog.url.path.hasPrefix("/private/tmp") || TransferLog.url.path.hasPrefix("/tmp"),
+                  JobLog.url.path != URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Blit/jobs.jsonl").path else {
+                return lines.append("refused: -BlitTransferLogPath and -BlitJobLogPath must point at temporary files")
+            }
+            var calendar = Calendar.current
+            calendar.timeZone = .current
+            func day(_ month: Int, _ day: Int) -> Date { calendar.date(from: DateComponents(year: 2026, month: month, day: day, hour: 12))! }
+            func record(_ time: Date, _ name: String, _ size: UInt64, _ verification: String, failed: Bool = false) -> TransferRecord {
+                TransferRecord(time: time, source: "seedbox:/" + name, destination: "/Volumes/SSD/" + name, size: size, sha256: nil,
+                               verification: verification, result: failed ? "failed" : "ok", detail: failed ? "stalled" : nil)
+            }
+            let records = [
+                record(day(9, 3), "a.mkv", 10_000_000_000, "server-sha256"),
+                record(day(9, 3), "b.mkv", 10_000_000_000, "server-sha256"),
+                record(day(9, 20), "c.mkv", 10_000_000_000, "read-back"),
+                record(day(9, 21), "d.mkv", 5_000_000_000, "size-only"),
+                record(day(9, 22), "e.mkv", 7_000_000_000, "already-present"),
+                record(day(9, 22), "f.mkv", 1_000_000_000, "none", failed: true),
+                record(day(10, 2), "g.mkv", 12_000_000_000, "nas-sha256"),
+                record(day(10, 4), "h.mkv", 12_000_000_000, "nas-sha256"),
+                record(day(10, 4), "i.mkv", 3_000_000_000, "cloned"),
+            ]
+            let jobs = [
+                JobRecord(time: day(9, 3), kind: "download", bytes: 30_000_000_000, seconds: 400, files: 3),
+                JobRecord(time: day(9, 21), kind: "copy", bytes: 20_000_000_000, seconds: 190, files: 2),
+                JobRecord(time: day(10, 4), kind: "copy", bytes: 24_000_000_000, seconds: 230, files: 2),
+            ]
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            func jsonl<T: Encodable>(_ items: [T]) -> Data {
+                items.reduce(Data()) { data, item in data + ((try? encoder.encode(item)) ?? Data()) + Data([0x0A]) }
+            }
+            try? jsonl(records).write(to: TransferLog.url)
+            try? jsonl(jobs).write(to: JobLog.url)
+            defer {
+                try? FileManager.default.removeItem(at: TransferLog.url)
+                try? FileManager.default.removeItem(at: JobLog.url)
+            }
+            TransferStats.shared.load()
+            for _ in 0..<30 where TransferStats.shared.months.isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
+            for month in TransferStats.shared.months { lines.append("\(month.title): \(month.summary)") }
+            lines.append("this month: \(TransferStats.shared.thisMonth.map { "\($0.title): \($0.summary)" } ?? "none")")
+            // A file finishes later this month: the months follow, a moment after.
+            if let handle = try? FileHandle(forWritingTo: TransferLog.url) {
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: jsonl([record(day(10, 5), "j.mkv", 6_000_000_000, "nas-sha256")]))
+                try? handle.close()
+            }
+            TransferStats.shared.changed()
+            try? await Task.sleep(for: .seconds(4))
+            lines.append("after another file: \(TransferStats.shared.months.first.map { "\($0.title): \($0.summary)" } ?? "none")")
+            lines.append("nothing logged: \(MonthTotals.make(records: [], jobs: []).count) months")
+            if UserDefaults.standard.bool(forKey: "BlitShowTransferLog") {
+                try? await Task.sleep(for: .seconds(1))
+                if let window = NSApp.windows.first(where: { $0.isVisible && $0.title == "Transfer Log" }) {
+                    try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+                    for _ in 0..<100 where !FileManager.default.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+                } else {
+                    lines.append("no Transfer Log window")
+                }
+            }
+            lines.append("done")
+        }
+    }
+
     /// `-BlitFolderSummaryTest <log> -BlitFolderSummaryTestVideo <header.mkv>`:
     /// Space on a release folder (PRD R2.17): a big episode made from a real
     /// HDR10 header, a smaller one, a sample, a hidden file and a DOS-encoded
