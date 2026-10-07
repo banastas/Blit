@@ -427,6 +427,68 @@ struct PixelCells: View {
     }
 }
 
+/// The finish moment (TransferManager.finishMoment): when a long queue ends
+/// with every file verified, a band of bright pixels sweeps once across the
+/// HUD, trailing sparks that twinkle out, in about 1.6 s. Decoration only:
+/// nothing to read or click, and none of it with Reduce Motion on.
+struct FinishFlourish: View {
+    let moment: Date?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The moment being played; nil once it's over (so nothing ticks after).
+    @State private var playing: Date?
+    static let duration = 1.6
+
+    var body: some View {
+        Color.clear
+            .overlay {
+                if let playing, !reduceMotion {
+                    TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
+                        let t = timeline.date.timeIntervalSince(playing) / Self.duration
+                        Canvas { context, size in Self.draw(t, in: context, size: size) }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .task(id: moment) {
+                guard let moment, Date().timeIntervalSince(moment) < Self.duration else { return }
+                playing = moment
+                try? await Task.sleep(for: .seconds(Self.duration))
+                if playing == moment { playing = nil }
+            }
+    }
+
+    /// One frame at `t` (0…1): the band, its trail, and the sparks it left.
+    static func draw(_ t: Double, in context: GraphicsContext, size: CGSize) {
+        #if DEBUG
+        UITestHarness.tick("FinishFlourish")
+        #endif
+        guard t >= 0, t < 1 else { return }
+        let cell: CGFloat = 4, gap: CGFloat = 2, step = cell + gap
+        let columns = Int(size.width / step), rows = Int(size.height / step)
+        guard columns > 0, rows > 0 else { return }
+        let x0 = (size.width - CGFloat(columns) * step + gap) / 2, y0 = (size.height - CGFloat(rows) * step + gap) / 2
+        // The band crosses in the first 70%; behind it the cells fade out.
+        let head = t / 0.7 * Double(columns + 8) - 4
+        for column in 0..<columns {
+            let behind = head - Double(column)
+            guard behind > -1 else { continue }
+            for row in 0..<rows {
+                // A pseudo-random spark per cell: some stay lit a little longer.
+                let seed = (column &* 73 &+ row &* 151) % 97
+                let life = 3 + Double(seed % 7)
+                let fade = behind < 0 ? 0 : max(0, 1 - behind / life)
+                let spark = seed < 12 ? max(0, 1 - abs(behind - life - 4) / 3) * (1 - t) : 0
+                let opacity = max(fade * (row % 2 == column % 2 ? 0.8 : 0.45), spark)
+                guard opacity > 0.02 else { continue }
+                let rect = CGRect(x: x0 + CGFloat(column) * step, y: y0 + CGFloat(row) * step, width: cell, height: cell)
+                context.fill(Path(rect), with: .color(HUDColor.bright.opacity(opacity)))
+            }
+        }
+    }
+}
+
 /// Throughput as pixel columns, newest on the right.
 struct PixelHistogram: View {
     let samples: [Double]

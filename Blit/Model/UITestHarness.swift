@@ -2939,6 +2939,63 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitFinishTest <log>`: the finish moment. Which queues earn it, then
+    /// the flourish over the strip of a finished stand-in transfer: drawn
+    /// while it plays, nothing drawn once it's over. <log>.wid-N (N = 1, 2)
+    /// has the window mid-sweep, for pictures.
+    static func runFinishTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitFinishTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let now = Date()
+            func batch(_ bytes: Int64, minutes: Double, failed: Int = 0, sizeOnly: Int = 0, unverified: Int = 0) -> TransferManager.Batch {
+                TransferManager.Batch(jobs: 1, bytes: bytes, failed: failed, sizeOnly: sizeOnly, unverified: unverified,
+                                      started: now.addingTimeInterval(-minutes * 60))
+            }
+            let cases: [(String, TransferManager.Batch, Bool)] = [
+                ("1 GB in 30 s", batch(1_000_000_000, minutes: 0.5), true),
+                ("12 GB in 1 min", batch(12_000_000_000, minutes: 1), true),
+                ("2 GB in 3 min", batch(2_000_000_000, minutes: 3), true),
+                ("12 GB, 1 failed", batch(12_000_000_000, minutes: 5, failed: 1), true),
+                ("12 GB, 1 size only", batch(12_000_000_000, minutes: 5, sizeOnly: 1), true),
+                ("12 GB, verification off", batch(12_000_000_000, minutes: 5, unverified: 3), true),
+                ("12 GB, not all hash-verified", batch(12_000_000_000, minutes: 5), false),
+            ]
+            for (label, batch, verified) in cases {
+                lines.append("\(label): \(TransferManager.celebrates(batch, verified: verified, now: now) ? "flourish" : "nothing")")
+            }
+            let job = TransferJob(kind: .copy, sources: [.local(URL(fileURLWithPath: "/tmp/blit-finish/Pack"))],
+                                  destination: URL(fileURLWithPath: "/tmp/blit-finish-dest"), title: "Pack", destinationName: "NAS")
+            job.persistent = false
+            job.status = .finished
+            job.startedAt = now.addingTimeInterval(-600)
+            job.finishedAt = now
+            transfers.debugInsert(job)
+            defer { transfers.debugRemove(job) }
+            try? await Task.sleep(for: .seconds(1))
+            let before = bodyCounts["FinishFlourish", default: 0]
+            transfers.debugFinishMoment()
+            for frame in 1...2 {
+                try? await Task.sleep(for: .milliseconds(frame == 1 ? 350 : 300))
+                if let window = BrowserModel.activeWindow {
+                    try? String(window.windowNumber).write(toFile: logPath + ".wid-\(frame)", atomically: true, encoding: .utf8)
+                    for _ in 0..<20 where !FileManager.default.fileExists(atPath: logPath + ".shot-\(frame)") {
+                        try? await Task.sleep(for: .milliseconds(25))
+                    }
+                }
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+            let during = bodyCounts["FinishFlourish", default: 0] - before
+            try? await Task.sleep(for: .seconds(1))
+            let after = bodyCounts["FinishFlourish", default: 0] - before - during
+            lines.append("frames drawn while it played: \(during > 10 ? "many" : "\(during)") · after it ended: \(after)")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitMonthlyTotalsTest <log> -BlitTransferLogPath <file> -BlitJobLogPath <file>`:
     /// the months (PRD R4.4) from a written transfer log and jobs log: two
     /// months' totals, verification and speeds, this month's line, and a

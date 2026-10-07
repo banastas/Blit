@@ -429,6 +429,22 @@ final class TransferManager {
     struct Batch { var jobs = 0; var bytes: Int64 = 0; var failed = 0; var sizeOnly = 0; var unverified = 0; var started: Date? }
     @ObservationIgnored private var batch = Batch()
 
+    /// The finish moment: when a big queue last drained with every file
+    /// verified by SHA-256. The HUD plays a short pixel flourish from it (and,
+    /// if chosen in Settings, a sound).
+    private(set) var finishMoment: Date?
+
+    /// Big enough to mark: 10 GB, or two minutes of work.
+    static func celebrates(_ batch: Batch, verified: Bool, now: Date = Date()) -> Bool {
+        guard verified, batch.failed == 0, batch.sizeOnly == 0, batch.unverified == 0, batch.jobs > 0 else { return false }
+        return batch.bytes >= 10_000_000_000 || now.timeIntervalSince(batch.started ?? now) >= 120
+    }
+
+    func celebrate() {
+        finishMoment = Date()
+        if UserDefaults.standard.bool(forKey: "finishSound") { NSSound(named: "Glass")?.play() }
+    }
+
     /// Settings: a notification per transfer (default), or only when the queue
     /// finishes and when something needs attention.
     private var notifyEachTransfer: Bool {
@@ -457,6 +473,8 @@ final class TransferManager {
     /// Test copies: a job in the list that isn't run (it stands for a
     /// transfer already under way), and taking it out again.
     func debugInsert(_ job: TransferJob) { jobs.append(job) }
+    /// The finish moment without its sound (the tests).
+    func debugFinishMoment() { finishMoment = Date() }
     func debugRemove(_ job: TransferJob) { jobs.removeAll { $0 === job } }
     #endif
 
@@ -1113,6 +1131,7 @@ final class TransferManager {
                 DockProgress.shared.finish(batch.failed > 0 ? .failed : batchVerified ? .verified : .plain)
                 if batch.failed == 0 { showMenuBarDone() }
                 if batch.failed == 0, batch.sizeOnly == 0 { collapseAfterSuccess() }
+                if Self.celebrates(batch, verified: batchVerified) { celebrate() }
                 await notifyBatch(batch)
                 batchVerified = true
                 batch = Batch()

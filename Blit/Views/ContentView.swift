@@ -88,6 +88,7 @@ struct ContentView: View {
                                     TransferStrip(job: job).transition(.crt)
                                 }
                             }
+                            .overlay { FinishFlourish(moment: transfers.finishMoment) }
                             .padding(8)
                             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { _, height in
                                 withAnimation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.36)) { hudHeight = height }
@@ -625,6 +626,7 @@ struct ContentView: View {
         UITestHarness.runDropSpaceTestIfRequested()
         UITestHarness.runFolderSummaryTestIfRequested()
         UITestHarness.runMonthlyTotalsTestIfRequested()
+        UITestHarness.runFinishTestIfRequested(transfers: transfers)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

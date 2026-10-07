@@ -260,6 +260,7 @@ struct MenuBarTransfer: View {
 struct SettingsView: View {
     @AppStorage("showMenuBarExtra") private var showMenuBarExtra = true
     @AppStorage("expandHUDOnTransfer") private var expandHUDOnTransfer = true
+    @AppStorage("finishSound") private var finishSound = false
     @AppStorage("existsRule") private var existsRule: ExistsRule = .skipIfSameSize
     @AppStorage("notifyEachTransfer") private var notifyEachTransfer = true
     @AppStorage("verifyFiles") private var verifyFiles = "sha256"
@@ -281,6 +282,7 @@ struct SettingsView: View {
                     note("While Blit is working, the arrow's tray fills as it goes and the transfer HUD is one click away, even with the window closed.")
                     Toggle("Open the full transfer HUD when a transfer starts", isOn: $expandHUDOnTransfer)
                     note("Collapse it and it stays collapsed until those transfers finish.")
+                    Toggle("Play a sound when a long queue finishes, all verified", isOn: $finishSound)
                     Picker("Notifications", selection: $notifyEachTransfer) {
                         Text("When each transfer finishes").tag(true)
                         Text("When the queue finishes, and on problems").tag(false)
