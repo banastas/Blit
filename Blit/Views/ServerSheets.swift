@@ -1,6 +1,7 @@
 // Server editor, host-key trust prompt, and password prompt: standard sheets.
 
 import BlitRemote
+import BlitSFTP
 import SwiftUI
 
 struct ServerEditor: View {
@@ -10,6 +11,7 @@ struct ServerEditor: View {
     @State private var password = ""
     @State private var useKey = false
     @State private var keyProblem: String?
+    @State private var measuring = false
     @Environment(\.dismiss) private var dismiss
 
     init(server: ServerConfig, isNew: Bool, onSave: @escaping (ServerConfig, String?) -> Void) {
@@ -69,9 +71,33 @@ struct ServerEditor: View {
                 Section("Advanced") {
                     TextField("Start folder", text: $server.startPath, prompt: Text("Home folder"))
                     Stepper("Connections for transfers: \(server.connections)", value: $server.connections, in: 1...8)
+                    if !isNew {
+                        HStack {
+                            Group {
+                                if let tuning = server.tuning {
+                                    Text("Measured \(tuning.date.formatted(date: .abbreviated, time: .omitted)): "
+                                         + tuning.rates.keys.sorted().map { "\($0) → \(Int(tuning.rates[$0]!.rounded())) MB/s" }.joined(separator: ", ")
+                                         + (server.isTuned ? "" : " (now set by hand)"))
+                                } else {
+                                    Text("Measure how many connections are fastest to this server.")
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            Spacer()
+                            Button("Measure…") { measuring = true }
+                        }
+                    }
                 }
             }
             .formStyle(.grouped)
+            .sheet(isPresented: $measuring) {
+                TuneConnectionsView(server: server) { tuning in
+                    server.tuning = tuning
+                    server.connections = tuning.chosen
+                }
+            }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
@@ -272,5 +298,94 @@ struct ImportServersView: View {
         for server in imported { servers.save(server, password: nil) }
         dismiss()
         onImported(imported)
+    }
+}
+
+/// Measure… in the server editor (PRD R3.2): 1, 2, 3 and 4 connections
+/// against a large file on the server, then the count to keep.
+struct TuneConnectionsView: View {
+    let server: ServerConfig
+    let onUse: (ConnectionTuning) -> Void
+    @Environment(ConnectionManager.self) private var connections
+    @Environment(\.dismiss) private var dismiss
+    @State private var file: (path: RemotePath, size: UInt64)?
+    @State private var problem: String?
+    @State private var running = false
+    @State private var results: [Int: Result<Double, Error>] = [:]
+    @State private var tuning: ConnectionTuning?
+    @State private var task: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Measure Connections").font(.headline)
+            Text("Blit reads the largest file in the server's start folder with 1, 2, 3 and 4 connections, ten seconds each, every stream from a different part of the file, and keeps the fewest that come within 5% of the fastest. It downloads about a minute's worth of data and keeps none of it. Best run while nothing else is transferring.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let file {
+                Text("File: \(file.path.lastComponent.description) · \(Int64(file.size).formatted(.byteCount(style: .file)))")
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+                ForEach(ConnectionTuner.counts, id: \.self) { count in
+                    GridRow {
+                        Text("\(count) connection\(count == 1 ? "" : "s")")
+                        Group {
+                            switch results[count] {
+                            case .success(let rate)?: Text("\(Int(rate.rounded())) MB/s").monospacedDigit()
+                                .fontWeight(tuning?.chosen == count ? .semibold : .regular)
+                            case .failure(let error)?: Text(FileOperations.describe(error)).foregroundStyle(Color.failureText).lineLimit(1)
+                            case nil: Text(running && results.count + 1 == count ? "measuring…" : "—").foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            if let problem { Text(problem).foregroundStyle(Color.failureText).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                Button("Cancel") { task?.cancel(); dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                if let tuning {
+                    Button("Use \(tuning.chosen) Connection\(tuning.chosen == 1 ? "" : "s")") { onUse(tuning); dismiss() }
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Measure") { start() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(running)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    private func start() {
+        running = true
+        problem = nil
+        results = [:]
+        let verifier = connections.verifier
+        task = Task {
+            defer { running = false }
+            do {
+                let client = try await connections.browseClient(for: server)
+                guard let found = try await ConnectionTuner.testFile(on: server, using: client) else {
+                    problem = "No file of \(Int64(ConnectionTuner.minimumSize).formatted(.byteCount(style: .file))) or more in the start folder (or a folder in it) to read."
+                    return
+                }
+                file = found
+                var first = 0
+                tuning = await ConnectionTuner.run(file: found.path.description, measure: { count in
+                    defer { first += count }
+                    return try await ConnectionTuner.measure(count, file: found.path, size: found.size, firstPart: first,
+                                                             server: server, verifier: verifier)
+                }, progress: { count, result in results[count] = result })
+                if tuning == nil, !Task.isCancelled { problem = "No connection count could be measured." }
+            } catch {
+                problem = FileOperations.describe(error)
+            }
+        }
     }
 }

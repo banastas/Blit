@@ -174,7 +174,8 @@ struct TransferHUD: View {
 
     /// The Link data rows worth showing now, most important first.
     private var linkRows: [(String, String)] {
-        var rows: [(String, String)] = [("CONN", "\(job.connections)"), ("LINK", job.link.isEmpty ? "—" : job.link)]
+        var rows: [(String, String)] = [("CONN", "\(job.connections)\(job.connectionsTuned ? " · TUNED" : "")"),
+                                        ("LINK", job.link.isEmpty ? "—" : job.link)]
         if let route = job.routeWarning {
             rows.append(("ROUTE", route.uppercased()))   // an advisory (PRD R1.7), not a failure
         }

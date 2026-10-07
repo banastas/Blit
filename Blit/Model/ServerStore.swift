@@ -23,9 +23,13 @@ struct ServerConfig: Codable, Identifiable, Hashable, Sendable {
     var nasRoot: String?
     /// Private key file to sign in with instead of a password (PRD R1.1).
     var keyPath: String?
+    /// The last connection measurement (PRD R3.2), if one was made.
+    var tuning: ConnectionTuning?
 
     var isNASLogin: Bool { nasMountPoint != nil }
     var usesKey: Bool { !(keyPath ?? "").isEmpty }
+    /// The connection count is the measured one.
+    var isTuned: Bool { tuning?.chosen == connections }
 
     var endpoint: SSHEndpoint { SSHEndpoint(host: host, port: port, username: username) }
     var displayName: String { name.isEmpty ? host : name }

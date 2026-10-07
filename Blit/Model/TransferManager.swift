@@ -207,6 +207,12 @@ final class TransferJob: Identifiable {
 
     var transferred: Int64 { Int64(counter.total) + resumedBytes + presentBytes }
 
+    /// A download using the connection count measured for its server (PRD R3.2).
+    var connectionsTuned: Bool {
+        if case .download(let server) = kind { return server.isTuned && connections == server.connections }
+        return false
+    }
+
     /// Histogram scale: the download peak, or (once only checksums remain and
     /// the bars show the server's hash rate) the largest bar shown.
     var histogramScale: Double {

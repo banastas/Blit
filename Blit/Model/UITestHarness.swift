@@ -2939,6 +2939,51 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitTuneTest <log>`: connection auto-tune (PRD R3.2) without a
+    /// server: the count chosen from measured rates, a run over stand-in
+    /// measurements (one count refused, then all), servers saved before
+    /// tuning still loading, and the Link panel's TUNED. Nothing is measured.
+    static func runTuneTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTuneTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            for rates in [[1: 30.0, 2: 58, 3: 86, 4: 88], [1: 100.0, 2: 101, 3: 99, 4: 100], [1: 22.0, 2: 31, 3: 36, 4: 35], [:]] {
+                lines.append("rates \(rates.sorted { $0.key < $1.key }.map { "\($0.key): \(Int($0.value))" }.joined(separator: ", ")) → \(ConnectionTuner.choose(rates).map(String.init) ?? "none")")
+            }
+            struct Refused: LocalizedError { var errorDescription: String? { "too many logins" } }
+            for refuse in [[4], [1, 2, 3, 4]] {
+                var seen: [String] = []
+                let tuning = await ConnectionTuner.run(file: "/files/big.mkv", measure: { count in
+                    if refuse.contains(count) { throw Refused() }
+                    return [1: 30.0, 2: 58, 3: 86, 4: 88][count]!
+                }, progress: { count, result in
+                    switch result {
+                    case .success(let rate): seen.append("\(count): \(Int(rate))")
+                    case .failure(let error): seen.append("\(count): \(error.localizedDescription)")
+                    }
+                })
+                lines.append("refusing \(refuse): \(seen.joined(separator: " · ")) → \(tuning.map { "keep \($0.chosen)" } ?? "nothing kept")")
+            }
+            let old = #"{"id":"6D5E5C51-61D6-4B4F-8B5E-1F1C2B7A9E01","name":"Box","host":"box.example.net","port":22,"username":"ann","startPath":"","connections":3}"#
+            let decoded = try? JSONDecoder().decode(ServerConfig.self, from: Data(old.utf8))
+            lines.append("a server saved before tuning: loads \(decoded != nil) · tuned \(decoded?.isTuned ?? false)")
+            var tuned = decoded ?? ServerConfig()
+            tuned.tuning = ConnectionTuning(date: Date(), rates: [1: 30, 2: 58, 3: 86, 4: 88], chosen: 3, file: "/files/big.mkv")
+            let job = TransferJob(kind: .download(tuned), sources: [], destination: URL(fileURLWithPath: "/tmp"), title: "x", destinationName: "SSD")
+            job.connections = 3
+            lines.append("download at the measured 3: TUNED \(job.connectionsTuned)")
+            tuned.connections = 2
+            let manual = TransferJob(kind: .download(tuned), sources: [], destination: URL(fileURLWithPath: "/tmp"), title: "x", destinationName: "SSD")
+            manual.connections = 2
+            lines.append("set to 2 by hand afterwards: TUNED \(manual.connectionsTuned) · the editor says “now set by hand” \(!tuned.isTuned)")
+            lines.append("files big enough to measure: \(Int64(ConnectionTuner.minimumSize).formatted(.byteCount(style: .file))) and up (\(ConnectionTuner.streams) streams)")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitWatchTest <log>`: watch mode (PRD R5.10) over a local stand-in
     /// for a seedbox folder (test copies only), looking by hand with a 2 s
     /// settle time: what's there when watching begins, a new file once it's
