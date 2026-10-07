@@ -6,6 +6,7 @@
 // the user's changes back.
 
 import AppKit
+import BlitMedia
 import Observation
 import UniformTypeIdentifiers
 
@@ -64,6 +65,8 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     private var isApplying = false
     /// Which of DateForms' forms fits the Modified column.
     private var dateLevel = 1
+    /// Which of VideoInfo's forms the Video column has room for.
+    private var videoLevel = 2
     /// The width the columns were last fitted to, and whether Size had to step out.
     private var fittedRoom: CGFloat?
     private var sizeOut = false
@@ -166,6 +169,9 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         if let modified = table.tableColumn(withIdentifier: FileColumn.modified.identifier) {
             dateLevel = DateForms.level(forWidth: modified.width - 4, font: CellFonts.digits)
         }
+        if let video = table.tableColumn(withIdentifier: FileColumn.video.identifier) {
+            videoLevel = VideoForms.level(forWidth: video.width - 4, font: CellFonts.body)
+        }
         // Refit whenever the list's visible width changes (a pane or the window
         // resized, the sidebar shown or hidden).
         let clip = scrollView.contentView
@@ -243,13 +249,22 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         }
         table.tile()
         table.columnAutoresizingStyle = autoresizing
+        var refill = false
         if let modified = table.tableColumn(withIdentifier: FileColumn.modified.identifier) {
             let level = DateForms.level(forWidth: modified.width - 4, font: CellFonts.digits)
             if level != dateLevel {
                 dateLevel = level
-                refillVisibleRows()
+                refill = true
             }
         }
+        if let video = table.tableColumn(withIdentifier: FileColumn.video.identifier) {
+            let level = VideoForms.level(forWidth: video.width - 4, font: CellFonts.body)
+            if level != videoLevel {
+                videoLevel = level
+                refill = true
+            }
+        }
+        if refill { refillVisibleRows() }
     }
 
     // MARK: The SwiftUI side
@@ -536,6 +551,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
             let other = Panes.shared.comparing ? Panes.shared.other(than: model) : nil
             hasher.combine(other?.current)
             hasher.combine(other?.itemsVersion)
+            let video = ColumnSettings.shared.isShown(FileColumn.video.rawValue)
             for row in viewport.rows where self.rows.indices.contains(row) {
                 let item = self.rows[row]
                 hasher.combine(transfers.status(for: item))
@@ -543,6 +559,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
                     hasher.combine(VerifiedIndex.shared.entry(for: url, size: item.size)?.summary)
                 }
                 if other != nil { hasher.combine(model.comparison(for: item)) }
+                if video { hasher.combine(VideoDetails.shared.info(for: item)) }
             }
             return hasher.finalize()
         }
@@ -666,7 +683,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
             return NameCellView(identifier: column.identifier)
         case .modified: return TextCellView(identifier: column.identifier, font: CellFonts.digits, alignment: .left)
         case .size: return TextCellView(identifier: column.identifier, font: CellFonts.digits, alignment: .right)
-        case .kind: return TextCellView(identifier: column.identifier, font: CellFonts.body, alignment: .left)
+        case .kind, .video: return TextCellView(identifier: column.identifier, font: CellFonts.body, alignment: .left)
         case .status: return StatusCellView(identifier: column.identifier)
         }
     }
@@ -687,6 +704,11 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
                 text.show(item.isDirectory ? "—" : item.size.formatted(.byteCount(style: .file)))
             case .kind:
                 text.show(item.kind)
+            case .video:
+                // Read in the background: blank until it lands.
+                let info = VideoDetails.shared.info(for: item)
+                let forms = info?.forms ?? []
+                text.show(forms.isEmpty ? "" : forms[min(videoLevel, forms.count - 1)], help: info?.details)
             default:
                 break
             }
@@ -720,11 +742,19 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     func tableViewColumnDidResize(_ notification: Notification) {
-        guard let column = notification.userInfo?["NSTableColumn"] as? NSTableColumn,
-              FileColumn(column.identifier) == .modified else { return }
-        let level = DateForms.level(forWidth: column.width - 4, font: CellFonts.digits)
-        guard level != dateLevel else { return }
-        dateLevel = level
+        guard let column = notification.userInfo?["NSTableColumn"] as? NSTableColumn else { return }
+        switch FileColumn(column.identifier) {
+        case .modified:
+            let level = DateForms.level(forWidth: column.width - 4, font: CellFonts.digits)
+            guard level != dateLevel else { return }
+            dateLevel = level
+        case .video:
+            let level = VideoForms.level(forWidth: column.width - 4, font: CellFonts.body)
+            guard level != videoLevel else { return }
+            videoLevel = level
+        default:
+            return
+        }
         // Never from inside the table's own resize.
         DispatchQueue.main.async { [weak self] in self?.refillVisibleRows() }
     }

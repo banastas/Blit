@@ -1,19 +1,21 @@
-// The file list's columns (PRD R2.6): Name, Modified, Size, Status and Kind.
-// Which ones show is ColumnSettings' (shared by both panes and View ›
+// The file list's columns (PRD R2.6): Name, Modified, Size, Video, Status and
+// Kind. Which ones show is ColumnSettings' (shared by both panes and View ›
 // Columns); Name always shows.
 
 import AppKit
+import BlitMedia
 
 /// A column of the file list. The raw value is both the table column's
 /// identifier and its id in ColumnSettings.
 enum FileColumn: String, CaseIterable {
-    case name, modified, size, status, kind
+    case name, modified, size, video, status, kind
 
     var title: String {
         switch self {
         case .name: "Name"
         case .modified: "Modified"
         case .size: "Size"
+        case .video: "Video"
         case .status: "Status"
         case .kind: "Kind"
         }
@@ -24,7 +26,7 @@ enum FileColumn: String, CaseIterable {
         case .name: 110
         case .modified: 64
         case .size: 54
-        case .status, .kind: 70
+        case .video, .status, .kind: 70
         }
     }
 
@@ -33,19 +35,20 @@ enum FileColumn: String, CaseIterable {
         case .name: 280
         case .modified: 132
         case .size: 70
+        case .video: 150
         case .status: 110
         case .kind: 120
         }
     }
 
-    /// How the column sorts (Status doesn't).
+    /// How the column sorts (Status and Video don't).
     var sortColumn: SortColumn? {
         switch self {
         case .name: .name
         case .modified: .modified
         case .size: .size
         case .kind: .kind
-        case .status: nil
+        case .status, .video: nil
         }
     }
 
@@ -68,14 +71,24 @@ enum FileColumn: String, CaseIterable {
     }
 }
 
+/// The Video column's forms (VideoInfo.forms): the longest whose widest
+/// sample fits, the same for every row, as DateForms does for dates.
+@MainActor
+enum VideoForms {
+    static func level(forWidth width: CGFloat, font: NSFont) -> Int {
+        let samples = VideoInfo.widestForms
+        return samples.indices.first { CellDrawing.width(samples[$0], font: font) <= width } ?? samples.count - 1
+    }
+}
+
 /// Fits the columns to a pane's width, worked out from the width alone so the
 /// same width always gives the same columns. Every column but Name has a set
 /// width and Name takes the rest. Only if that would push Name under its
-/// minimum do Modified, then Size, give up width (the date then shows a
-/// shorter form); if even that isn't enough, Size steps out until there's
-/// room again, with 20 pt to spare so it doesn't flap.
+/// minimum do Video, Modified, then Size give up width (Video and the date
+/// then show shorter forms); if even that isn't enough, Size steps out until
+/// there's room again, with 20 pt to spare so it doesn't flap.
 enum ColumnFit {
-    static let fixedWidths: [FileColumn: CGFloat] = [.modified: 132, .size: 70, .status: 100, .kind: 120]
+    static let fixedWidths: [FileColumn: CGFloat] = [.modified: 132, .size: 70, .video: 150, .status: 100, .kind: 120]
 
     struct Result: Equatable {
         var widths: [FileColumn: CGFloat]
@@ -98,7 +111,7 @@ enum ColumnFit {
         var widths: [FileColumn: CGFloat] = [:]
         for column in columns where column != .name { widths[column] = fixedWidths[column] ?? column.idealWidth }
         var total = needed(columns) { $0 == .name ? $0.minWidth : widths[$0] ?? $0.idealWidth }
-        for column in [FileColumn.modified, .size] where total > room {
+        for column in [FileColumn.video, .modified, .size] where total > room {
             guard let current = widths[column] else { continue }
             let give = min(total - room, current - column.minWidth)
             if give > 0 {

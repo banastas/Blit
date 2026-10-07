@@ -24,18 +24,25 @@ final class ColumnSettings {
     }
 
     private init() {
-        if let saved = UserDefaults.standard.stringArray(forKey: Self.key) {
-            hidden = Set(saved)
+        let defaults = UserDefaults.standard
+        // Video (0.2.45) starts hidden, for existing installs too: once.
+        let videoIntroduced = defaults.bool(forKey: "videoColumnIntroduced")
+        if let saved = defaults.stringArray(forKey: Self.key) {
+            hidden = Set(saved).union(videoIntroduced ? [] : ["video"])
         } else {
             // Two-pane defaults (0.2.22): Status becomes a tag after the name and
             // Kind waits in View › Columns, so both panes fit on one line.
-            hidden = ["status", "kind"]
+            hidden = ["status", "kind", "video"]
+        }
+        if !videoIntroduced, !TransferManager.isIsolated {
+            defaults.set(true, forKey: "videoColumnIntroduced")
+            if defaults.stringArray(forKey: Self.key) != nil { defaults.set(Array(hidden).sorted(), forKey: Self.key) }
         }
     }
 
     /// The columns that can be hidden (Name always shows), for View › Columns.
     static let optional: [(id: String, title: String)] = [
-        ("modified", "Modified"), ("size", "Size"), ("status", "Status"), ("kind", "Kind"),
+        ("modified", "Modified"), ("size", "Size"), ("video", "Video"), ("status", "Status"), ("kind", "Kind"),
     ]
 
     func isShown(_ id: String) -> Bool { !hidden.contains(id) }

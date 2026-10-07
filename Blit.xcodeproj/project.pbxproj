@@ -10,6 +10,7 @@
 		0070D78B9CBF86CD05DA5E92 /* BlitLocal in Frameworks */ = {isa = PBXBuildFile; productRef = 9E73C8E9DF9E24D437044B45 /* BlitLocal */; };
 		5E8C258AD25D807D639691B8 /* BlitSFTP in Frameworks */ = {isa = PBXBuildFile; productRef = F2F8900B77EC139D492B726B /* BlitSFTP */; };
 		BFAD78460733F91A0F9EF512 /* BlitRemote in Frameworks */ = {isa = PBXBuildFile; productRef = DC9DF049EAC40AE148D40519 /* BlitRemote */; };
+		B11D0ED1A000000000000001 /* BlitMedia in Frameworks */ = {isa = PBXBuildFile; productRef = B11D0ED1A000000000000002 /* BlitMedia */; };
 		5A11C0DE0000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5A11C0DE0000000000000002 /* Sparkle */; };
 /* End PBXBuildFile section */
 
@@ -33,6 +34,7 @@
 				0070D78B9CBF86CD05DA5E92 /* BlitLocal in Frameworks */,
 				BFAD78460733F91A0F9EF512 /* BlitRemote in Frameworks */,
 				5E8C258AD25D807D639691B8 /* BlitSFTP in Frameworks */,
+				B11D0ED1A000000000000001 /* BlitMedia in Frameworks */,
 				5A11C0DE0000000000000001 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -79,6 +81,7 @@
 				DC9DF049EAC40AE148D40519 /* BlitRemote */,
 				9E73C8E9DF9E24D437044B45 /* BlitLocal */,
 				F2F8900B77EC139D492B726B /* BlitSFTP */,
+				B11D0ED1A000000000000002 /* BlitMedia */,
 				5A11C0DE0000000000000002 /* Sparkle */,
 			);
 			productName = Blit;
@@ -292,6 +295,10 @@
 		F2F8900B77EC139D492B726B /* BlitSFTP */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BlitSFTP;
+		};
+		B11D0ED1A000000000000002 /* BlitMedia */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BlitMedia;
 		};
 		5A11C0DE0000000000000002 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;

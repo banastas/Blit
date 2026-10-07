@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "BlitSFTP", targets: ["BlitSFTP"]),
         .library(name: "BlitRemote", targets: ["BlitRemote"]),
         .library(name: "BlitLocal", targets: ["BlitLocal"]),
+        .library(name: "BlitMedia", targets: ["BlitMedia"]),
         .executable(name: "blit", targets: ["blit"]),
     ],
     dependencies: [
@@ -33,9 +34,12 @@ let package = Package(
         ),
         // Verified copies between local volumes and SMB-mounted NAS shares.
         .target(name: "BlitLocal", dependencies: ["BlitRemote", "BlitSFTP"]),
+        // Video files' headers (Matroska, MP4) for the file list's Video column.
+        .target(name: "BlitMedia"),
         .executableTarget(name: "blit", dependencies: ["BlitRemote", "BlitSFTP", "BlitLocal"]),
         .testTarget(name: "BlitSFTPTests", dependencies: ["BlitSFTP"]),
         .testTarget(name: "BlitRemoteTests", dependencies: ["BlitRemote", "BlitSFTP"]),
         .testTarget(name: "BlitLocalTests", dependencies: ["BlitLocal", "BlitRemote"]),
+        .testTarget(name: "BlitMediaTests", dependencies: ["BlitMedia"], resources: [.copy("Fixtures")]),
     ]
 )

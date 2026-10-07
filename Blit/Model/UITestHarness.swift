@@ -2939,6 +2939,73 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitVideoColumnTest <log> -BlitVideoColumnTestDir <fixtures>`: the
+    /// Video column over BlitMedia's test files (copied in with a folder, a
+    /// text file and an .mkv that isn't one): each row's text and tooltip as
+    /// the reads land, the forms at three column widths, and a file that
+    /// changes being read again.
+    static func runVideoColumnTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitVideoColumnTest"),
+              let fixtures = UserDefaults.standard.string(forKey: "BlitVideoColumnTestDir") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-video-column")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root.appendingPathComponent("Extras"), withIntermediateDirectories: true)
+            for name in (try? fm.contentsOfDirectory(atPath: fixtures)) ?? [] {
+                try? fm.copyItem(atPath: fixtures + "/" + name, toPath: root.appendingPathComponent(name).path)
+            }
+            fm.createFile(atPath: root.appendingPathComponent("notes.txt").path, contents: Data("x".utf8))
+            fm.createFile(atPath: root.appendingPathComponent("broken.mkv").path, contents: Data("not a video".utf8))
+            defer { try? fm.removeItem(at: root) }
+            guard let model = PaneTabs.shared.current?.first else { return lines.append("no pane") }
+            let wasShown = ColumnSettings.shared.isShown("video")
+            ColumnSettings.shared.set("video", shown: true)
+            defer { ColumnSettings.shared.set("video", shown: wasShown) }
+            VideoDetails.shared.reset()
+            model.open(.local(root))
+            model.sort(by: .name)
+            try? await Task.sleep(for: .seconds(1))
+            guard let table = FileListRegistry.table(for: model) else { return lines.append("no list") }
+            let videoColumn = table.column(withIdentifier: FileColumn.video.identifier)
+            guard videoColumn >= 0 else { return lines.append("no Video column") }
+            lines.append("columns: " + table.tableColumns.filter { !$0.isHidden }.map(\.title).joined(separator: " | "))
+            @MainActor func shown(_ label: String) async {
+                for _ in 0..<50 where VideoDetails.shared.busy { try? await Task.sleep(for: .milliseconds(100)) }
+                try? await Task.sleep(for: .milliseconds(500))
+                lines.append("\(label) (column \(Int(table.tableColumns[videoColumn].width)) pt):")
+                for row in 0..<table.numberOfRows {
+                    let name = (table.view(atColumn: 0, row: row, makeIfNecessary: false) as? NameCellView)?.item?.name ?? "?"
+                    let cell = table.view(atColumn: videoColumn, row: row, makeIfNecessary: false)
+                    let text = cell?.accessibilityLabel() ?? "-"
+                    lines.append("  \(name): \(text.isEmpty ? "(blank)" : text)")
+                }
+            }
+            await shown("read")
+            for name in ["hdr10-vui-head.mkv", "sdr-1080p.mp4"] {
+                guard let row = model.rows.firstIndex(where: { $0.name == name }),
+                      let tip = table.view(atColumn: videoColumn, row: row, makeIfNecessary: false)?.toolTip else { continue }
+                lines.append("  tooltip \(name): " + tip.replacingOccurrences(of: "\n", with: " / "))
+            }
+            for width in [320.0, 80.0, 150.0] {
+                table.tableColumns[videoColumn].width = width
+                await shown("at \(Int(width)) pt")
+            }
+            // A file changes (its size): it's read again.
+            let target = root.appendingPathComponent("sdr-1080p.mp4")
+            try? fm.removeItem(at: target)
+            try? fm.copyItem(atPath: fixtures + "/hdr10-2160p.mp4", toPath: target.path)
+            model.reload()
+            try? await Task.sleep(for: .milliseconds(800))
+            await shown("sdr-1080p.mp4 replaced by a 2160p HDR10 file")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitCompareTest <log>` (with `-showSecondPane YES`): View › Compare
     /// Panes between an "SSD" and a "NAS" folder. Each row's mark, from the
     /// model and as its cell shows it, the path bar's counts and the menu
