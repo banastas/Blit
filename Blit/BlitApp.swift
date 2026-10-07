@@ -109,7 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         UserDefaults.standard.synchronize()
-        MainActor.assumeIsolated { BrowserModel.cleanUpPreviewDownloads() }
+        MainActor.assumeIsolated {
+            BrowserModel.cleanUpPreviewDownloads()
+            // Every pane's folder is being left: what's in it now isn't new next time.
+            PaneTabs.shared.allBrowsers.forEach { $0.noteLeaving() }
+            FolderVisits.saveNow()
+        }
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { _exit(0) }
     }
 }

@@ -140,7 +140,10 @@ final class PaneTabs {
     func close(_ id: UUID) {
         guard tabs.count > 1, let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let closing = tabs[index]
-        [closing.first, closing.second].compactMap { $0 }.forEach { $0.previewURL = nil }
+        [closing.first, closing.second].compactMap { $0 }.forEach {
+            $0.previewURL = nil
+            $0.noteLeaving()
+        }
         tabs.remove(at: index)
         if closing.id == selectedID { show(tabs[min(index, tabs.count - 1)]) } else { save() }
     }

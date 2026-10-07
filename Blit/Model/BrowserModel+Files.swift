@@ -34,6 +34,7 @@ extension BrowserModel {
         Task {
             do {
                 let created = try await operations.makeFolder(named: name, in: folder)
+                noteOwn(created.lastComponent)
                 selection = [created]
                 renaming = created
             } catch {
@@ -77,6 +78,7 @@ extension BrowserModel {
         Task {
             do {
                 let made = try await operations.makeFolder(named: name, in: folder, moving: items.map(\.location))
+                noteOwn(made.folder.lastComponent)
                 selection = [made.folder]
                 renaming = made.folder
                 if let problem = made.problem { report(problem, action: "MOVE") }
@@ -99,6 +101,7 @@ extension BrowserModel {
 
     func commitBatchRename(_ rows: [RenamePlanRow]) {
         let plan = rows.map { (item: $0.item.location, name: $0.newName) }
+        plan.forEach { noteOwn($0.name) }
         Task {
             if let message = await operations.renameMany(plan) { report(message, action: "RENAME") }
             let renamed = plan.compactMap { entry in entry.item.parent.map { FileOperations.child(of: $0, named: entry.name) } }
@@ -190,6 +193,7 @@ extension BrowserModel {
         // Byte comparison: "café" typed (NFC) over "café" stored (NFD) is a real
         // rename for a Linux NAS, though Swift's == calls them equal.
         guard Array(name.utf8) != Array(item.name.utf8) else { return }
+        noteOwn(name)
         Task {
             do {
                 selection = [try await operations.rename(item.location, to: name)]
@@ -227,6 +231,8 @@ extension BrowserModel {
     /// A drop onto this list or one of its folders: Finder's rules, ⌥ copies.
     /// `copy` is the ⌥ state captured at drop time, when the drop is read later.
     func drop(_ sources: [BrowseLocation], into folder: BrowseLocation, name: String, copy: Bool? = nil) {
+        // What's dropped here isn't news to whoever dropped it.
+        if current.map({ FileOperations.same($0, folder) }) == true { sources.forEach { noteOwn($0.lastComponent) } }
         let mode: FileOperations.Mode = (copy ?? NSEvent.modifierFlags.contains(.option)) ? .copy : .automatic
         run(sources: sources, into: folder, name: name, mode: mode)
     }

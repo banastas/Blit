@@ -89,6 +89,9 @@ final class BrowserModel {
     /// Where the AppKit list was scrolled when it last showed this pane (a tab
     /// switch shows another tab's pane in the same list).
     @ObservationIgnored var listScrollOrigin: NSPoint?
+    /// What this folder listed when it was last left (FolderVisits): anything
+    /// else is new since then. Fixed for the visit; nil on a first visit.
+    @ObservationIgnored private(set) var seenNames: Set<String>?
     /// The AppKit list showing this pane, which takes the keyboard when asked
     /// (requestKeyboardFocus), and whether it was asked before one showed it.
     @ObservationIgnored weak var keyboardTarget: (any ListKeyboardTarget)?
@@ -286,6 +289,25 @@ final class BrowserModel {
         if let current { show(current) }
     }
 
+    /// Whether `item` (in this folder, not an expanded one) wasn't here when the
+    /// folder was last left.
+    func isNew(_ item: FileItem) -> Bool {
+        guard item.depth == 0, let seenNames else { return false }
+        return !seenNames.contains(item.name)
+    }
+
+    /// This folder is being left (another folder, a closed tab, quitting):
+    /// what it lists is remembered for the next visit.
+    func noteLeaving() {
+        guard let current, !items.isEmpty else { return }
+        FolderVisits.left(current, names: items.map(\.name))
+    }
+
+    /// Names this pane made itself (a rename, a new folder) aren't new.
+    func noteOwn(_ name: String) {
+        seenNames?.insert(name)
+    }
+
     /// Reloads `models` now, or once the mouse button is up: a listing that
     /// changes under a drag moves the rows (and the folder) under the pointer.
     static func reloadWhenIdle(_ models: [BrowserModel]) {
@@ -299,6 +321,8 @@ final class BrowserModel {
 
     private func show(_ location: BrowseLocation) {
         if location != current {
+            noteLeaving()
+            seenNames = FolderVisits.seen(location)
             searchText = ""
             // A new folder: start collapsed, showing the last listing (if any)
             // at once while a fresh one loads.

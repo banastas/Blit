@@ -132,6 +132,9 @@ final class NameCellView: DrawnCellView {
     private var editor: NSTextField?
     private var verifiedHelp: String?
     private var partialHelp: String?
+    /// New since this folder was last left: an accent dot after the name.
+    private var isNew = false
+    private var newRect = NSRect.zero
     private var status: FileStatus?
     /// Where each part was drawn, for tooltips and the drag rule.
     private(set) var nameRect = NSRect.zero
@@ -160,8 +163,9 @@ final class NameCellView: DrawnCellView {
         let status = context.statusAfterName ? browser.operations.transfers.status(for: item) : nil
         let expanded = item.isDirectory && browser.expanded.contains(item.location)
         let loading = expanded && browser.loadingChildren.contains(item.location)
+        let new = browser.isNew(item)
         let changed = item != self.item || verifiedHelp != self.verifiedHelp || partialHelp != self.partialHelp
-            || status != self.status || expanded != isExpanded || loading != isLoading
+            || status != self.status || expanded != isExpanded || loading != isLoading || new != isNew
         if item.id != self.item?.id || item.modified != self.item?.modified || icon == nil {
             showIcon(for: item, previews: context.iconPreviews)
         }
@@ -171,8 +175,9 @@ final class NameCellView: DrawnCellView {
         self.partialHelp = partialHelp
         self.status = status
         isExpanded = expanded
+        isNew = new
         if changed {
-            setAccessibilityLabel(([item.name] + [entry == nil ? nil : "Verified", item.partial == nil ? nil : "Partial download",
+            setAccessibilityLabel(([item.name] + [new ? "New" : nil, entry == nil ? nil : "Verified", item.partial == nil ? nil : "Partial download",
                                                   status.map { "Status: \($0.text)" }].compactMap { $0 }).joined(separator: ", "))
             needsLayout = true
             needsDisplay = true
@@ -241,7 +246,7 @@ final class NameCellView: DrawnCellView {
     }
 
     /// Where the drawn content ends: the name and the marks after it.
-    var contentEnd: CGFloat { [nameRect, verifiedRect, partialRect, statusRect].map(\.maxX).max() ?? 0 }
+    var contentEnd: CGFloat { [nameRect, newRect, verifiedRect, partialRect, statusRect].map(\.maxX).max() ?? 0 }
 
     /// The icon and the name, as the drag image.
     override var draggingImageComponents: [NSDraggingImageComponent] {
@@ -279,6 +284,7 @@ final class NameCellView: DrawnCellView {
         x += 16 + 6
         let statusWidth: CGFloat = status.map { StatusDrawing(status: $0, font: CellFonts.caption).width } ?? 0
         var trailing: CGFloat = 0
+        if isNew { trailing += 5 + 7 }
         if verifiedHelp != nil { trailing += 5 + 9 }
         if partialHelp != nil { trailing += 5 + 9 }
         if status != nil { trailing += 5 + statusWidth }
@@ -287,9 +293,14 @@ final class NameCellView: DrawnCellView {
         nameTruncated = nameWidth < natural
         nameRect = NSRect(x: x, y: 0, width: nameWidth, height: height)
         x += nameWidth
+        newRect = .zero
         verifiedRect = .zero
         partialRect = .zero
         statusRect = .zero
+        if isNew {
+            newRect = NSRect(x: x + 5, y: centered(7), width: 7, height: 7)
+            x += 5 + 7
+        }
         if verifiedHelp != nil {
             verifiedRect = NSRect(x: x + 5, y: centered(9), width: 9, height: 9)
             x += 5 + 9
@@ -308,7 +319,7 @@ final class NameCellView: DrawnCellView {
         removeAllToolTips()
         if disclosureRect != .zero { addToolTip(disclosureRect, owner: self, userData: nil) }
         if nameTruncated { addToolTip(nameRect, owner: self, userData: nil) }
-        for rect in [verifiedRect, partialRect, statusRect] where rect != .zero { addToolTip(rect, owner: self, userData: nil) }
+        for rect in [newRect, verifiedRect, partialRect, statusRect] where rect != .zero { addToolTip(rect, owner: self, userData: nil) }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -335,6 +346,10 @@ final class NameCellView: DrawnCellView {
         guard editor == nil else { return }
         CellDrawing.draw(item.name, in: nameRect, font: CellFonts.body,
                          color: emphasized ? .alternateSelectedControlTextColor : .labelColor, lineBreak: .byTruncatingMiddle)
+        if newRect != .zero {
+            (emphasized ? NSColor.alternateSelectedControlTextColor : NSColor.controlAccentColor).setFill()
+            NSBezierPath(ovalIn: newRect).fill()
+        }
         if verifiedRect != .zero { CellDrawing.draw(template: PixelGlyph.check.image(size: 9), in: verifiedRect, color: glyphColor) }
         if partialRect != .zero { CellDrawing.draw(template: PixelGlyph.partial.image(size: 9), in: partialRect, color: glyphColor) }
         if let status, statusRect != .zero { StatusDrawing(status: status, font: CellFonts.caption).draw(in: statusRect, emphasized: emphasized) }
@@ -378,6 +393,7 @@ extension NameCellView {
 extension NameCellView: NSViewToolTipOwner {
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
         if disclosureRect.contains(point) { return isExpanded ? "Hide contents" : "Show contents" }
+        if newRect.contains(point) { return "New since you last left this folder" }
         if verifiedRect.contains(point) { return verifiedHelp ?? "" }
         if partialRect.contains(point) { return partialHelp ?? "" }
         if statusRect.contains(point) { return status?.help ?? "" }

@@ -2878,6 +2878,62 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitNewSinceTest <log>`: new since the last visit. A folder is left
+    /// and a file appears in it; back there, that file has the mark and the
+    /// others don't. A file renamed here, or a new folder made here, isn't new.
+    static func runNewSinceTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitNewSinceTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-new-since")
+            try? fm.removeItem(at: root)
+            let watched = root.appendingPathComponent("Downloads"), elsewhere = root.appendingPathComponent("Elsewhere")
+            for folder in [watched, elsewhere] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            for name in ["old-1.mkv", "old-2.mkv"] { fm.createFile(atPath: watched.appendingPathComponent(name).path, contents: nil) }
+            defer { try? fm.removeItem(at: root) }
+            guard let model = PaneTabs.shared.current?.first else { return lines.append("no pane") }
+            @MainActor func marks() -> String {
+                let list = FileListRegistry.table(for: model)
+                return model.rows.map { item in
+                    let cell = list.flatMap { table in model.rows.firstIndex(of: item).flatMap { table.view(atColumn: 0, row: $0, makeIfNecessary: false) } }
+                    return "\(item.name)\(model.isNew(item) ? " (new)" : "")\((cell?.accessibilityLabel() ?? "").contains("New") ? " [dot]" : "")"
+                }.joined(separator: " · ")
+            }
+            @MainActor func visit(_ url: URL) async {
+                model.open(.local(url))
+                for _ in 0..<20 where model.current?.localURL?.lastPathComponent != url.lastPathComponent || model.items.isEmpty && url == watched {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                try? await Task.sleep(for: .milliseconds(700))
+            }
+            await visit(watched)
+            lines.append("first visit: \(marks())")
+            await visit(elsewhere)
+            fm.createFile(atPath: watched.appendingPathComponent("fresh.mkv").path, contents: nil)
+            await visit(watched)
+            lines.append("back again: \(marks())")
+            if let old = model.rows.first(where: { $0.name == "old-1.mkv" }) {
+                model.beginRename(old)
+                try? await Task.sleep(for: .milliseconds(500))
+                model.commitRename(old, to: "renamed.mkv")
+                try? await Task.sleep(for: .milliseconds(1200))
+            }
+            model.newFolder()
+            try? await Task.sleep(for: .milliseconds(1200))
+            model.cancelRename()
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("after a rename and a new folder here: \(marks())")
+            await visit(elsewhere)
+            await visit(watched)
+            lines.append("the visit after: \(marks())")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitNativeCellsTest <log>`: the AppKit
     /// list's rows as its cells show them, through a stand-in transfer's
     /// statuses (after the name, then in the Status column), a verified file,

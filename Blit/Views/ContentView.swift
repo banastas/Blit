@@ -619,6 +619,7 @@ struct ContentView: View {
         UITestHarness.runNativeDropTestIfRequested(transfers: transfers)
         UITestHarness.runNativeHardeningTestIfRequested(transfers: transfers)
         UITestHarness.runRenameScrollTestIfRequested()
+        UITestHarness.runNewSinceTestIfRequested()
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)
