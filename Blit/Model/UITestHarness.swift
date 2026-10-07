@@ -3051,6 +3051,33 @@ enum UITestHarness {
             lines.append("after new folder with selection: \(listing()) · made \(made?.folder.lastComponent ?? "none") · problem \(made?.problem ?? "none") · undo: \(undo.undoActionName)")
             undo.undo(); await settle()
             lines.append("after undo:   \(listing())")
+
+            // Rename With Preset: each preset titled with what it would do;
+            // applied as one rename, one step to undo.
+            let movie = root.appendingPathComponent("The.Gentlemen.2019.UHD.BluRay.2160p.mkv")
+            let show = root.appendingPathComponent("South.Park.S29E01.1080p.WEB.h264-GRACE.mkv")
+            for url in [movie, show] { fm.createFile(atPath: url.path, contents: Data("x".utf8)) }
+            if let browser = BrowserModel.active {
+                @MainActor func fileItem(_ url: URL) -> FileItem {
+                    FileItem(location: .local(url), name: url.lastPathComponent, isDirectory: false, modified: Date(), size: 1, kind: "Video")
+                }
+                @MainActor func presets(_ items: [FileItem]) -> NSMenu? {
+                    FileMenuBuilder.items(for: items, in: browser).first { $0.title == "Rename With Preset" }?.submenu
+                }
+                @MainActor func describe(_ menu: NSMenu?) -> String {
+                    (menu?.items ?? []).map { $0.isSeparatorItem ? "—" : $0.title + ($0.isEnabled ? "" : " (off)") }.joined(separator: " | ")
+                }
+                lines.append("presets for the movie: \(describe(presets([fileItem(movie)])))")
+                let both = presets([fileItem(movie), fileItem(show)])
+                lines.append("presets for both: \(describe(both))")
+                if let both, let index = both.items.firstIndex(where: { $0.title.hasPrefix("Movies") }) {
+                    both.performActionForItem(at: index)
+                }
+                await settle(); await settle()
+                lines.append("after the Movies preset: \(listing()) · undo: \(undo.undoActionName)")
+                undo.undo(); await settle()
+                lines.append("after undo:   \(listing())")
+            }
             lines.append("done")
             try? fm.removeItem(at: root)
         }

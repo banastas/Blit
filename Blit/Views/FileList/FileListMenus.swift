@@ -52,6 +52,7 @@ enum FileMenuBuilder {
             menu.append(action("New Folder with Selection (\(items.count) Items)") { browser.newFolder(with: items) })
         }
         menu.append(action(items.count == 1 ? "Rename" : "Rename \(items.count) Items…") { browser.beginRename(items) })
+        if let presets = presetsMenu(items, browser: browser) { menu.append(presets) }
         menu += sendMenus(items, browser: browser)
         // The other pane of a two-pane window (F5 / F6 from the keyboard).
         if let other = BrowserModel.oppositePane?(browser), let there = other.current, there != browser.current {
@@ -86,6 +87,45 @@ enum FileMenuBuilder {
         items.forEach(menu.addItem)
         item.submenu = menu
         return item
+    }
+
+    /// Rename With Preset ▸: each naming preset (Rename N Items keeps them),
+    /// titled with what it would do: the new name for one item, how many
+    /// change for several (each old and new name in its help tag). Applied as
+    /// one rename, one step to undo; a preset that changes nothing is off.
+    private static func presetsMenu(_ items: [FileItem], browser: BrowserModel) -> NSMenuItem? {
+        let presets = RenamePresets.all()
+        guard !presets.isEmpty else { return nil }
+        var entries: [NSMenuItem] = []
+        for preset in presets {
+            let rows = RenamePlan.rows(items, steps: preset.steps, siblings: browser.names(in:))
+            let renamed = rows.filter { $0.changes && $0.problem == nil }
+            let title: String
+            if items.count == 1, let row = rows.first {
+                if let problem = row.problem, row.changes {
+                    title = "\(preset.name) → \(shortened(row.newName)) (\(problem))"
+                } else {
+                    title = row.changes ? "\(preset.name) → \(shortened(row.newName))" : "\(preset.name) — no change"
+                }
+            } else {
+                title = renamed.isEmpty ? "\(preset.name) — no change" : "\(preset.name) — \(renamed.count) of \(items.count) renamed"
+            }
+            let changes = rows.filter(\.changes).prefix(8).map { row in
+                "\(row.item.name) → \(row.newName)\(row.problem.map { " (\($0))" } ?? "")"
+            }
+            entries.append(action(title, enabled: !renamed.isEmpty, help: changes.isEmpty ? nil : changes.joined(separator: "\n")) {
+                browser.commitBatchRename(renamed)
+            })
+        }
+        entries.append(.separator())
+        entries.append(action("Edit Presets…") { browser.batchRenameItems = items })
+        return submenu("Rename With Preset", entries)
+    }
+
+    /// A long name shortened in the middle, for a menu title.
+    private static func shortened(_ name: String, to limit: Int = 60) -> String {
+        guard name.count > limit else { return name }
+        return name.prefix(limit / 2 - 1) + "…" + name.suffix(limit / 2)
     }
 
     /// Open With ▸: the default app first, then every other app that opens

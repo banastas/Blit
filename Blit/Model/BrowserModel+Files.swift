@@ -42,6 +42,14 @@ extension BrowserModel {
         }
     }
 
+    /// What's in `folder` as this list knows it: the folder shown, or a folder
+    /// expanded in it (none for any other).
+    func names(in folder: BrowseLocation) -> [String] {
+        let listed = current.map { FileOperations.same($0, folder) } == true
+            ? items : children.first { FileOperations.same($0.key, folder) }?.value ?? []
+        return listed.map(\.name)
+    }
+
     /// Whether New Folder with Selection applies: several items, all in one
     /// folder (with folders expanded, a selection can span several).
     func canMakeFolder(with items: [FileItem]) -> Bool { Self.oneFolder(holding: items.map(\.location)) != nil }
@@ -62,10 +70,7 @@ extension BrowserModel {
     /// Finder. One step to undo.
     func newFolder(with items: [FileItem]) {
         guard canMakeFolder(with: items), let folder = items[0].location.parent else { return }
-        // What's already in that folder: this one, or a folder expanded in it.
-        let siblings = current.map { FileOperations.same($0, folder) } == true
-            ? self.items : children.first { FileOperations.same($0.key, folder) }?.value ?? []
-        let names = Set(siblings.map { $0.name.lowercased() })
+        let names = Set(names(in: folder).map { $0.lowercased() })
         var name = "New Folder With Items"
         var n = 2
         while names.contains(name.lowercased()) { name = "New Folder With Items \(n)"; n += 1 }
