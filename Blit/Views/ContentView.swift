@@ -136,7 +136,13 @@ struct ContentView: View {
                                secondActive: secondActive, follow: followActivePane, shown: tabShown))
         .onAppear(perform: start)
         .background(alignment: .topLeading) {
-            WindowReader { BrowserModel.activeWindow = $0 }
+            WindowReader { window in
+                BrowserModel.activeWindow = window
+                // A debug test copy never saves its windows: it shares the
+                // installed Blit's saved window state (a test that closed its
+                // window left every later copy, and could leave Blit, with none).
+                if TransferManager.isIsolated { window?.isRestorable = false }
+            }
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)
         }
@@ -612,6 +618,7 @@ struct ContentView: View {
         UITestHarness.runNativeKeysTestIfRequested()
         UITestHarness.runNativeDropTestIfRequested(transfers: transfers)
         UITestHarness.runNativeHardeningTestIfRequested(transfers: transfers)
+        UITestHarness.runRenameScrollTestIfRequested()
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
         UITestHarness.runMenuBarTestIfRequested(transfers: transfers)

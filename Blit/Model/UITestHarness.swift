@@ -2797,6 +2797,79 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitRenameScrollTest <log>`: renaming rows at different places in a
+    /// long list (in view, at the bottom edge under the path bar, just below
+    /// it, far down): the field must show and keep the keyboard.
+    static func runRenameScrollTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitRenameScrollTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-rename-scroll")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            for index in 0..<80 { fm.createFile(atPath: root.appendingPathComponent(String(format: "file-%02d.txt", index)).path, contents: nil) }
+            defer { try? fm.removeItem(at: root) }
+            guard let model = PaneTabs.shared.current?.first, let window = BrowserModel.activeWindow else { return lines.append("no window") }
+            model.open(.local(root))
+            model.sort(by: .name)
+            for _ in 0..<30 where model.rows.count < 80 { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .milliseconds(600))
+            guard let list = FileListRegistry.coordinator(for: model) else { return lines.append("no list") }
+            let table = list.table
+            let visible = table.rows(in: table.visibleRect)
+            let inset = table.enclosingScrollView?.contentInsets.bottom ?? 0
+            lines.append("rows in view \(visible.location)…\(visible.location + visible.length - 1) · path bar inset \(Int(inset))")
+            let last = visible.location + visible.length - 1
+            for (label, row) in [("in view", visible.location + 3), ("last in view", last), ("just below", last + 1),
+                                 ("far below", 75), ("back near the top", 2)] {
+                guard model.rows.indices.contains(row) else { continue }
+                model.beginRename(model.rows[row])
+                try? await Task.sleep(for: .seconds(1))
+                let editing = (window.firstResponder as? NSText)?.delegate === list.renameField && list.renameField != nil
+                let inWindow = list.renameField?.window != nil
+                lines.append("\(label) (row \(row)): field \(list.renameField != nil) · in the window \(inWindow) · keyboard in it \(editing) · renaming \(model.renaming != nil)")
+                model.cancelRename()
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            // Renaming while the folder reloads (a transfer finishing into it),
+            // newest first: a new file comes in at the top; the folder being
+            // renamed gets something new inside (and moves to the top).
+            try? fm.createDirectory(at: root.appendingPathComponent("Pack"), withIntermediateDirectories: true)
+            model.sort(by: .modified)
+            model.reload()
+            try? await Task.sleep(for: .seconds(1.2))
+            @MainActor func state() -> String {
+                let editing = (window.firstResponder as? NSText)?.delegate === list.renameField && list.renameField != nil
+                let fieldRow = list.renameField.map { list.table.row(for: $0) } ?? -1
+                let itemRow = model.renaming.flatMap { location in model.rows.firstIndex { $0.location == location } } ?? -1
+                return "field \(list.renameField != nil) · keyboard in it \(editing) · renaming \(model.renaming?.lastComponent ?? "none") · field on row \(fieldRow), item on row \(itemRow)"
+            }
+            var counter = 0
+            for (label, name) in [("a file mid-list", "file-40.txt"), ("a file near the bottom", "file-05.txt"), ("the folder Pack", "Pack")] {
+                guard let item = model.rows.first(where: { $0.name == name }) else { lines.append("no \(name)"); continue }
+                if let row = model.rows.firstIndex(of: item) { list.table.scrollRowToVisible(row) }
+                try? await Task.sleep(for: .milliseconds(300))
+                model.beginRename(item)
+                try? await Task.sleep(for: .seconds(1))
+                lines.append("renaming \(label): \(state())")
+                counter += 1
+                fm.createFile(atPath: root.appendingPathComponent("new-\(counter).txt").path, contents: nil)
+                if name == "Pack" { fm.createFile(atPath: root.appendingPathComponent("Pack/inside.txt").path, contents: nil) }
+                BrowserModel.reloadWhenIdle([model])
+                try? await Task.sleep(for: .seconds(1.5))
+                lines.append("  after a reload: \(state())")
+                model.cancelRename()
+                try? await Task.sleep(for: .milliseconds(500))
+                lines.append("  once it ends: the list shows the new files \(list.table.numberOfRows == model.rows.count) · \(name) on row \(model.rows.firstIndex { $0.name == name } ?? -1) (table: \((0..<list.table.numberOfRows).first { (list.table.view(atColumn: 0, row: $0, makeIfNecessary: false) as? NameCellView)?.accessibilityLabel()?.hasPrefix(name) == true } ?? -1))")
+            }
+            lines.append("done")
+        }
+    }
+
     /// `-BlitNativeCellsTest <log>`: the AppKit
     /// list's rows as its cells show them, through a stand-in transfer's
     /// statuses (after the name, then in the Status column), a verified file,
@@ -4825,6 +4898,13 @@ enum UITestHarness {
             }
             lines.append("showing \(browser.current?.lastComponent ?? "nil") · \(browser.rows.count) rows")
             window.makeKeyAndOrderFront(nil)
+            // The window's columns (the sidebar first), as the split view lays them out.
+            @MainActor func splitViews(_ view: NSView) -> [NSSplitView] {
+                (view as? NSSplitView).map { [$0] } ?? view.subviews.flatMap(splitViews)
+            }
+            // A window without saved state (test copies ignore Blit's) starts
+            // with the sidebar collapsed: its points are skipped then.
+            let sidebarShown = window.contentView.map(splitViews)?.first?.arrangedSubviews.first?.isHidden == false
 
             var opened: String?
             let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification,
@@ -4842,14 +4922,21 @@ enum UITestHarness {
             defer { NotificationCenter.default.removeObserver(observer) }
 
             let content = window.contentLayoutRect
-            let sidebarWidth: CGFloat = 210
-            let listX = content.minX + sidebarWidth + (content.width - sidebarWidth) * 0.5
-            let points: [(String, NSPoint)] = [
-                ("file row", NSPoint(x: listX, y: content.maxY - 28 - 12)),
-                ("empty list space", NSPoint(x: listX, y: content.minY + content.height * 0.45)),
-                ("sidebar upper", NSPoint(x: content.minX + 80, y: content.maxY - 60)),
-                ("sidebar middle", NSPoint(x: content.minX + 80, y: content.midY)),
+            // Where the list is: its first row, and space below the last.
+            guard let table = fileLists(in: window).first, let scroll = table.enclosingScrollView else { return lines.append("no list") }
+            let listFrame = scroll.convert(scroll.bounds, to: nil)
+            let listX = listFrame.midX
+            let firstRow = table.convert(NSPoint(x: table.rect(ofRow: 0).midX, y: table.rect(ofRow: 0).midY), to: nil)
+            var points: [(String, NSPoint)] = [
+                ("file row", NSPoint(x: listX, y: firstRow.y)),
+                ("empty list space", NSPoint(x: listX, y: listFrame.minY + listFrame.height * 0.3)),
             ]
+            if sidebarShown {
+                points += [("sidebar upper", NSPoint(x: content.minX + 80, y: content.maxY - 60)),
+                           ("sidebar middle", NSPoint(x: content.minX + 80, y: content.midY))]
+            } else {
+                lines.append("sidebar collapsed (no saved window state): its points skipped")
+            }
             lines.append("window \(Int(window.frame.width))×\(Int(window.frame.height)), content \(content)")
             for (label, point) in points {
                 opened = nil

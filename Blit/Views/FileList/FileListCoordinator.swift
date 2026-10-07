@@ -58,7 +58,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     private var shownFolder: BrowseLocation?
     /// Counts the model's watches: a change the model reports for an older
     /// watch (another pane shown since) is ignored.
-    private var watchGeneration = 0
+    private(set) var watchGeneration = 0
     /// Set while the coordinator changes the table, so the table's own
     /// notifications (selection, sort) aren't taken for the user's.
     private var isApplying = false
@@ -81,6 +81,8 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     var renamingItem: FileItem?
     weak var renamingModel: BrowserModel?
     var renameFinished = false
+    /// The rows changed while a name was being edited: they show once it ends.
+    var rowsWaitingForRename = false
     /// Click to rename: the press on a row, and the rename waiting out the
     /// double-click interval.
     var press: ListPress?
@@ -346,6 +348,11 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         }
     }
 
+    /// Applies what `model` shows now (and watches it again from here).
+    func refresh(from model: BrowserModel) {
+        apply(watch(model))
+    }
+
     /// Reads what the list shows of `model` and watches it for changes, in one
     /// pass (rows are sorted once). A change is applied a turn later, after the
     /// model has finished changing, and watched again from there.
@@ -365,6 +372,15 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     private func apply(_ snapshot: ListSnapshot) {
+        // A name being edited keeps its row: nothing moves under it until
+        // editing ends. (A reload, say a transfer finishing into a folder,
+        // re-sorted the rows; the table followed its row to the new place and
+        // AppKit ended the edit on that selection change, before any typing.)
+        if let editing = renamingItem?.id, renameField?.window != nil, snapshot.renaming == editing,
+           snapshot.folder == shownFolder, snapshot.rows != rows {
+            rowsWaitingForRename = true
+            return
+        }
         let applying = isApplying
         isApplying = true
         defer { isApplying = applying }

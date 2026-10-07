@@ -99,6 +99,16 @@ extension FileListCoordinator: NSTextFieldDelegate {
         field.delegate = nil
         (field.superview as? NameCellView)?.endEditing()
         field.removeFromSuperview()
+        // What changed while the name was edited shows now (unless the list
+        // has moved on to another tab's pane meanwhile).
+        if rowsWaitingForRename {
+            rowsWaitingForRename = false
+            let generation = watchGeneration
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let model = self.model, self.watchGeneration == generation else { return }
+                self.refresh(from: model)
+            }
+        }
     }
 
     // MARK: Click to rename
