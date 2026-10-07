@@ -299,6 +299,12 @@ struct BrowserCommands: Commands {
             Button("Swap Panes") { BrowserModel.swapPanes?() }
                 .keyboardShortcut("u")
                 .disabled(!showSecondPane)
+            // Marks what the other pane's folder has (PRD R2.22). Not ⌥⌘C:
+            // that's Finder's Copy as Pathname. Read here, so the check follows.
+            let comparing = Panes.shared.comparing
+            Toggle("Compare Panes", isOn: Binding(get: { comparing }, set: { Panes.shared.comparing = $0 }))
+                .keyboardShortcut("c", modifiers: [.command, .control])
+                .disabled(!showSecondPane)
             // The same switches as right-clicking a column header, easier to find.
             Menu("Columns") {
                 ForEach(ColumnSettings.optional, id: \.id) { column in

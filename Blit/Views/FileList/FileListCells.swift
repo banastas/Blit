@@ -89,6 +89,42 @@ struct StatusDrawing {
     }
 }
 
+/// A row's mark against the other pane's folder (View › Compare Panes): a
+/// word, with the pixel ✓ for a verified copy there and ◐ for one still being
+/// downloaded. Orange only where the two differ, the accent colour where it's
+/// only here.
+@MainActor
+struct CompareDrawing {
+    let comparison: PaneComparison
+    let font: NSFont
+
+    private var glyph: PixelGlyph? {
+        switch comparison.kind {
+        case .verifiedThere: .check
+        case .partlyThere: .partial
+        default: nil
+        }
+    }
+
+    var width: CGFloat { (glyph == nil ? 0 : 9 + 4) + CellDrawing.width(comparison.text, font: font) }
+
+    func draw(in rect: NSRect, emphasized: Bool) {
+        let color: NSColor = if emphasized { .alternateSelectedControlTextColor } else {
+            switch comparison.kind {
+            case .onlyHere: .controlAccentColor
+            case .differs: .systemOrange
+            case .same, .verifiedThere, .partlyThere: .secondaryLabelColor
+            }
+        }
+        var x = rect.minX
+        if let glyph {
+            CellDrawing.draw(template: glyph.image(size: 9), in: NSRect(x: x, y: (rect.midY - 4.5).rounded(), width: 9, height: 9), color: color)
+            x += 13
+        }
+        CellDrawing.draw(comparison.text, in: NSRect(x: x, y: rect.minY, width: rect.maxX - x, height: rect.height), font: font, color: color)
+    }
+}
+
 /// The base for the list's cells: drawn by itself, flipped, with the row's
 /// selection look.
 class DrawnCellView: NSTableCellView {
@@ -118,7 +154,7 @@ class DrawnCellView: NSTableCellView {
 
 /// The Name column: indent, disclosure triangle, icon, the name (shortened in
 /// the middle, so a release's year, group and extension stay in view), then
-/// the ✓ verified and ◐ partial glyphs and the status tag.
+/// the ✓ verified and ◐ partial glyphs, the compare tag and the status tag.
 final class NameCellView: DrawnCellView {
     private(set) var item: FileItem?
     private var icon: NSImage?
@@ -135,6 +171,9 @@ final class NameCellView: DrawnCellView {
     /// New since this folder was last left: an accent dot after the name.
     private var isNew = false
     private var newRect = NSRect.zero
+    /// With Compare Panes on: how the row stands against the other pane's folder.
+    private var comparison: PaneComparison?
+    private var compareRect = NSRect.zero
     private var status: FileStatus?
     /// Where each part was drawn, for tooltips and the drag rule.
     private(set) var nameRect = NSRect.zero
@@ -164,8 +203,10 @@ final class NameCellView: DrawnCellView {
         let expanded = item.isDirectory && browser.expanded.contains(item.location)
         let loading = expanded && browser.loadingChildren.contains(item.location)
         let new = browser.isNew(item)
+        let comparison = browser.comparison(for: item)
         let changed = item != self.item || verifiedHelp != self.verifiedHelp || partialHelp != self.partialHelp
             || status != self.status || expanded != isExpanded || loading != isLoading || new != isNew
+            || comparison != self.comparison
         if item.id != self.item?.id || item.modified != self.item?.modified || icon == nil {
             showIcon(for: item, previews: context.iconPreviews)
         }
@@ -176,9 +217,10 @@ final class NameCellView: DrawnCellView {
         self.status = status
         isExpanded = expanded
         isNew = new
+        self.comparison = comparison
         if changed {
             setAccessibilityLabel(([item.name] + [new ? "New" : nil, entry == nil ? nil : "Verified", item.partial == nil ? nil : "Partial download",
-                                                  status.map { "Status: \($0.text)" }].compactMap { $0 }).joined(separator: ", "))
+                                                  comparison?.help, status.map { "Status: \($0.text)" }].compactMap { $0 }).joined(separator: ", "))
             needsLayout = true
             needsDisplay = true
         }
@@ -246,7 +288,7 @@ final class NameCellView: DrawnCellView {
     }
 
     /// Where the drawn content ends: the name and the marks after it.
-    var contentEnd: CGFloat { [nameRect, newRect, verifiedRect, partialRect, statusRect].map(\.maxX).max() ?? 0 }
+    var contentEnd: CGFloat { [nameRect, newRect, verifiedRect, partialRect, compareRect, statusRect].map(\.maxX).max() ?? 0 }
 
     /// The icon and the name, as the drag image.
     override var draggingImageComponents: [NSDraggingImageComponent] {
@@ -283,10 +325,12 @@ final class NameCellView: DrawnCellView {
         iconRect = NSRect(x: x, y: centered(16), width: 16, height: 16)
         x += 16 + 6
         let statusWidth: CGFloat = status.map { StatusDrawing(status: $0, font: CellFonts.caption).width } ?? 0
+        let compareWidth: CGFloat = comparison.map { CompareDrawing(comparison: $0, font: CellFonts.caption).width } ?? 0
         var trailing: CGFloat = 0
         if isNew { trailing += 5 + 7 }
         if verifiedHelp != nil { trailing += 5 + 9 }
         if partialHelp != nil { trailing += 5 + 9 }
+        if comparison != nil { trailing += 6 + compareWidth }
         if status != nil { trailing += 5 + statusWidth }
         let natural = CellDrawing.width(item.name, font: CellFonts.body)
         let nameWidth = max(0, min(natural, bounds.width - x - trailing))
@@ -296,6 +340,7 @@ final class NameCellView: DrawnCellView {
         newRect = .zero
         verifiedRect = .zero
         partialRect = .zero
+        compareRect = .zero
         statusRect = .zero
         if isNew {
             newRect = NSRect(x: x + 5, y: centered(7), width: 7, height: 7)
@@ -309,6 +354,10 @@ final class NameCellView: DrawnCellView {
             partialRect = NSRect(x: x + 5, y: centered(9), width: 9, height: 9)
             x += 5 + 9
         }
+        if comparison != nil {
+            compareRect = NSRect(x: x + 6, y: 0, width: compareWidth, height: height)
+            x += 6 + compareWidth
+        }
         if status != nil {
             statusRect = NSRect(x: x + 5, y: 0, width: statusWidth, height: height)
         }
@@ -319,7 +368,7 @@ final class NameCellView: DrawnCellView {
         removeAllToolTips()
         if disclosureRect != .zero { addToolTip(disclosureRect, owner: self, userData: nil) }
         if nameTruncated { addToolTip(nameRect, owner: self, userData: nil) }
-        for rect in [newRect, verifiedRect, partialRect, statusRect] where rect != .zero { addToolTip(rect, owner: self, userData: nil) }
+        for rect in [newRect, verifiedRect, partialRect, compareRect, statusRect] where rect != .zero { addToolTip(rect, owner: self, userData: nil) }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -352,6 +401,7 @@ final class NameCellView: DrawnCellView {
         }
         if verifiedRect != .zero { CellDrawing.draw(template: PixelGlyph.check.image(size: 9), in: verifiedRect, color: glyphColor) }
         if partialRect != .zero { CellDrawing.draw(template: PixelGlyph.partial.image(size: 9), in: partialRect, color: glyphColor) }
+        if let comparison, compareRect != .zero { CompareDrawing(comparison: comparison, font: CellFonts.caption).draw(in: compareRect, emphasized: emphasized) }
         if let status, statusRect != .zero { StatusDrawing(status: status, font: CellFonts.caption).draw(in: statusRect, emphasized: emphasized) }
     }
 
@@ -366,6 +416,7 @@ extension NameCellView {
         if item.isDirectory { parts.append(isLoading ? "loading" : isExpanded ? "open" : "closed") }
         if verifiedHelp != nil { parts.append("✓") }
         if partialHelp != nil { parts.append("◐") }
+        if let comparison { parts.append("{\(comparison.text)}") }
         if let status { parts.append("[\(status.glyph.map(String.init) ?? "")\(status.text)]") }
         return parts.joined(separator: " ")
     }
@@ -396,6 +447,7 @@ extension NameCellView: NSViewToolTipOwner {
         if newRect.contains(point) { return "New since you last left this folder" }
         if verifiedRect.contains(point) { return verifiedHelp ?? "" }
         if partialRect.contains(point) { return partialHelp ?? "" }
+        if compareRect.contains(point) { return comparison?.help ?? "" }
         if statusRect.contains(point) { return status?.help ?? "" }
         if nameRect.contains(point), nameTruncated { return item?.name ?? "" }
         return ""

@@ -9,6 +9,34 @@ import Foundation
 import Observation
 import UniformTypeIdentifiers
 
+/// How a row stands against the other pane's folder (View › Compare Panes).
+struct PaneComparison: Hashable {
+    enum Kind: Hashable {
+        /// Not in the other folder.
+        case onlyHere
+        /// There too: a folder of the name, or a file of the size.
+        case same
+        /// There too, the same size, and that copy was verified by SHA-256.
+        case verifiedThere
+        /// Being downloaded there: a resumable `.blitpart` of it.
+        case partlyThere
+        /// There too, but a different size, or a file where this is a folder.
+        case differs
+    }
+    let kind: Kind
+    let help: String
+
+    var text: String {
+        switch kind {
+        case .onlyHere: "only here"
+        case .same: "= same"
+        case .verifiedThere: "verified there"
+        case .partlyThere: "partly there"
+        case .differs: "≠ differs"
+        }
+    }
+}
+
 struct FileItem: Identifiable, Hashable, Sendable {
     var location: BrowseLocation
     var name: String
@@ -37,8 +65,15 @@ struct TrustRequest: Identifiable {
 final class BrowserModel {
     private(set) var current: BrowseLocation?
     private(set) var items: [FileItem] = [] {
-        didSet { rowsCache = nil }
+        didSet {
+            rowsCache = nil
+            nameIndexCache = nil
+            itemsVersion &+= 1
+        }
     }
+    /// Counts changes to `items`, for whoever compares against this folder.
+    private(set) var itemsVersion = 0
+    @ObservationIgnored private var nameIndexCache: [String: FileItem]?
     private(set) var error: String?
     private(set) var isLoading = false
     /// Newest first unless this folder was sorted otherwise before (SortMemory).
@@ -287,6 +322,65 @@ final class BrowserModel {
 
     func reload() {
         if let current { show(current) }
+    }
+
+    private static let partSuffix = ".blitpart"
+
+    /// The item named `name` here (ignoring case, as APFS and SMB do).
+    func item(named name: String) -> FileItem? {
+        if nameIndexCache == nil {
+            nameIndexCache = Dictionary(items.map { ($0.name.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+        }
+        return nameIndexCache?[name.lowercased()]
+    }
+
+    /// With View › Compare Panes on: how `item` (in this folder, not an
+    /// expanded one) stands against the other pane's folder.
+    func comparison(for item: FileItem) -> PaneComparison? {
+        guard item.depth == 0, Panes.shared.comparing, let other = Panes.shared.other(than: self),
+              let there = other.current, there != current else { return nil }
+        let folder = other.title.isEmpty ? there.lastComponent : other.title
+        let onlyHere = PaneComparison(kind: .onlyHere, help: "Not in “\(folder)”")
+        // A partial download stands for the file it will be (its ◐ says the rest).
+        if !item.isDirectory, item.name.hasSuffix(Self.partSuffix) {
+            return other.item(named: String(item.name.dropLast(Self.partSuffix.count))) == nil ? onlyHere : nil
+        }
+        guard let twin = other.item(named: item.name) else {
+            if !item.isDirectory, let part = other.item(named: item.name + Self.partSuffix), !part.isDirectory {
+                let done = part.partial.map { " (\(Int64($0.done).formatted(.byteCount(style: .file))) so far)" } ?? ""
+                return PaneComparison(kind: .partlyThere, help: "Being downloaded to “\(folder)”\(done)")
+            }
+            return onlyHere
+        }
+        if twin.isDirectory != item.isDirectory {
+            return PaneComparison(kind: .differs, help: "“\(folder)” has a \(twin.isDirectory ? "folder" : "file") of this name")
+        }
+        if item.isDirectory { return PaneComparison(kind: .same, help: "“\(folder)” has a folder of this name too") }
+        guard twin.size == item.size else {
+            let size = twin.size.formatted(.byteCount(style: .file))
+            return PaneComparison(kind: .differs, help: "In “\(folder)” too, but a different size there (\(size))")
+        }
+        if let url = twin.location.localURL, let entry = VerifiedIndex.shared.entry(for: url, size: twin.size) {
+            return PaneComparison(kind: .verifiedThere, help: "In “\(folder)” too, the same size; \(entry.summary.prefix(1).lowercased() + entry.summary.dropFirst())")
+        }
+        return PaneComparison(kind: .same, help: "In “\(folder)” too, the same size")
+    }
+
+    /// With Compare Panes on: the rows the other folder lacks or has
+    /// differently, for the path bar ("4 only here · 1 differs"); nil if none.
+    func comparisonSummary() -> String? {
+        guard Panes.shared.comparing, let other = Panes.shared.other(than: self) else { return nil }
+        _ = other.itemsVersion   // observed: item(named:) reads through a cache
+        var onlyHere = 0, differs = 0
+        for item in rows where item.depth == 0 {
+            switch comparison(for: item)?.kind {
+            case .onlyHere: onlyHere += 1
+            case .differs: differs += 1
+            default: break
+            }
+        }
+        let parts = [onlyHere > 0 ? "\(onlyHere) only here" : nil, differs > 0 ? "\(differs) differ\(differs == 1 ? "s" : "")" : nil]
+        return parts.contains { $0 != nil } ? parts.compactMap { $0 }.joined(separator: " · ") : nil
     }
 
     /// Whether `item` (in this folder, not an expanded one) wasn't here when the

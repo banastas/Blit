@@ -58,6 +58,15 @@ final class Panes {
     var first: BrowserModel? { PaneTabs.shared.current?.first }
     var second: BrowserModel? { PaneTabs.shared.current?.second }
     var twoPanes = false
+    /// View › Compare Panes: each pane marks what the other pane's folder has
+    /// (PRD R2.22). Remembered, as the View menu's other switches are (a test
+    /// copy starts with it off and keeps its own).
+    var comparing = !TransferManager.isIsolated && UserDefaults.standard.bool(forKey: "comparePanes") {
+        didSet {
+            guard comparing != oldValue, !TransferManager.isIsolated else { return }
+            UserDefaults.standard.set(comparing, forKey: "comparePanes")
+        }
+    }
 
     /// The folders the shown tab shows (its second pane's only while shown).
     var shownLocations: [BrowseLocation] { PaneTabs.shared.current?.shownLocations ?? [] }

@@ -518,8 +518,9 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     /// Refreshes the visible rows' marks when what they're made of changes:
-    /// a transfer's statuses, Blit's verified files, a folder loading. Only the
-    /// rows on screen are read; a scroll reads the new ones.
+    /// a transfer's statuses, Blit's verified files, a folder loading, and
+    /// (with Compare Panes on) the other pane's folder. Only the rows on screen
+    /// are read; a scroll reads the new ones.
     private func watchDecorations(of model: BrowserModel) {
         decorations?.cancel()
         noteVisibleRows()
@@ -530,12 +531,18 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
             hasher.combine(model.loadingChildren)
             let transfers = model.operations.transfers
             hasher.combine(transfers.jobs.contains(where: \.isActive))
+            // The other folder's listing is read through a cache: its version
+            // stands in for it.
+            let other = Panes.shared.comparing ? Panes.shared.other(than: model) : nil
+            hasher.combine(other?.current)
+            hasher.combine(other?.itemsVersion)
             for row in viewport.rows where self.rows.indices.contains(row) {
                 let item = self.rows[row]
                 hasher.combine(transfers.status(for: item))
                 if !item.isDirectory, let url = item.location.localURL {
                     hasher.combine(VerifiedIndex.shared.entry(for: url, size: item.size)?.summary)
                 }
+                if other != nil { hasher.combine(model.comparison(for: item)) }
             }
             return hasher.finalize()
         }

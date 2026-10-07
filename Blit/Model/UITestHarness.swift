@@ -2476,10 +2476,15 @@ enum UITestHarness {
                 if name == "Other" || name == "b.bin" { picture(name == "Other" ? "folder" : "list") }
             }
             // Spring loading: resting on the closed folder Other opens it in place.
+            // AppKit keeps sending updates while a drag rests (and the button is
+            // down; with none, the highlight's watchdog clears it in 0.5 s).
             drag.location = point("Other", in: leftList, model: first)
             _ = leftList.tableView(leftList.table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
             let opened = first.rows.first { $0.name == "Other" }.map { first.expanded.contains($0.location) } ?? false
-            try? await Task.sleep(for: .seconds(1))
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(100))
+                _ = leftList.tableView(leftList.table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
+            }
             let afterRest = first.rows.first { $0.name == "Other" }.map { first.expanded.contains($0.location) } ?? false
             lines.append("resting on Other: open at once \(opened) · after a moment \(afterRest)")
             if let other = first.rows.first(where: { $0.name == "Other" }) { first.setExpanded(other.location, false) }
@@ -2930,6 +2935,126 @@ enum UITestHarness {
             await visit(elsewhere)
             await visit(watched)
             lines.append("the visit after: \(marks())")
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitCompareTest <log>` (with `-showSecondPane YES`): View › Compare
+    /// Panes between an "SSD" and a "NAS" folder. Each row's mark, from the
+    /// model and as its cell shows it, the path bar's counts and the menu
+    /// item's check; then the marks following a copy verified there, a file
+    /// arriving there, a folder opened in place, the same folder in both
+    /// panes, and the switch going off.
+    static func runCompareTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitCompareTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-compare")
+            try? fm.removeItem(at: root)
+            let left = root.appendingPathComponent("SSD"), right = root.appendingPathComponent("NAS")
+            for folder in [left.appendingPathComponent("Season 1"), right.appendingPathComponent("Season 1"), right.appendingPathComponent("Clash")] {
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            }
+            for (folder, name, size) in [(left, "a.mkv", 10), (left, "b.mkv", 20), (left, "c.mkv", 30), (left, "d.mkv", 40), (left, "Clash", 1),
+                                         (left, "Season 1/e01.mkv", 5), (right, "a.mkv", 10), (right, "b.mkv", 25), (right, "e.mkv", 50),
+                                         (right, "d.mkv.blitpart", 12)] {
+                fm.createFile(atPath: folder.appendingPathComponent(name).path, contents: Data(count: size))
+            }
+            defer { try? fm.removeItem(at: root) }
+            guard let first = PaneTabs.shared.current?.first, let second = BrowserModel.oppositePane?(first) else {
+                return lines.append("no second pane (showSecondPane off?)")
+            }
+            @MainActor func show(_ model: BrowserModel, _ url: URL) async {
+                model.open(.local(url))
+                for _ in 0..<20 where model.current?.localURL?.lastPathComponent != url.lastPathComponent || model.items.isEmpty {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+            }
+            await show(first, left)
+            await show(second, right)
+            first.sort(by: .name)
+            second.sort(by: .name)
+            try? await Task.sleep(for: .milliseconds(800))
+            /// Each row as its cell shows it, and whether the cells agree with the model.
+            @MainActor func marks(_ model: BrowserModel) -> String {
+                let table = FileListRegistry.table(for: model)
+                var agree = true
+                let rows = model.rows.enumerated().map { index, item in
+                    let cell = table?.view(atColumn: 0, row: index, makeIfNecessary: false) as? NameCellView
+                    let summary = cell?.testSummary ?? "?"
+                    let mark = model.comparison(for: item).map { "{\($0.text)}" }
+                    if mark.map({ !summary.contains($0) }) ?? summary.contains("{") { agree = false }
+                    return summary
+                }
+                return rows.joined(separator: " · ") + (agree ? "" : "  ‼︎ the cells don't match the model")
+            }
+            @MainActor func both(_ label: String) async {
+                try? await Task.sleep(for: .milliseconds(700))
+                lines.append("\(label):")
+                lines.append("  SSD: \(marks(first))  [\(first.comparisonSummary() ?? "-")]")
+                lines.append("  NAS: \(marks(second))  [\(second.comparisonSummary() ?? "-")]")
+            }
+            @MainActor func compareItem() -> NSMenuItem? {
+                NSApp.mainMenu?.items.compactMap(\.submenu).first(where: { $0.title == "View" })?.items.first(where: { $0.title == "Compare Panes" })
+            }
+            @MainActor func toggle() {
+                NSApp.mainMenu?.update()
+                guard let item = compareItem(), let menu = item.menu else { return lines.append("no Compare Panes item") }
+                menu.performActionForItem(at: menu.index(of: item))
+            }
+            @MainActor func menuState() -> String {
+                // As the View menu opening would.
+                if let view = compareItem()?.menu { view.delegate?.menuNeedsUpdate?(view); view.update() }
+                guard let item = compareItem() else { return "no item" }
+                let previews = item.menu?.items.first(where: { $0.title == "Show Icon Previews" })
+                lines.append("  (Show Icon Previews: \(previews?.state == .on ? "checked" : "unchecked"), delegate \(item.menu?.delegate.map { String(describing: type(of: $0)) } ?? "none"))")
+                return "\(item.state == .on ? "checked" : "unchecked") · enabled \(item.isEnabled) · \(item.keyEquivalentModifierMask.contains(.control) ? "⌃" : "")\(item.keyEquivalentModifierMask.contains(.command) ? "⌘" : "")\(item.keyEquivalent.uppercased())"
+            }
+            await both("off")
+            lines.append("menu: \(menuState())")
+            toggle()
+            await both("on")
+            lines.append("menu: \(menuState())")
+            for item in first.rows {
+                if let comparison = first.comparison(for: item) { lines.append("  help SSD/\(item.name): \(comparison.help)") }
+            }
+            if let cell = FileListRegistry.table(for: first).flatMap({ table in
+                first.rows.firstIndex(where: { $0.name == "b.mkv" }).flatMap { table.view(atColumn: 0, row: $0, makeIfNecessary: false) }
+            }) {
+                lines.append("  b.mkv's VoiceOver label: \(cell.accessibilityLabel() ?? "-")")
+            }
+            // The NAS copy of a.mkv is verified (a transfer's record): no reload.
+            VerifiedIndex.shared.record(TransferRecord(time: Date(timeIntervalSince1970: 1_790_000_000), source: "/elsewhere/a.mkv",
+                                                       destination: right.appendingPathComponent("a.mkv").path, size: 10, sha256: nil,
+                                                       verification: "read-back", result: "ok", detail: nil, cached: nil))
+            await both("NAS a.mkv verified")
+            if let a = first.rows.first(where: { $0.name == "a.mkv" }) { lines.append("  help SSD/a.mkv: \(first.comparison(for: a)?.help ?? "-")") }
+            // A picture of every mark: the shell captures the window once it sees <log>.wid.
+            if let window = FileListRegistry.table(for: first)?.window {
+                try? String(window.windowNumber).write(toFile: logPath + ".wid", atomically: true, encoding: .utf8)
+                for _ in 0..<100 where !fm.fileExists(atPath: logPath + ".shot") { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+            // c.mkv arrives on the NAS; only the NAS pane reloads.
+            fm.createFile(atPath: right.appendingPathComponent("c.mkv").path, contents: Data(count: 30))
+            second.reload()
+            for _ in 0..<20 where second.item(named: "c.mkv") == nil { try? await Task.sleep(for: .milliseconds(200)) }
+            await both("c.mkv copied to the NAS")
+            // A folder opened in place: what's inside isn't compared.
+            if let season = first.rows.first(where: { $0.name == "Season 1" }) { first.toggleExpanded(season) }
+            await both("Season 1 open on the SSD")
+            if let season = first.rows.first(where: { $0.name == "Season 1" }) { first.toggleExpanded(season) }
+            await show(second, left)
+            await both("the same folder in both panes")
+            await show(second, right)
+            second.sort(by: .name)
+            await both("back to the NAS")
+            toggle()
+            await both("switched off")
+            lines.append("menu: \(menuState())")
             lines.append("done")
         }
     }

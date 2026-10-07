@@ -191,7 +191,10 @@ struct LoadingIndicator: View {
 }
 
 /// "3 of 42 selected · 1.2 GB" at the end of the path bar (as Finder's status
-/// bar), or "42 items" with nothing selected.
+/// bar), or "42 items" with nothing selected, then the volume's free space.
+/// With Compare Panes on, what the other pane's folder lacks comes after the
+/// count. Where the pane is too narrow for all of it, the free space goes
+/// first, then the count.
 private struct SelectionCount: View {
     let browser: BrowserModel
 
@@ -206,19 +209,23 @@ private struct SelectionCount: View {
         let free = browser.current?.localURL.flatMap { url in
             CloudFolders.folder(containing: url) == nil ? FreeSpace.shared.free(at: url) : nil
         }
-        let space = free.map { " · " + $0.formatted(.byteCount(style: .file)) + " free" } ?? ""
-        Group {
-            if selected.isEmpty {
-                Text("\(total) item\(total == 1 ? "" : "s")" + space)
-            } else {
-                Text("\(selected.count) of \(total) selected" + (files.isEmpty ? "" : " · " + bytes.formatted(.byteCount(style: .file))) + space)
-            }
+        let space = free.map { $0.formatted(.byteCount(style: .file)) + " free" }
+        let count = selected.isEmpty ? "\(total) item\(total == 1 ? "" : "s")"
+            : "\(selected.count) of \(total) selected" + (files.isEmpty ? "" : " · " + bytes.formatted(.byteCount(style: .file)))
+        let compared = browser.comparisonSummary()
+        ViewThatFits(in: .horizontal) {
+            line(count, compared, space)
+            line(count, compared)
+            line(compared ?? count)
         }
         .monospacedDigit()
         .foregroundStyle(.secondary)
         .lineLimit(1)
-        .fixedSize()
         .padding(.leading, 8)
         .help(folders > 0 && !files.isEmpty ? "The size counts the selected files, not what's inside the selected folders." : "")
+    }
+
+    private func line(_ parts: String?...) -> some View {
+        Text(parts.compactMap { $0 }.joined(separator: " · ")).fixedSize()
     }
 }
