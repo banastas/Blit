@@ -310,6 +310,9 @@ struct SettingsView: View {
             }
             .tabItem { Label("Transfers", systemImage: "arrow.down.circle") }
 
+            pane { Section { WatchSettingsSection() } }
+                .tabItem { Label("Watch", systemImage: "eye") }
+
             pane { UpdatesSection() }
                 .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
 

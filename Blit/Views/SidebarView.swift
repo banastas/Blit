@@ -78,6 +78,13 @@ struct SidebarView: View {
                     HStack {
                         Label(server.displayName, systemImage: "server.rack")
                         Spacer(minLength: 4)
+                        if SeedboxWatch.shared?.watches(server: server.id) == true {
+                            Image(systemName: "eye")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .help("Watching for new downloads (Settings › Watch)")
+                                .accessibilityLabel("Watched")
+                        }
                         StatusDot(state: connections.state(server), link: connections.links[server.id]?.summary)
                     }
                     .transferTarget(server.startLocation, name: server.displayName, onTransfer: onTransfer)

@@ -127,6 +127,7 @@ struct BlitApp: App {
     @State private var connections: ConnectionManager
     @State private var transfers: TransferManager
     @State private var operations: FileOperations
+    @State private var watch: SeedboxWatch
     @AppStorage("showMenuBarExtra") private var showMenuBarExtra = true
 
     init() {
@@ -137,7 +138,14 @@ struct BlitApp: App {
         _connections = State(initialValue: connections)
         let transfers = TransferManager(servers: servers, verifier: connections.verifier)
         _transfers = State(initialValue: transfers)
-        _operations = State(initialValue: FileOperations(servers: servers, connections: connections, transfers: transfers))
+        let operations = FileOperations(servers: servers, connections: connections, transfers: transfers)
+        _operations = State(initialValue: operations)
+        // Watch mode (PRD R5.10): new finished downloads, as verified copies.
+        let watch = SeedboxWatch(servers: servers, connections: connections) { sources, folder in
+            await operations.place(sources, into: .local(folder), destinationName: folder.lastPathComponent, mode: .copy)
+        }
+        SeedboxWatch.shared = watch
+        _watch = State(initialValue: watch)
         VerifiedIndex.shared.load()
         // "Copy with Blit" (App Intent) enqueues through the same manager.
         AppDependencyManager.shared.add(dependency: transfers)
@@ -151,9 +159,11 @@ struct BlitApp: App {
                 .environment(connections)
                 .environment(transfers)
                 .environment(operations)
+                .environment(watch)
                 .onAppear {
                     appDelegate.transfers = transfers
                     NotificationRouter.shared.transfers = transfers
+                    watch.start()
                 }
                 .frame(minWidth: 760, minHeight: 440)
         }

@@ -13,9 +13,26 @@ enum FileMenuBuilder {
         menu.append(action("New Folder") { browser.newFolder() })
         menu.append(.separator())
         menu.append(action("Paste", enabled: browser.operations.canPaste) { browser.paste(move: false) })
+        if let watch = watchItem(for: browser.current, in: browser, folderWord: "This Folder") {
+            menu.append(.separator())
+            menu.append(watch)
+        }
         menu.append(.separator())
         menu.append(action("Refresh") { browser.reload() })
         return menu
+    }
+
+    /// Watch mode (PRD R5.10) for a folder on a server: set it up, or stop.
+    private static func watchItem(for folder: BrowseLocation?, in browser: BrowserModel, folderWord: String) -> NSMenuItem? {
+        guard let folder, case .remote = folder, let watch = SeedboxWatch.shared else { return nil }
+        if let rule = watch.rule(watching: folder) {
+            return action("Stop Watching \(folderWord)", help: "Blit fetches new downloads from here to “\(URL(fileURLWithPath: rule.destination).lastPathComponent)”") {
+                watch.remove(rule.id)
+            }
+        }
+        return action("Watch \(folderWord) for New Downloads…", help: "Fetch what's new here to a folder on this Mac as it finishes") {
+            browser.watchRequest = folder
+        }
     }
 
     /// The menu for `items` (one row, or the selection).
@@ -71,6 +88,9 @@ enum FileMenuBuilder {
             menu.append(item)
         }
         if urls.count == items.count { menu.append(action("Duplicate") { browser.duplicate(items) }) }
+        if items.count == 1, items[0].isDirectory, let watch = watchItem(for: items[0].location, in: browser, folderWord: "Folder") {
+            menu.append(watch)
+        }
         menu.append(.separator())
         menu.append(action("Cut") { browser.copy(items, cut: true) })
         menu.append(action("Copy") { browser.copy(items, cut: false) })

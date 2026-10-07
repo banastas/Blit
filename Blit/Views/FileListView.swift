@@ -67,6 +67,9 @@ struct FileListView: View {
                 if let items = browser.batchRenameItems { BatchRenameView(browser: browser, items: items) }
             }
             .sheet(isPresented: $browser.showGoToFolder) { GoToFolderView(browser: browser) }
+            .sheet(isPresented: watchShown) {
+                if let source = browser.watchRequest { WatchSetupView(source: source, browser: browser) }
+            }
     }
 
     @ViewBuilder private var states: some View {
@@ -85,6 +88,10 @@ struct FileListView: View {
 
     private var batchRenameShown: Binding<Bool> {
         Binding(get: { browser.batchRenameItems != nil }, set: { if !$0 { browser.batchRenameItems = nil } })
+    }
+
+    private var watchShown: Binding<Bool> {
+        Binding(get: { browser.watchRequest != nil }, set: { if !$0 { browser.watchRequest = nil } })
     }
 
     private var deleteShown: Binding<Bool> {

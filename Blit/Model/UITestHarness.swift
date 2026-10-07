@@ -2939,6 +2939,74 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitWatchTest <log>`: watch mode (PRD R5.10) over a local stand-in
+    /// for a seedbox folder (test copies only), looking by hand with a 2 s
+    /// settle time: what's there when watching begins, a new file once it's
+    /// settled, a pack held back by a partial file, a growing file, one
+    /// already fetched by hand, a missing destination, and off and on again.
+    static func runWatchTestIfRequested(servers: ServerStore, connections: ConnectionManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitWatchTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-watch")
+            try? fm.removeItem(at: root)
+            let seedbox = root.appendingPathComponent("completed"), ssd = root.appendingPathComponent("SSD")
+            for folder in [seedbox, ssd] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            defer { try? fm.removeItem(at: root) }
+            func write(_ name: String, _ size: Int, in folder: URL? = nil) {
+                let url = (folder ?? seedbox).appendingPathComponent(name)
+                try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? Data(count: size).write(to: url)
+            }
+            write("Old.Show.S01E01.mkv", 100)
+            var fetched: [String] = []
+            let watch = SeedboxWatch(servers: servers, connections: connections) { sources, _ in
+                fetched += sources.map(\.lastComponent)
+                return nil
+            }
+            watch.settle = 2
+            watch.add(WatchRule(source: .local(seedbox), destination: ssd.path, minutes: 60))
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let rule = watch.rules.first else { return lines.append("no rule") }
+            @MainActor func look(_ label: String) async {
+                await watch.check(rule.id)
+                let state = watch.states[rule.id]
+                lines.append("\(label): fetched \(fetched) · waiting \(state?.pending.keys.sorted() ?? []) · problem \(state?.problem ?? "-")")
+            }
+            lines.append("watching began: seen \(watch.states[rule.id]?.handled.sorted() ?? [])")
+            write("New.Movie.2024.mkv", 1_000)
+            write("Pack.S01/e01.mkv", 500)
+            write("Pack.S01/e02.mkv.part", 500)
+            write("Growing.mkv", 10)
+            write("Manual.mkv", 10)
+            write("Manual.mkv", 10, in: ssd)
+            write("fresh.mkv.!qB", 10)
+            await look("first look at the new items")
+            try? await Task.sleep(for: .seconds(2.5))
+            write("Growing.mkv", 20)
+            await look("2.5 s later (Growing grew)")
+            try? fm.moveItem(at: seedbox.appendingPathComponent("Pack.S01/e02.mkv.part"), to: seedbox.appendingPathComponent("Pack.S01/e02.mkv"))
+            try? await Task.sleep(for: .seconds(2.5))
+            await look("the pack's last file done, Growing still")
+            await look("again")
+            try? fm.removeItem(at: ssd)
+            await look("the SSD gone")
+            try? fm.createDirectory(at: ssd, withIntermediateDirectories: true)
+            watch.setEnabled(rule.id, false)
+            write("While.Off.mkv", 10)
+            watch.setEnabled(rule.id, true)
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("off and on: \(watch.states[rule.id]?.handled.contains("While.Off.mkv") == true ? "what came meanwhile counts as seen" : "would fetch what came meanwhile")")
+            lines.append("a server folder's title: \(watch.title(of: WatchRule(source: .remote(server: UUID(), path: Array("/home/x/completed".utf8)), destination: "/tmp")))")
+            lines.append("partial names: \(["a.mkv.part", "b.!qB", "c.mkv", "d.CRDOWNLOAD"].map { "\($0) \(SeedboxWatch.isPartial($0))" }.joined(separator: ", "))")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitWelcomeTest <log>`: the first-run Welcome (PRD R2.24). When it
     /// shows at launch; then each step opened in turn, at its size. For pictures, <log>.wid-N and
     /// <log>.rect-N (the sheet within the window, in points) for the steps
