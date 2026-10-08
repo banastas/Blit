@@ -145,6 +145,8 @@ struct BlitApp: App {
             await operations.place(sources, into: .local(folder), destinationName: folder.lastPathComponent, mode: .copy)
         }
         SeedboxWatch.shared = watch
+        TorrentLibrary.shared = TorrentLibrary(servers: servers, connections: connections)
+        TorrentStatusBoard.shared.start()
         _watch = State(initialValue: watch)
         VerifiedIndex.shared.load()
         // "Copy with Blit" (App Intent) enqueues through the same manager.

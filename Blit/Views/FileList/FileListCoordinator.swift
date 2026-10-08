@@ -565,7 +565,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
             let video = ColumnSettings.shared.isShown(FileColumn.video.rawValue)
             for row in viewport.rows where self.rows.indices.contains(row) {
                 let item = self.rows[row]
-                hasher.combine(transfers.status(for: item))
+                hasher.combine(model.rowStatus(item))
                 if !item.isDirectory, let url = item.location.localURL {
                     hasher.combine(VerifiedIndex.shared.entry(for: url, size: item.size)?.summary)
                 }
@@ -705,7 +705,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         case let name as NameCellView:
             name.configure(item, context: context)
         case let status as StatusCellView:
-            status.show(context.browser.operations.transfers.status(for: item))
+            status.show(context.browser.rowStatus(item))
         case let text as TextCellView:
             switch FileColumn(text.identifier) {
             case .modified:

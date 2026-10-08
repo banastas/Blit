@@ -67,6 +67,52 @@ indirect enum Bencode: Equatable {
     }
 }
 
+/// What a torrent's .fastresume says, for its status in a server pane (and
+/// whether it's finished, for watch mode).
+struct TorrentResume: Equatable, Sendable {
+    var savePath: String
+    var finished: Bool
+    /// Pieces it has, of all of them, when the record was last written
+    /// (qBittorrent rewrites them about hourly).
+    var fraction: Double
+    /// Seconds spent seeding, uploaded and downloaded bytes, all-time.
+    var seedingTime: TimeInterval
+    var uploaded: Int64
+    var downloaded: Int64
+    /// Its own share limits: nil follows qBittorrent's global ones, negative is none.
+    var ratioLimit: Double?
+    var seedingMinutesLimit: Int?
+    /// Stopped (paused, not managed by the queue) or waiting in the queue.
+    var stopped: Bool
+    var queued: Bool
+    /// When it last received data, and when it finished.
+    var lastDownload: Date?
+    var completed: Date?
+    /// qBittorrent's content layout ("Original", "Subfolder", "NoSubfolder"),
+    /// and the first names of any files renamed in qBittorrent.
+    var layout: String? = nil
+    var renamedRoots: Set<String> = []
+}
+
+/// qBittorrent's settings that bear on a torrent's status.
+struct TorrentSettings: Equatable, Sendable {
+    /// Global share limits (negative: none).
+    var ratioLimit: Double = -1
+    var seedingMinutesLimit: Int = -1
+    /// Files are allocated in full when added, so the space they take on disk
+    /// says nothing about how far they've come.
+    var preallocates = false
+}
+
+/// What a .torrent file says: the names it may put in its save folder, and its size.
+struct TorrentMetadata: Equatable, Sendable {
+    var names: Set<String>
+    var size: Int64
+    /// Its own name, and for several files, each one's first folder or name.
+    var name: String = ""
+    var fileRoots: Set<String> = []
+}
+
 /// One torrent, as qBittorrent's records describe it.
 struct TorrentRecord: Equatable {
     /// The names it puts directly in its save folder: its own name, and for a
@@ -93,6 +139,52 @@ enum TorrentRecords {
             if let first = (file["path.utf-8"] ?? file["path"])?.array?.first?.string { names.insert(first) }
         }
         return names
+    }
+
+    /// Its names and total size.
+    static func metadata(torrent data: Data) -> TorrentMetadata? {
+        guard let names = names(torrent: data), let info = Bencode.decode(data)?["info"] else { return nil }
+        let size = info["length"]?.int ?? (info["files"]?.array ?? []).reduce(0) { $0 + ($1["length"]?.int ?? 0) }
+        let name = (info["name.utf-8"] ?? info["name"])?.string ?? ""
+        let roots = Set((info["files"]?.array ?? []).compactMap { ($0["path.utf-8"] ?? $0["path"])?.array?.first?.string })
+        return TorrentMetadata(names: names, size: Int64(size), name: name, fileRoots: roots)
+    }
+
+    /// Everything a .fastresume says that a status needs.
+    static func resume(_ data: Data) -> TorrentResume? {
+        guard let resume = Bencode.decode(data), let basic = state(resume: data) else { return nil }
+        func date(_ key: String) -> Date? { resume[key]?.int.flatMap { $0 > 0 ? Date(timeIntervalSince1970: TimeInterval($0)) : nil } }
+        // qBittorrent keeps a ratio limit × 1000, and -2 (× 1000 for the ratio)
+        // for "as the global setting", -1 for none.
+        let ratio = resume["qBt-ratioLimit"]?.int.flatMap { $0 == -2000 ? nil : Double($0) / 1000 }
+        let minutes = resume["qBt-seedingTimeLimit"]?.int.flatMap { $0 == -2 ? nil : $0 }
+        let paused = (resume["paused"]?.int ?? 0) != 0, managed = (resume["auto_managed"]?.int ?? 0) != 0
+        return TorrentResume(savePath: basic.savePath, finished: basic.finished, fraction: basic.fraction,
+                             seedingTime: TimeInterval(resume["seeding_time"]?.int ?? 0),
+                             uploaded: Int64(resume["total_uploaded"]?.int ?? 0), downloaded: Int64(resume["total_downloaded"]?.int ?? 0),
+                             ratioLimit: ratio, seedingMinutesLimit: minutes, stopped: paused && !managed, queued: paused && managed,
+                             lastDownload: date("last_download"), completed: date("completed_time"),
+                             layout: resume["qBt-contentLayout"]?.string,
+                             renamedRoots: Set((resume["mapped_files"]?.array ?? []).compactMap { entry -> String? in
+                                 guard let path = entry.string, !path.isEmpty else { return nil }
+                                 return path.split(separator: "/").first.map(String.init)
+                             }))
+    }
+
+    /// The share limits and allocation in qBittorrent.conf.
+    static func settings(_ text: String) -> TorrentSettings {
+        var settings = TorrentSettings()
+        for line in text.split(whereSeparator: \.isNewline) {
+            let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2 else { continue }
+            switch parts[0] {
+            case "Session\\GlobalMaxRatio": settings.ratioLimit = Double(parts[1]) ?? -1
+            case "Session\\GlobalMaxSeedingMinutes": settings.seedingMinutesLimit = Int(parts[1]) ?? -1
+            case "Session\\Preallocation": settings.preallocates = parts[1].lowercased() == "true"
+            default: break
+            }
+        }
+        return settings
     }
 
     /// What a .fastresume says: where it saves, whether it completed, how much it has.

@@ -79,7 +79,8 @@ struct StatusDrawing {
     var width: CGFloat { (pixel == nil ? 0 : 9 + 4) + CellDrawing.width(text, font: font) }
 
     func draw(in rect: NSRect, emphasized: Bool) {
-        let color: NSColor = emphasized ? .alternateSelectedControlTextColor : (status.isFailure ? .failureText : .secondaryLabelColor)
+        let color: NSColor = emphasized ? .alternateSelectedControlTextColor
+            : status.isFailure ? .failureText : status.isWarning ? .systemOrange : .secondaryLabelColor
         var x = rect.minX
         if let pixel {
             CellDrawing.draw(template: pixel.image(size: 9), in: NSRect(x: x, y: (rect.midY - 4.5).rounded(), width: 9, height: 9), color: color)
@@ -199,7 +200,7 @@ final class NameCellView: DrawnCellView {
         let entry = item.isDirectory ? nil : item.location.localURL.flatMap { VerifiedIndex.shared.entry(for: $0, size: item.size) }
         let verifiedHelp = entry?.summary
         let partialHelp = item.partial.map(browser.partialSummary)
-        let status = context.statusAfterName ? browser.operations.transfers.status(for: item) : nil
+        let status = context.statusAfterName ? browser.rowStatus(item) : nil
         let expanded = item.isDirectory && browser.expanded.contains(item.location)
         let loading = expanded && browser.loadingChildren.contains(item.location)
         let new = browser.isNew(item)

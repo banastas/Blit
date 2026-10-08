@@ -3318,6 +3318,157 @@ enum UITestHarness {
         }
     }
 
+    /// Bencode (BEP 3) for stand-in qBittorrent records.
+    nonisolated static func bencode(_ value: Any) -> Data {
+        switch value {
+        case let number as Int: return Data("i\(number)e".utf8)
+        case let text as String: return Data("\(text.utf8.count):".utf8) + Data(text.utf8)
+        case let data as Data: return Data("\(data.count):".utf8) + data
+        case let list as [Any]: return list.reduce(Data("l".utf8)) { $0 + bencode($1) } + Data("e".utf8)
+        case let dictionary as [String: Any]:
+            return dictionary.keys.sorted().reduce(Data("d".utf8)) { $0 + bencode($1) + bencode(dictionary[$1]!) } + Data("e".utf8)
+        default: return Data()
+        }
+    }
+
+    /// `-BlitTorrentStatusTest <log>` (with `-BlitWatchRecordsHome <folder>`):
+    /// torrent status in a pane showing a folder qBittorrent saves into, from
+    /// stand-in records and real sparse files: a download growing (live
+    /// percentage and time left), one stalled for days, one stopped, a seed
+    /// with and without share limits (its own, then qBittorrent's global ones),
+    /// files no torrent claims or saved elsewhere, and preallocated files.
+    static func runTorrentStatusTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTorrentStatusTest"),
+              let recordsHome = UserDefaults.standard.string(forKey: "BlitWatchRecordsHome") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let home = URL(fileURLWithPath: recordsHome)
+            // In full (/private/var), as the folder's listing spells its files.
+            let temporary = fm.temporaryDirectory.path
+            let downloads = URL(fileURLWithPath: (temporary.hasPrefix("/var/") ? "/private" : "") + temporary)
+                .appendingPathComponent("blit-torrent-status/downloads")
+            let backup = home.appendingPathComponent(".apps/qbittorrent/qBittorrent/BT_backup")
+            for path in [home, downloads.deletingLastPathComponent()] { try? fm.removeItem(at: path) }
+            for path in [backup, downloads] { try? fm.createDirectory(at: path, withIntermediateDirectories: true) }
+            defer { for path in [home, downloads.deletingLastPathComponent()] { try? fm.removeItem(at: path) } }
+            let conf = backup.deletingLastPathComponent().appendingPathComponent("qBittorrent.conf")
+            try? "[BitTorrent]\nSession\\QueueingSystemEnabled=true\n".write(to: conf, atomically: true, encoding: .utf8)
+            let now = Int(Date().timeIntervalSince1970)
+            let mb = 1 << 20
+            /// A sparse file `size` long with its first `written` bytes filled, last changed `age` seconds ago.
+            func file(_ path: URL, size: Int, written: Int, age: TimeInterval = 0) {
+                fm.createFile(atPath: path.path, contents: nil)
+                guard let handle = try? FileHandle(forWritingTo: path) else { return }
+                try? handle.truncate(atOffset: UInt64(size))
+                try? handle.seek(toOffset: 0)
+                if written > 0 { handle.write(Data(repeating: 7, count: written)) }
+                try? handle.close()
+                if age > 0 { try? fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -age)], ofItemAtPath: path.path) }
+            }
+            func record(_ hash: String, name: String, files: [(String, Int)]? = nil, size: Int, fraction: Double, finished: Bool,
+                        save: URL? = nil, extra: [String: Any] = [:]) {
+                var info: [String: Any] = ["name": name, "piece length": 16_384]
+                if let files { info["files"] = files.map { ["length": $0.1, "path": [$0.0]] } } else { info["length"] = size }
+                try? bencode(["info": info]).write(to: backup.appendingPathComponent(hash + ".torrent"))
+                let pieces = (0..<100).map { $0 < Int(fraction * 100) || finished ? UInt8(1) : 0 }
+                var resume: [String: Any] = ["qBt-savePath": (save ?? downloads).path, "save_path": (save ?? downloads).path,
+                                             "pieces": Data(pieces), "completed_time": finished ? now - 86_400 : 0,
+                                             "paused": 0, "auto_managed": 1, "qBt-ratioLimit": -2000, "qBt-seedingTimeLimit": -2,
+                                             "total_downloaded": Int(Double(size) * fraction), "total_uploaded": 0,
+                                             "seeding_time": 0, "last_download": now - 3000]
+                for (key, value) in extra { resume[key] = value }
+                try? bencode(resume).write(to: backup.appendingPathComponent(hash + ".fastresume"))
+            }
+            // A download: 64 MB, a quarter on disk, the records an hour behind at 10%.
+            let live = downloads.appendingPathComponent("Live.Download.2024.mkv")
+            file(live, size: 64 * mb, written: 16 * mb)
+            record("aa01", name: "Live.Download.2024.mkv", size: 64 * mb, fraction: 0.10, finished: false)
+            // Stalled three days, a folder of two files.
+            let stalled = downloads.appendingPathComponent("Stalled.Show.S02")
+            try? fm.createDirectory(at: stalled, withIntermediateDirectories: true)
+            file(stalled.appendingPathComponent("e01.mkv"), size: 8 * mb, written: 8 * mb, age: 3 * 86_400)
+            file(stalled.appendingPathComponent("e02.mkv"), size: 8 * mb, written: 0, age: 3 * 86_400)
+            record("aa02", name: "Stalled.Show.S02", files: [("e01.mkv", 8 * mb), ("e02.mkv", 8 * mb)], size: 16 * mb, fraction: 0.5,
+                   finished: false, extra: ["last_download": now - 3 * 86_400])
+            // Seeding six days at 1.4×.
+            file(downloads.appendingPathComponent("Seeded.Movie.2023.mkv"), size: mb, written: mb)
+            record("aa03", name: "Seeded.Movie.2023.mkv", size: mb, fraction: 1, finished: true,
+                   extra: ["seeding_time": 6 * 86_400, "total_downloaded": mb, "total_uploaded": Int(1.4 * Double(mb))])
+            // Its own limits: 14 days or a ratio of 2.
+            file(downloads.appendingPathComponent("Limited.Movie.2022.mkv"), size: mb, written: mb)
+            record("aa04", name: "Limited.Movie.2022.mkv", size: mb, fraction: 1, finished: true,
+                   extra: ["seeding_time": 3 * 86_400, "total_downloaded": mb, "total_uploaded": mb / 2,
+                           "qBt-ratioLimit": 2000, "qBt-seedingTimeLimit": 14 * 1440])
+            // Stopped at 60%.
+            file(downloads.appendingPathComponent("Stopped.Movie.2021.mkv"), size: 10 * mb, written: 6 * mb, age: 7200)
+            record("aa05", name: "Stopped.Movie.2021.mkv", size: 10 * mb, fraction: 0.6, finished: false,
+                   extra: ["paused": 1, "auto_managed": 0])
+            // Saved elsewhere, and a file no torrent has.
+            file(downloads.appendingPathComponent("Elsewhere.mkv"), size: mb, written: mb)
+            record("aa06", name: "Elsewhere.mkv", size: mb, fraction: 1, finished: true, save: home)
+            file(downloads.appendingPathComponent("Loose.File.mkv"), size: mb, written: mb)
+
+            guard let browser = BrowserModel.active else { return lines.append("no browser") }
+            let board = TorrentStatusBoard.shared
+            board.recordsInterval = 1
+            board.liveInterval = 1
+            board.liveIntervalInBackground = 1
+            board.rateSpan = 3
+            board.requiresVisibleWindow = false
+            TorrentLibrary.shared?.forget()
+            board.forget()
+            browser.open(.local(downloads))
+            browser.sort(by: .name)
+            for _ in 0..<30 where browser.rows.count < 7 { try? await Task.sleep(for: .milliseconds(200)) }
+            @MainActor func shown(_ label: String) {
+                let texts = browser.rows.map { row in "\(row.name): \(board.status(for: row).map { ($0.glyph.map { "\($0) " } ?? "") + $0.text + ($0.isWarning ? " (orange)" : "") } ?? "-")" }
+                lines.append(label + "\n  " + texts.joined(separator: "\n  "))
+            }
+            try? await Task.sleep(for: .seconds(2.5))
+            await board.tick()
+            shown("first look")
+            // The download grows 4 MB a second for six seconds.
+            if let handle = try? FileHandle(forWritingTo: live) {
+                for step in 0..<6 {
+                    try? handle.seek(toOffset: UInt64((16 + step * 4) * mb))
+                    handle.write(Data(repeating: 9, count: 4 * mb))
+                    try? handle.synchronize()
+                    try? await Task.sleep(for: .seconds(1))
+                    await board.tick()
+                }
+                try? handle.close()
+            }
+            await board.tick()
+            shown("after the download grew to 40 MB")
+            if let row = browser.rows.first(where: { $0.name == "Live.Download.2024.mkv" }) {
+                lines.append("  its help: \(board.status(for: row)?.help ?? "-")")
+            }
+            // What the list shows: the name cell's accessibility label.
+            if let list = FileListRegistry.coordinator(for: browser),
+               let row = browser.rows.firstIndex(where: { $0.name == "Seeded.Movie.2023.mkv" }),
+               let cell = list.table.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView {
+                lines.append("the list's row: \(cell.accessibilityLabel() ?? "-")")
+            }
+            // qBittorrent's global limits, then preallocated files.
+            try? "[BitTorrent]\nSession\\GlobalMaxRatio=3\nSession\\GlobalMaxSeedingMinutes=43200\n".write(to: conf, atomically: true, encoding: .utf8)
+            TorrentLibrary.shared?.forget()
+            board.forget()
+            await board.tick()
+            shown("with global limits (ratio 3, 30 days)")
+            try? "[BitTorrent]\nSession\\Preallocation=true\n".write(to: conf, atomically: true, encoding: .utf8)
+            TorrentLibrary.shared?.forget()
+            board.forget()
+            await board.tick()
+            shown("files preallocated (only the records to go by)")
+            board.requiresVisibleWindow = true
+            lines.append("done")
+        }
+    }
+
     /// `-BlitSeedboxProbe <log>`: a read-only look at the first saved server's
     /// torrent client (qBittorrent): its process, the settings that matter for
     /// watch mode, and whether its Web API answers on localhost, with torrent
@@ -3342,7 +3493,8 @@ enum UITestHarness {
             let script = UserDefaults.standard.bool(forKey: "BlitSeedboxProbeWide") ? Self.wideProbe
                 : UserDefaults.standard.bool(forKey: "BlitSeedboxProbeApps") ? Self.appsProbe
                 : UserDefaults.standard.bool(forKey: "BlitSeedboxProbeResume") ? Self.resumeProbe
-                : UserDefaults.standard.bool(forKey: "BlitSeedboxProbeUnclaimed") ? Self.unclaimedProbe : Self.qbittorrentProbe
+                : UserDefaults.standard.bool(forKey: "BlitSeedboxProbeUnclaimed") ? Self.unclaimedProbe
+                : UserDefaults.standard.bool(forKey: "BlitSeedboxProbeStatus") ? Self.statusProbe : Self.qbittorrentProbe
             do {
                 let credential = try server.credential()
                 let connection = try await SSHConnection.connect(to: server.endpoint, credential: credential, verifier: connections.verifier)
@@ -3425,6 +3577,77 @@ enum UITestHarness {
     /// from them. Counts only: for each torrent, its completed time, whether
     /// every piece is there, paused or not, and whether its download is in
     /// the save folder; never a name.
+    /// What qBittorrent's records hold for showing a torrent's status (field
+    /// names and counts, ages, sizes; never a name or path): which keys the
+    /// .fastresume files have, how fresh they are, its share-limit settings, and
+    /// whether an unfinished torrent's files fill in on disk as pieces arrive.
+    private static let statusProbe = #"""
+    python3 - <<'PY'
+    import os, glob, collections, time, re, shutil, statistics
+    def bdecode(data, i=0):
+        c = data[i:i+1]
+        if c == b'i':
+            j = data.index(b'e', i); return int(data[i+1:j]), j + 1
+        if c == b'l':
+            i += 1; out = []
+            while data[i:i+1] != b'e':
+                v, i = bdecode(data, i); out.append(v)
+            return out, i + 1
+        if c == b'd':
+            i += 1; out = {}
+            while data[i:i+1] != b'e':
+                k, i = bdecode(data, i); v, i = bdecode(data, i); out[k] = v
+            return out, i + 1
+        j = data.index(b':', i); n = int(data[i:j]); return data[j+1:j+1+n], j + 1 + n
+    home = os.path.expanduser('~'); now = time.time()
+    base = home + '/.apps/qbittorrent/qBittorrent'
+    backup = base + '/BT_backup'
+    keys = collections.Counter(); values = collections.defaultdict(list); ages = []; sparse = []
+    for resume in glob.glob(backup + '/*.fastresume'):
+        try:
+            r, _ = bdecode(open(resume, 'rb').read())
+            t, _ = bdecode(open(resume[:-11] + '.torrent', 'rb').read())
+        except Exception:
+            keys['(unreadable)'] += 1; continue
+        ages.append(int((now - os.path.getmtime(resume)) / 60))
+        keys.update(k.decode() for k in r.keys())
+        for k, v in r.items():
+            if isinstance(v, int): values[k.decode()].append(v)
+        pieces = r.get(b'pieces', b'')
+        have = sum(b & 1 for b in pieces) / len(pieces) if pieces else 0
+        if r.get(b'completed_time', 0) == 0 and have < 1:
+            info = t.get(b'info', {}); name = (info.get(b'name.utf-8') or info.get(b'name') or b'').decode('utf-8', 'replace')
+            save = (r.get(b'qBt-savePath') or r.get(b'save_path') or b'').decode('utf-8', 'replace').replace('~', home)
+            files = [([name] + [p.decode('utf-8', 'replace') for p in (f.get(b'path.utf-8') or f.get(b'path') or [])], f.get(b'length', 0)) for f in info.get(b'files', [])] or [([name], info.get(b'length', 0))]
+            total = sum(l for _, l in files) or 1; on_disk = size = 0; newest = 0; present = 0
+            for parts, length in files:
+                path = os.path.join(save, *parts)
+                try: st = os.stat(path)
+                except OSError: continue
+                present += 1; size += st.st_size; on_disk += st.st_blocks * 512; newest = max(newest, st.st_mtime)
+            sparse.append((round(have * 100, 1), round(on_disk * 100 / total, 1), round(size * 100 / total, 1), present, len(files),
+                           int((now - newest) / 3600) if newest else None, int((now - r.get(b'last_download', 0)) / 3600) if r.get(b'last_download', 0) > 1e9 else r.get(b'last_download', 'none')))
+    print('fastresume files', len(ages))
+    print('keys:', ', '.join(f'{k}×{v}' for k, v in sorted(keys.items())))
+    def ago(v): return f'{(now - v) / 3600:.0f}h ago' if v > 1e9 else str(v)
+    for k in sorted(values):
+        vs = sorted(values[k]); show = ago if k in ('added_time','completed_time','last_download','last_upload','last_seen_complete','finished_time_stamp') else str
+        if len(set(vs)) <= 4: print(f'  {k}: ' + ', '.join(f'{show(v)}×{vs.count(v)}' for v in sorted(set(vs))))
+        else: print(f'  {k}: min {show(vs[0])} · median {show(statistics.median(vs))} · max {show(vs[-1])}')
+    print('minutes since each record was rewritten:', sorted(ages))
+    print('unfinished torrents (pieces % · bytes allocated on disk % · file sizes % · files present/in torrent · hours since newest write · hours since last_download):')
+    for row in sparse[:25]: print('  ', row)
+    for conf in [base + '/qBittorrent.conf', home + '/.config/qBittorrent/qBittorrent.conf']:
+        if os.path.exists(conf):
+            print('settings', conf.replace(home, '~'))
+            for line in open(conf, errors='replace'):
+                line = line.strip()
+                if re.search(r'(Ratio|Seeding|Resume|Prealloc|Queue|ShareLimit|Inactive|TempPathEnabled)', line, re.I) and '/' not in line.split('=', 1)[-1]:
+                    print('  ', line)
+    print('tools:', ', '.join(f'{t} {"yes" if shutil.which(t) else "no"}' for t in ('stat', 'du', 'python3')))
+    PY
+    """#
+
     private static let resumeProbe = #"""
     python3 - <<'PY'
     import os, glob, collections, time

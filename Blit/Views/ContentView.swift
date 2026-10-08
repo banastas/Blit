@@ -640,6 +640,7 @@ struct ContentView: View {
         UITestHarness.runTuneTestIfRequested()
         UITestHarness.runMenuRenameTestIfRequested(transfers: transfers)
         UITestHarness.runRenameByHandIfRequested(transfers: transfers)
+        UITestHarness.runTorrentStatusTestIfRequested()
         UITestHarness.runSeedboxProbeIfRequested(servers: servers, connections: connections)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)

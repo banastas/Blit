@@ -69,9 +69,6 @@ final class SeedboxWatch {
     private(set) var rules: [WatchRule] = []
     private(set) var states: [UUID: WatchState] = [:]
     @ObservationIgnored private var checking: Set<UUID> = []
-    /// Each records file's torrent names, by file name, with the time it had then.
-    @ObservationIgnored private var torrentNames: [String: (modified: Date?, names: Set<String>)] = [:]
-    @ObservationIgnored private var resumes: [String: (modified: Date?, state: (savePath: String, finished: Bool, fraction: Double))] = [:]
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let connections: ConnectionManager
@@ -239,37 +236,23 @@ final class SeedboxWatch {
     /// For each of `names` that a torrent in qBittorrent's records saves into
     /// the watched folder, those torrents. Empty where there are no records.
     private func torrentClaims(for names: Set<String>, rule: WatchRule, state: inout WatchState) async -> [String: [TorrentRecord]] {
-        guard !names.isEmpty, let access = try? await recordAccess(rule.source) else { return [:] }
+        guard !names.isEmpty, let library = TorrentLibrary.shared else { return [:] }
         // Found once, looked for again daily (qBittorrent may come later).
         if state.records == nil, Date().timeIntervalSince(state.recordsChecked ?? .distantPast) > 86_400 {
             state.recordsChecked = Date()
-            state.records = await access.find()
-            state.folderPath = try? await access.absolute()
-            if let records = state.records, let watched = state.folderPath, let settings = await access.settings(records) {
-                state.excluded = Self.incompleteFolders(in: settings, watched: watched)
+            state.records = await library.recordsFolder(for: rule.source, recheck: true)
+            state.folderPath = await library.absolutePath(rule.source)
+            if let records = state.records, let watched = state.folderPath, let settings = await library.settings(for: rule.source, records: records) {
+                state.excluded = Self.incompleteFolders(in: settings.text, watched: watched)
             }
         }
-        guard let folder = state.records, let watched = state.folderPath,
-              let files = try? await access.list(folder) else { return [:] }
+        guard let records = state.records, let watched = state.folderPath,
+              let torrents = await library.torrents(in: records, on: rule.source) else { return [:] }
         var claims: [String: [TorrentRecord]] = [:]
-        for torrent in files where torrent.name.hasSuffix(".torrent") {
-            let key = folder + "/" + torrent.name
-            if torrentNames[key]?.modified != torrent.modified || torrentNames[key] == nil {
-                guard let data = try? await access.read(key, torrent.size), let found = TorrentRecords.names(torrent: data) else { continue }
-                torrentNames[key] = (torrent.modified, found)
-            }
-            guard let claimed = torrentNames[key]?.names.intersection(names), !claimed.isEmpty else { continue }
-            let resumeName = String(torrent.name.dropLast(".torrent".count)) + ".fastresume"
-            guard let resume = files.first(where: { $0.name == resumeName }) else { continue }
-            let resumeKey = folder + "/" + resumeName
-            if resumes[resumeKey]?.modified != resume.modified || resumes[resumeKey] == nil {
-                guard let data = try? await access.read(resumeKey, resume.size), let read = TorrentRecords.state(resume: data) else { continue }
-                resumes[resumeKey] = (resume.modified, read)
-            }
-            guard let record = resumes[resumeKey]?.state, record.savePath == watched else { continue }
-            for name in claimed {
-                claims[name, default: []].append(TorrentRecord(names: torrentNames[key]?.names ?? [], savePath: record.savePath,
-                                                               finished: record.finished, fraction: record.fraction))
+        for torrent in torrents where torrent.resume.savePath == watched {
+            for name in torrent.names.intersection(names) {
+                claims[name, default: []].append(TorrentRecord(names: torrent.names, savePath: torrent.resume.savePath,
+                                                               finished: torrent.resume.finished, fraction: torrent.resume.fraction))
             }
         }
         return claims
@@ -289,94 +272,6 @@ final class SeedboxWatch {
             }
         }
         return names
-    }
-
-    private struct RecordFile {
-        var name: String
-        var size: UInt64
-        var modified: Date?
-    }
-
-    /// Reading qBittorrent's records where the watched folder is: over SFTP,
-    /// or (a test copy's stand-in) on this Mac, with -BlitWatchRecordsHome.
-    private struct RecordAccess {
-        var find: () async -> String?
-        var absolute: () async throws -> String
-        var list: (String) async throws -> [RecordFile]
-        var read: (String, UInt64) async throws -> Data
-        /// qBittorrent's settings file, beside its records or in ~/.config.
-        var settings: (String) async -> String?
-    }
-
-    /// qBittorrent.conf beside BT_backup (a seedbox's app folder), or where Linux keeps it.
-    nonisolated static func settingsCandidates(_ records: String) -> [String] {
-        [(records as NSString).deletingLastPathComponent + "/qBittorrent.conf", ".config/qBittorrent/qBittorrent.conf"]
-    }
-
-    private static func readRemote(_ file: String, size: UInt64, client: SFTPClient) async throws -> Data {
-        guard size <= 32 << 20 else { throw CocoaError(.fileReadTooLarge) }
-        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("blit-records-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let part = try PartFile.create(at: scratch.path, size: size)
-        defer { part.close() }
-        if size > 0 { _ = try await client.download(RemotePath(file), range: 0..<size, into: part) { _ in } }
-        return try Data(contentsOf: scratch)
-    }
-
-    private func recordAccess(_ source: BrowseLocation) async throws -> RecordAccess {
-        switch source {
-        case .remote(let id, let path):
-            guard let server = servers.server(id) else { throw CocoaError(.fileNoSuchFile) }
-            let client = try await connections.browseClient(for: server)
-            return RecordAccess(
-                find: {
-                    for candidate in TorrentRecords.candidates {
-                        if let attributes = try? await client.stat(RemotePath(candidate)), attributes.isDirectory { return candidate }
-                    }
-                    return nil
-                },
-                absolute: { try await client.realpath(RemotePath(bytes: path.isEmpty ? Array(".".utf8) : path)).description },
-                list: { folder in
-                    try await client.list(RemotePath(folder)).map { entry in
-                        RecordFile(name: entry.filename.description, size: entry.attributes.size ?? 0,
-                                   modified: entry.attributes.modificationTime.map { Date(timeIntervalSince1970: TimeInterval($0)) })
-                    }
-                },
-                read: { file, size in try await Self.readRemote(file, size: size, client: client) },
-                settings: { records in
-                    for candidate in Self.settingsCandidates(records) {
-                        guard let size = try? await client.stat(RemotePath(candidate)).size,
-                              let data = try? await Self.readRemote(candidate, size: size, client: client) else { continue }
-                        return String(decoding: data, as: UTF8.self)
-                    }
-                    return nil
-                })
-        case .local(let url):
-            #if DEBUG
-            guard TransferManager.isIsolated, let home = UserDefaults.standard.string(forKey: "BlitWatchRecordsHome") else {
-                throw CocoaError(.featureUnsupported)
-            }
-            let base = URL(fileURLWithPath: home)
-            return RecordAccess(
-                find: { TorrentRecords.candidates.first { FileManager.default.fileExists(atPath: base.appendingPathComponent($0).path) } },
-                absolute: { url.path },
-                list: { folder in
-                    let directory = base.appendingPathComponent(folder)
-                    return try FileManager.default.contentsOfDirectory(atPath: directory.path).map { name in
-                        let attributes = try? FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(name).path)
-                        return RecordFile(name: name, size: (attributes?[.size] as? NSNumber)?.uint64Value ?? 0,
-                                          modified: attributes?[.modificationDate] as? Date)
-                    }
-                },
-                read: { file, _ in try Data(contentsOf: base.appendingPathComponent(file)) },
-                settings: { records in
-                    Self.settingsCandidates(records).lazy.compactMap { try? String(contentsOf: base.appendingPathComponent($0), encoding: .utf8) }.first
-                })
-            #else
-            _ = url
-            throw CocoaError(.featureUnsupported)
-            #endif
-        }
     }
 
     private func publish(_ id: UUID, _ state: WatchState) {

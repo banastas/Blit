@@ -12,6 +12,16 @@ struct FileStatus: Hashable {
     var glyph: Character?
     var isFailure = false
     var help: String
+    /// Worth a look, not a failure (a stalled torrent): drawn orange, with words.
+    var isWarning = false
+}
+
+extension BrowserModel {
+    /// What a row's status says: Blit's own transfer first, else what
+    /// qBittorrent is doing with it (a server folder it saves into, R2.25).
+    func rowStatus(_ item: FileItem) -> FileStatus? {
+        operations.transfers.status(for: item) ?? TorrentStatusBoard.shared.status(for: item)
+    }
 }
 
 extension TransferManager {
