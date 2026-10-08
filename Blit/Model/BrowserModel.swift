@@ -449,7 +449,10 @@ final class BrowserModel {
                 guard location == current else { return }
                 let kept = selection.intersection(rows.map(\.location))
                 if kept != selection { selection = kept }
-                if let renaming, !rows.contains(where: { $0.location == renaming }) { self.renaming = nil }
+                if let renaming, !rows.contains(where: { $0.location == renaming }) {
+                    RenameLog.note("ended by a reload: the file isn't in the folder's \(rows.count) rows now (\(rows.contains { $0.name == renaming.lastComponent } ? "its name is, at another path" : "nor its name"))")
+                    self.renaming = nil
+                }
                 remember(location)
             } catch {
                 guard location == current else { return }

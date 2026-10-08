@@ -2943,33 +2943,71 @@ enum UITestHarness {
     /// (a posted right mouse down, the item chosen inside the menu's tracking
     /// loop) on a local file, selected and not: whether the name field stays
     /// up, sampled for two seconds after.
-    static func runMenuRenameTestIfRequested() {
+    static func runMenuRenameTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitMenuRenameTest") else { return }
         var lines: [String] = [] {
             didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
         }
+        // -BlitMenuRenameInFlight <folder on another volume>: the file being copied itself.
+        if let sourceFolder = UserDefaults.standard.string(forKey: "BlitMenuRenameInFlight") {
+            runMenuRenameInFlight(sourceFolder: URL(fileURLWithPath: sourceFolder), transfers: transfers) { lines.append($0) }
+            return
+        }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
             let fm = FileManager.default
-            let folder = fm.temporaryDirectory.appendingPathComponent("blit-menu-rename")
-            try? fm.removeItem(at: folder)
+            // -BlitMenuRenameRealCopy <folder>: the files there (another volume), with a real copy running into it.
+            let realCopy = UserDefaults.standard.string(forKey: "BlitMenuRenameRealCopy")
+            let folder = realCopy.map { URL(fileURLWithPath: $0) } ?? fm.temporaryDirectory.appendingPathComponent("blit-menu-rename")
+            let sources = fm.temporaryDirectory.appendingPathComponent("blit-menu-rename-sources")
+            for path in [folder, sources] { try? fm.removeItem(at: path) }
             try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
             for name in ["Alpha.Movie.2021.mkv", "Beta.Show.S01E01.mkv", "Gamma.txt"] {
                 fm.createFile(atPath: folder.appendingPathComponent(name).path, contents: Data(count: 100))
             }
-            defer { try? fm.removeItem(at: folder) }
+            if realCopy != nil {
+                try? fm.createDirectory(at: sources, withIntermediateDirectories: true)
+                for index in 0..<36 {
+                    var bytes = Data(count: 6_000_000)
+                    bytes.withUnsafeMutableBytes { raw in
+                        guard let base = raw.bindMemory(to: UInt64.self).baseAddress else { return }
+                        for word in 0..<(6_000_000 / 8) { base[word] = UInt64(word &* 2_654_435_761 &+ index) }
+                    }
+                    try? bytes.write(to: sources.appendingPathComponent(String(format: "Copy.%02d.bin", index)))
+                }
+            }
+            defer { for path in [folder, sources] { try? fm.removeItem(at: path) } }
             guard let window = BrowserModel.activeWindow, let first = PaneTabs.shared.current?.first else { return lines.append("no window") }
             // -BlitMenuRenameOtherPane YES: in the second pane while the first is the active one.
             let otherPane = UserDefaults.standard.bool(forKey: "BlitMenuRenameOtherPane")
             guard let browser = otherPane ? BrowserModel.oppositePane?(first) : first else { return lines.append("no second pane") }
             browser.open(.local(folder))
-            browser.sort(by: .name)
+            // -BlitMenuRenameNewestFirst YES: Blit's default order, where copied files land on top.
+            if UserDefaults.standard.bool(forKey: "BlitMenuRenameNewestFirst") {
+                browser.sortOrder = [SortColumn.modified.comparator(.reverse)]
+            } else {
+                browser.sort(by: .name)
+            }
             if otherPane {
                 first.open(.local(fm.temporaryDirectory))
             }
             try? await Task.sleep(for: .seconds(1.5))
             guard let list = FileListRegistry.coordinator(for: browser) else { return lines.append("no list") }
             lines.append(otherPane ? "in the second pane, the first one active" : "in the only pane")
+            // -BlitMenuRenameTransfer YES: a stand-in transfer running into this folder meanwhile.
+            var job: TransferJob?
+            if UserDefaults.standard.bool(forKey: "BlitMenuRenameTransfer") {
+                let running = TransferJob(kind: .copy, sources: [.local(fm.temporaryDirectory.appendingPathComponent("elsewhere/Big.File.mkv"))],
+                                          destination: folder, title: "Big.File.mkv", destinationName: folder.lastPathComponent)
+                running.persistent = false
+                running.status = .running
+                running.startedAt = Date()
+                running.inFlight = ["Big.File.mkv"]
+                transfers.debugInsert(running)
+                job = running
+                lines.append("a transfer is running into the folder")
+            }
+            defer { if let job { job.status = .finished; transfers.debugRemove(job) } }
             let table = list.table
             @MainActor func state() -> String {
                 let editing = (window.firstResponder as? NSText)?.delegate === list.renameField && list.renameField != nil
@@ -2979,6 +3017,15 @@ enum UITestHarness {
                 browser.cancelRename()
                 try? await Task.sleep(for: .milliseconds(200))
                 renameTrail = []
+                if realCopy != nil {
+                    // A third of the files, copied in while the rename is chosen and edited.
+                    let batch = ((try? fm.contentsOfDirectory(at: sources, includingPropertiesForKeys: nil)) ?? [])
+                        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                        .filter { !fm.fileExists(atPath: folder.appendingPathComponent($0.lastPathComponent).path) }.prefix(12)
+                    browser.drop(batch.map { .local($0) }, into: .local(folder), name: folder.lastPathComponent, copy: true)
+                    try? await Task.sleep(for: .milliseconds(400))
+                    lines.append("copying \(batch.count) files in: transfers running \(transfers.jobs.contains(where: \.isActive))")
+                }
                 if otherPane {
                     BrowserModel.onInteraction?(first)
                     first.requestKeyboardFocus()
@@ -3011,8 +3058,9 @@ enum UITestHarness {
                 var samples: [String] = []
                 for wait in [0.6, 0.3, 0.5, 1.0] {
                     try? await Task.sleep(for: .seconds(wait))
-                    samples.append(state())
+                    samples.append(state() + (realCopy != nil ? " · rows \(browser.rows.count) · copying \(transfers.jobs.contains(where: \.isActive))" : ""))
                 }
+                for _ in 0..<40 where transfers.jobs.contains(where: \.isActive) { try? await Task.sleep(for: .milliseconds(250)) }
                 NotificationCenter.default.removeObserver(observer)
                 lines.append("\(name) (\(preselect ? "selected" : "not selected") before): menu chose Rename \(chosen)")
                 for entry in renameTrail { lines.append("  trail: " + entry) }
@@ -3021,6 +3069,252 @@ enum UITestHarness {
             }
             browser.cancelRename()
             lines.append("done")
+        }
+    }
+
+    /// The menu's Rename on the file a real copy is working on: the source
+    /// (copied out of `sourceFolder`, then moved out of it) and the arriving
+    /// `.blitpart` at the destination. The files are sparse (no data to read),
+    /// GBs big so the copy is still going while the rename is sampled.
+    /// `-BlitMenuRenameFront YES` brings the test copy to the front first, as
+    /// when the user is working in Blit; `-BlitMenuRenameRealInput <log>` has
+    /// scripts/ui-menu.swift right-click and choose Rename with real events.
+    private static func runMenuRenameInFlight(sourceFolder: URL, transfers: TransferManager, log: @escaping @MainActor (String) -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let destination = fm.temporaryDirectory.appendingPathComponent("blit-menu-rename-dest")
+            for path in [sourceFolder, destination] { try? fm.removeItem(at: path) }
+            for path in [sourceFolder, destination] { try? fm.createDirectory(at: path, withIntermediateDirectories: true) }
+            defer { for path in [sourceFolder, destination] { try? fm.removeItem(at: path) } }
+            let gigabytes = max(1, UserDefaults.standard.integer(forKey: "BlitMenuRenameInFlightGB"))
+            for name in ["Alpha.Movie.2021.mkv", "Beta.Show.S01E01.mkv", "Delta.Movie.2020.mkv"] {
+                let url = sourceFolder.appendingPathComponent(name)
+                fm.createFile(atPath: url.path, contents: nil)
+                if let handle = try? FileHandle(forWritingTo: url) {
+                    try? handle.truncate(atOffset: UInt64(gigabytes) * 1_000_000_000)
+                    try? handle.close()
+                }
+            }
+            fm.createFile(atPath: sourceFolder.appendingPathComponent("Gamma.txt").path, contents: Data(count: 100))
+            guard let window = BrowserModel.activeWindow, let browser = PaneTabs.shared.current?.first else { return log("no window") }
+            let front = UserDefaults.standard.bool(forKey: "BlitMenuRenameFront")
+            // -BlitMenuRenameRealInput <log>: scripts/ui-menu.swift clicks (it waits for <log>.rclick-N).
+            let realInput = UserDefaults.standard.string(forKey: "BlitMenuRenameRealInput")
+            var realStep = 0
+            @MainActor func state(_ item: String) -> String {
+                let list = FileListRegistry.coordinator(for: browser)
+                let editing = (window.firstResponder as? NSText)?.delegate === list?.renameField && list?.renameField != nil
+                let row = browser.rows.first { $0.name == item }
+                let status = row.flatMap { transfers.status(for: $0)?.text } ?? "-"
+                return "renaming \(browser.renaming?.lastComponent ?? "-") · field \(list?.renameField?.window != nil) · typing in it \(editing) · status \(status) · active \(NSApp.isActive) · first responder \(window.firstResponder.map { String(describing: type(of: $0)) } ?? "-")"
+            }
+            // (where the pane looks, the file copied, the row renamed, copy or move)
+            let cases: [(URL, String, String, Bool)] = [
+                (sourceFolder, "Alpha.Movie.2021.mkv", "Alpha.Movie.2021.mkv", true),
+                (destination, "Beta.Show.S01E01.mkv", "Beta.Show.S01E01.mkv.blitpart", true),
+                (sourceFolder, "Delta.Movie.2020.mkv", "Delta.Movie.2020.mkv", false),
+            ]
+            for (shown, file, renamed, copy) in cases {
+                browser.cancelRename()
+                browser.open(.local(shown))
+                browser.sort(by: .name)
+                try? await Task.sleep(for: .seconds(1))
+                let started = Date()
+                browser.drop([.local(sourceFolder.appendingPathComponent(file))], into: .local(destination), name: destination.lastPathComponent, copy: copy)
+                // Until the file is on its way and its row shows it.
+                var inFlight = false
+                for index in 0..<100 {
+                    // At the destination it shows once the folder is listed again
+                    // (as when it's opened while the file arrives).
+                    if shown == destination, index % 4 == 3 { browser.reload() }
+                    if let row = browser.rows.first(where: { $0.name == renamed }), transfers.status(for: row)?.text == "transferring" {
+                        inFlight = true
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                // -BlitMenuRenameHUD YES: the full HUD open, as many keep it.
+                if UserDefaults.standard.bool(forKey: "BlitMenuRenameHUD") { transfers.isExpanded = true }
+                log("\(copy ? "copying" : "moving") \(file), renaming \(renamed) \(shown == sourceFolder ? "at the source" : "at the destination"): in flight \(inFlight) after \(Int(Date().timeIntervalSince(started) * 1000)) ms · HUD \(transfers.isExpanded ? "full" : "strip")")
+                guard let list = FileListRegistry.coordinator(for: browser), let row = browser.rows.firstIndex(where: { $0.name == renamed }) else {
+                    log("  no row for \(renamed)")
+                    continue
+                }
+                if front {
+                    NSApp.activate()
+                    window.makeKeyAndOrderFront(nil)
+                    browser.requestKeyboardFocus()
+                    for _ in 0..<40 where !NSApp.isActive { try? await Task.sleep(for: .milliseconds(50)) }
+                    try? await Task.sleep(for: .milliseconds(150))
+                    log("  in front: \(NSApp.isActive) · key window \(window.isKeyWindow)")
+                }
+                renameTrail = []
+                var chosen = false
+                let table = list.table
+                let rect = table.rect(ofRow: row)
+                let point = table.convert(NSPoint(x: rect.minX + 80, y: rect.midY), to: nil)
+                var observer: (any NSObjectProtocol)?
+                let menuOpened = Date()
+                let ended = NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: nil) { note in
+                    nonisolated(unsafe) let menu = note.object as? NSMenu
+                    MainActor.assumeIsolated {
+                        guard menu?.items.contains(where: { $0.title == "Rename" }) == true else { return }
+                        renameTrail.append("menu closed after \(Int(Date().timeIntervalSince(menuOpened) * 1000)) ms · HUD \(transfers.isExpanded) · " + callers(30))
+                    }
+                }
+                defer { NotificationCenter.default.removeObserver(ended) }
+                if let logPath = realInput {
+                    observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { note in
+                        nonisolated(unsafe) let menu = note.object as? NSMenu
+                        MainActor.assumeIsolated {
+                            renameTrail.append("menu opened: \(menu?.items.count ?? 0) items, Rename \(menu?.items.contains { $0.title == "Rename" } == true) · " + callers(8))
+                        }
+                    }
+                    // A real two-finger click and a real click on Rename (scripts/ui-menu.swift).
+                    let screen = window.convertPoint(toScreen: point)
+                    let height = NSScreen.screens.first?.frame.height ?? 0
+                    let step = ["x": Double(screen.x), "y": Double(height - screen.y), "item": "Rename"] as [String: Any]
+                    try? JSONSerialization.data(withJSONObject: step).write(to: URL(fileURLWithPath: logPath + ".rclick-\(realStep)"))
+                    for _ in 0..<100 {
+                        if fm.fileExists(atPath: logPath + ".chosen-\(realStep)") { chosen = true; break }
+                        if fm.fileExists(atPath: logPath + ".missed-\(realStep)") || fm.fileExists(atPath: logPath + ".aborted") { break }
+                        try? await Task.sleep(for: .milliseconds(50))
+                    }
+                    realStep += 1
+                } else {
+                    observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { note in
+                        nonisolated(unsafe) let menu = note.object as? NSMenu
+                        MainActor.assumeIsolated {
+                            guard !chosen, let menu, let index = menu.items.firstIndex(where: { $0.title == "Rename" }) else { return }
+                            chosen = true
+                            nonisolated(unsafe) let tracked = menu
+                            let timer = Timer(timeInterval: 0.3, repeats: false) { _ in
+                                MainActor.assumeIsolated {
+                                    tracked.performActionForItem(at: index)
+                                    tracked.cancelTrackingWithoutAnimation()
+                                }
+                            }
+                            RunLoop.main.add(timer, forMode: .eventTracking)
+                        }
+                    }
+                    if let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                }
+                var samples: [String] = []
+                for (index, wait) in [0.6, 0.3, 0.5, 1.0].enumerated() {
+                    try? await Task.sleep(for: .seconds(wait))
+                    samples.append(state(renamed))
+                    // What a click on the field would reach: its middle, its start, and near its end.
+                    if index == 0, let field = list.renameField, let frameView = window.contentView?.superview {
+                        let frame = field.convert(field.bounds, to: nil)
+                        let spots = [("middle", NSPoint(x: frame.midX, y: frame.midY)), ("start", NSPoint(x: frame.minX + 8, y: frame.midY)),
+                                     ("end", NSPoint(x: frame.maxX - 6, y: frame.midY))]
+                        let hits = spots.map { name, point in
+                            "\(name) → " + (frameView.hitTest(frameView.convert(point, from: nil)).map { String(describing: type(of: $0)) } ?? "nothing")
+                        }
+                        log("  field frame \(frame.integral) in a cell \(field.superview.map { "\($0.frame.integral)" } ?? "-") · hits: " + hits.joined(separator: ", "))
+                    }
+                    // -BlitMenuRenameSecondJob YES: another transfer finishes into the
+                    // folder shown mid-rename (as a watch fetch does), which reloads it.
+                    // -BlitMenuRenameResize YES: the window narrows and widens again
+                    // mid-rename (the columns refit; Size steps out and back).
+                    if UserDefaults.standard.bool(forKey: "BlitMenuRenameResize"), index < 2 {
+                        var frame = window.frame
+                        frame.size.width += index == 0 ? -420 : 420
+                        window.setFrame(frame, display: true)
+                    }
+                    if index == 0, UserDefaults.standard.bool(forKey: "BlitMenuRenameSecondJob") {
+                        let small = fm.temporaryDirectory.appendingPathComponent("blit-menu-rename-small-\(realStep)-\(renamed.count).nfo")
+                        fm.createFile(atPath: small.path, contents: Data(count: 2000))
+                        browser.drop([.local(small)], into: .local(shown), name: shown.lastPathComponent, copy: true)
+                    }
+                }
+                if let observer { NotificationCenter.default.removeObserver(observer) }
+                log("  menu chose Rename \(chosen)\(realInput == nil ? "" : " (real clicks)")")
+                for entry in renameTrail { log("  trail: " + entry) }
+                renameTrail = []
+                for (time, sample) in zip(["0.6 s", "0.9 s", "1.4 s", "2.4 s"], samples) { log("  \(time): \(sample)") }
+                browser.cancelRename()
+                for job in transfers.transferJobs where job.isActive || job.status == .queued { transfers.cancel(job) }
+                for _ in 0..<100 where transfers.transferJobs.contains(where: { $0.isActive }) { try? await Task.sleep(for: .milliseconds(100)) }
+                log("  copy ran \(Int(Date().timeIntervalSince(started) * 1000)) ms (cancelled at the end)")
+                // The moved file goes back for the next case.
+                for name in (try? fm.contentsOfDirectory(atPath: destination.path)) ?? [] where !name.hasSuffix(".blitpart") {
+                    try? fm.removeItem(at: destination.appendingPathComponent(name))
+                }
+            }
+            browser.cancelRename()
+            log("done")
+        }
+    }
+
+    /// `-BlitRenameByHand <log>`: for a person to try renaming a file while it's
+    /// copied, in a test copy: two panes (test files on the left, an empty
+    /// folder on the right) and a slow copy running between them (the
+    /// `-BlitDebugCopyMBps` pace). Every step of a rename, and anything that
+    /// takes the keyboard or changes the list's selection meanwhile, goes to
+    /// the log with its callers. Runs until quit (or 10 minutes).
+    static func runRenameByHandIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitRenameByHand") else { return }
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+        trailFile = logPath
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let fm = FileManager.default
+            let source = URL(fileURLWithPath: UserDefaults.standard.string(forKey: "BlitRenameByHandSource") ?? "/Volumes/BlitConflict/byhand")
+            let destination = fm.temporaryDirectory.appendingPathComponent("blit-byhand-dest")
+            for path in [source, destination] { try? fm.removeItem(at: path) }
+            for path in [source, destination] { try? fm.createDirectory(at: path, withIntermediateDirectories: true) }
+            let names = ["Alpha.Movie.2021.mkv", "Beta.Show.S01E01.mkv", "Delta.Movie.2020.mkv"]
+            for name in names {
+                let url = source.appendingPathComponent(name)
+                fm.createFile(atPath: url.path, contents: nil)
+                if let handle = try? FileHandle(forWritingTo: url) {
+                    try? handle.truncate(atOffset: 3_000_000_000)
+                    try? handle.close()
+                }
+            }
+            fm.createFile(atPath: source.appendingPathComponent("Gamma.txt").path, contents: Data(count: 100))
+            guard let window = BrowserModel.activeWindow, let tab = PaneTabs.shared.current else { return renameTrail.append("no window") }
+            tab.first.open(.local(source))
+            tab.first.sort(by: .name)
+            tab.second?.open(.local(destination))
+            try? await Task.sleep(for: .seconds(1))
+            tab.first.drop(names.map { .local(source.appendingPathComponent($0)) }, into: .local(destination),
+                           name: destination.lastPathComponent, copy: true)
+            renameTrail.append("ready: copying \(names.count) files left → right at \(UserDefaults.standard.double(forKey: "BlitDebugCopyMBps")) MB/s")
+            // What takes the keyboard, and from where.
+            let responder = window.observe(\.firstResponder, options: [.new]) { window, _ in
+                MainActor.assumeIsolated {
+                    let name = window.firstResponder.map { String(describing: type(of: $0)) } ?? "none"
+                    renameTrail.append("first responder → \(name) · " + callers(24))
+                }
+            }
+            let observers = [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+                             NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                             NSMenu.didBeginTrackingNotification, NSMenu.didEndTrackingNotification].map { name in
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { note in
+                    let what = name.rawValue
+                    nonisolated(unsafe) let menu = note.object as? NSMenu
+                    MainActor.assumeIsolated {
+                        if what.hasPrefix("NSMenu"), menu?.items.contains(where: { $0.title == "Rename" }) != true { return }
+                        renameTrail.append(what)
+                    }
+                }
+            }
+            var closed = false
+            let close = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: nil) { _ in
+                MainActor.assumeIsolated { closed = true }
+            }
+            for _ in 0..<1200 where !closed { try? await Task.sleep(for: .milliseconds(500)) }
+            responder.invalidate()
+            for observer in observers + [close] { NotificationCenter.default.removeObserver(observer) }
+            for job in transfers.transferJobs where job.isActive || job.status == .queued { transfers.cancel(job) }
+            for path in [source, destination] { try? fm.removeItem(at: path) }
+            renameTrail.append("done")
         }
     }
 
@@ -4650,8 +4944,21 @@ enum UITestHarness {
     /// The last drop a file list handled (for the drop test).
     static var lastDrop = ""
     static var dropTrail: [String] = []
-    /// How each rename ended (the menu rename test).
-    static var renameTrail: [String] = []
+    /// How each rename ended (the menu rename test). With `-BlitRenameByHand`
+    /// each entry also goes to its log as it happens, timed.
+    static var renameTrail: [String] = [] {
+        didSet {
+            guard let trailFile, renameTrail.count > oldValue.count else { return }
+            let stamp = Date().formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute().second().secondFraction(.fractional(3)))
+            let text = renameTrail[oldValue.count...].map { "\(stamp) \($0)\n" }.joined()
+            if let handle = FileHandle(forWritingAtPath: trailFile) {
+                handle.seekToEndOfFile()
+                handle.write(Data(text.utf8))
+                handle.closeFile()
+            }
+        }
+    }
+    static var trailFile: String?
 
     /// The calling frames, short: Blit's own and AppKit's method names.
     static func callers(_ count: Int = 18) -> String {

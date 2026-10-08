@@ -11,6 +11,11 @@ enum StreamCopy {
     static let blockSize = 8 << 20
     /// Blocks allowed between the reader and the writer.
     static let depth = 3
+    #if DEBUG
+    /// Test copies only (`-BlitDebugCopyMBps`): a slower pace, so a test can
+    /// act on a file while it's being copied.
+    static let debugPace = UserDefaults.standard.double(forKey: "BlitDebugCopyMBps")
+    #endif
 
     /// Copies `source` to `destination` (created or truncated) and returns the
     /// source's SHA-256. Blocking; call from a thread that may block.
@@ -59,6 +64,9 @@ enum StreamCopy {
             pipeline.write(buffer: block % depth, count: n, at: offset, progress: progress)
             offset += off_t(n)
             block += 1
+            #if DEBUG
+            if debugPace > 0 { usleep(useconds_t(Double(n) / debugPace)) }   // bytes ÷ (MB/s) = µs
+            #endif
         }
         pipeline.drain()
         if let error = pipeline.error { throw error }

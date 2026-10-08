@@ -42,6 +42,12 @@ final class FileTableView: NSTableView {
     /// A click makes the pane active at once; a click on the only selected
     /// row's name renames it a moment later (FileListRename.swift).
     override func mouseDown(with event: NSEvent) {
+        if let field = coordinator?.renameField {
+            // A click the field didn't take (it ends editing, as in Finder): where.
+            let point = convert(event.locationInWindow, from: nil)
+            let onField = field.convert(field.bounds, to: self).contains(point)
+            RenameLog.note("click on row \(row(at: point)), column \(column(at: point)) while editing\(onField ? ", inside the field's frame" : "")")
+        }
         // ⌃-click: the menu at once, as a right-click does (with rows draggable,
         // the table first waited for the button to come up; and its right-click
         // handling ignores a left button).
@@ -65,6 +71,7 @@ final class FileTableView: NSTableView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        if coordinator?.renameField != nil { RenameLog.note("right-click on row \(row(at: convert(event.locationInWindow, from: nil))) while editing") }
         coordinator?.cancelPendingRename()
         coordinator?.noteInteraction()
         super.rightMouseDown(with: event)

@@ -90,6 +90,7 @@ extension BrowserModel {
 
     /// Starts editing an item's name in place (Return, or File › Rename).
     func beginRename(_ item: FileItem) {
+        RenameLog.note("begin", name: item.name)
         selection = [item.id]
         renaming = item.location
     }
@@ -182,7 +183,10 @@ extension BrowserModel {
         send(items, to: .local(url), name: url.lastPathComponent, move: move)
     }
 
-    func cancelRename() { renaming = nil }
+    func cancelRename() {
+        if renaming != nil { RenameLog.note("cleared", callers: true) }
+        renaming = nil
+    }
 
     /// Keeps a file's type on rename: if the old name had a real extension
     /// (.mp4, .mkv, .nfo…) and the new name has none (or only dots that aren't

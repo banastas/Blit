@@ -84,6 +84,8 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     var renamingItem: FileItem?
     weak var renamingModel: BrowserModel?
     var renameFinished = false
+    /// What has the window's keyboard while the field is up (RenameLog).
+    var keyboardWatch: NSKeyValueObservation?
     /// The rows changed while a name was being edited: they show once it ends.
     var rowsWaitingForRename = false
     /// Click to rename: the press on a row, and the rename waiting out the
@@ -291,6 +293,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     /// else took it meanwhile.
     private func setShown(_ shown: Bool) {
         guard scrollView.isHidden == shown else { return }
+        if renameField != nil { RenameLog.note("list \(shown ? "shown" : "hidden") while editing") }
         let window = table.window
         if shown {
             scrollView.isHidden = false
@@ -320,6 +323,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     /// says when its window closes). A name being edited is saved.
     func detach() {
         guard let model else { return }
+        if renameField != nil { RenameLog.note("list going away while editing", callers: true) }
         if let field = renameField { controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: field)) }
         watchGeneration += 1
         removeRenameField()
@@ -339,6 +343,7 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     /// in this update, with the selection, sort and scroll it had.
     private func show(_ model: BrowserModel) {
         guard model !== self.model else { return }
+        if renameField != nil { RenameLog.note("list showing another tab's pane while editing") }
         if let old = self.model {
             // A name being edited is saved, in its own pane.
             if let field = renameField { controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: field)) }
@@ -401,8 +406,12 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
         // AppKit ended the edit on that selection change, before any typing.)
         if let editing = renamingItem?.id, renameField?.window != nil, snapshot.renaming == editing,
            snapshot.folder == shownFolder, snapshot.rows != rows {
+            if !rowsWaitingForRename { RenameLog.note("rows held while editing (\(rows.count) → \(snapshot.rows.count))") }
             rowsWaitingForRename = true
             return
+        }
+        if renameField != nil, IndexSet(snapshot.selection.compactMap { rowIndex[$0] }) != table.selectedRowIndexes {
+            RenameLog.note("selection changing while editing (\(snapshot.renaming == renamingItem?.id ? "same rename" : snapshot.renaming == nil ? "rename over" : "another rename"), folder \(snapshot.folder == shownFolder ? "same" : "changed"))")
         }
         let applying = isApplying
         isApplying = true
@@ -859,6 +868,9 @@ extension FileListCoordinator {
 
 extension FileListCoordinator: ListKeyboardTarget {
     func takeKeyboardFocus() {
+        if let editor = table.window?.firstResponder as? NSText, editor.delegate is NSTextField {
+            RenameLog.note("list asked for the keyboard while a field has it (\(editor.delegate === renameField && renameField != nil ? "this list's rename" : "another field"))", callers: true)
+        }
         guard let window = table.window, !scrollView.isHidden else {
             // Taken once the list can: nothing else keeps it meanwhile.
             keyboardPending = true

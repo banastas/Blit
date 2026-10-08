@@ -20,10 +20,17 @@ extension FileListCoordinator: NSTextFieldDelegate {
     /// the list (a new folder's row comes a moment after), or stops.
     func showRenaming(_ location: BrowseLocation?) {
         guard let location else {
-            if renameField != nil { removeRenameField() }
+            if renameField != nil {
+                if !renameFinished { RenameLog.note("field removed: the rename was ended elsewhere") }
+                removeRenameField()
+            }
             return
         }
-        guard renamingItem?.id != location || renameField == nil, let row = rowIndex[location] else { return }
+        guard renamingItem?.id != location || renameField == nil, let row = rowIndex[location] else {
+            if renamingItem?.id != location || renameField == nil { RenameLog.note("waiting: no row for it yet (rows \(rows.count))") }
+            return
+        }
+        RenameLog.note("editing row \(row) of \(rows.count)")
         beginEditing(rows[row], row: row)
     }
 
@@ -48,6 +55,7 @@ extension FileListCoordinator: NSTextFieldDelegate {
         renamingModel = model
         renameFinished = false
         table.window?.makeFirstResponder(field)
+        watchKeyboard(while: field)
         // The base name: all of it for folders, names without an extension, or
         // an "extension" with a space (a dot in a title).
         let name = item.name as NSString
@@ -79,9 +87,7 @@ extension FileListCoordinator: NSTextFieldDelegate {
     private func finishRename(_ text: String?) {
         guard !renameFinished, let item = renamingItem, let model = renamingModel else { return }
         renameFinished = true
-        #if DEBUG
-        UITestHarness.renameTrail.append("finished (\(text == nil ? "cancel" : "commit")) · " + UITestHarness.callers())
-        #endif
+        RenameLog.note("ended: " + (text == nil ? "cancelled" : text == item.name ? "saved unchanged" : "saved a new name"), callers: true)
         // Still in the field (Return, Esc): the keyboard goes back to the list.
         // Ended by a click elsewhere: it stays where it went.
         let refocus = (table.window?.firstResponder as? NSText)?.delegate === renameField
@@ -96,9 +102,7 @@ extension FileListCoordinator: NSTextFieldDelegate {
 
     func removeRenameField() {
         guard let field = renameField else { return }
-        #if DEBUG
-        UITestHarness.renameTrail.append("field removed · " + UITestHarness.callers())
-        #endif
+        keyboardWatch = nil
         renameFinished = true
         renameField = nil
         renamingItem = nil
@@ -113,6 +117,19 @@ extension FileListCoordinator: NSTextFieldDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let model = self.model, self.watchGeneration == generation else { return }
                 self.refresh(from: model)
+            }
+        }
+    }
+
+    /// While the field is up: anything that takes the keyboard from it, and
+    /// from where (in the rename log).
+    private func watchKeyboard(while field: NSTextField) {
+        keyboardWatch = table.window?.observe(\.firstResponder, options: [.new]) { [weak field] window, _ in
+            MainActor.assumeIsolated {
+                guard let field else { return }
+                let responder = window.firstResponder
+                if responder === field || (responder as? NSText)?.delegate === field { return }
+                RenameLog.note("keyboard went to \(responder.map { String(describing: type(of: $0)) } ?? "nothing")", callers: true)
             }
         }
     }
