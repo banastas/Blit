@@ -30,7 +30,7 @@ enum LicenseConfig {
     }
     /// Where Buy Blit… goes: the product's Lemon Squeezy checkout. (Test mode
     /// for now; the live product gets its own link when the store goes live.)
-    static let buyURL = URL(string: "https://blit.lemonsqueezy.com/checkout/buy/1eb9b37f-ef04-4947-a7ab-ee13a6af1fc6")!
+    static let buyURL = URL(string: "https://banastas.lemonsqueezy.com/checkout/buy/1eb9b37f-ef04-4947-a7ab-ee13a6af1fc6")!
     static let trialDays = 7
     static let revalidateEvery: TimeInterval = 7 * 86_400
     static let offlineGrace: TimeInterval = 30 * 86_400
