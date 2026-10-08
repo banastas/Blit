@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.47</title>
-      <pubDate>Thu, 08 Oct 2026 07:44:13 +0000</pubDate>
-      <sparkle:version>50</sparkle:version>
-      <sparkle:shortVersionString>0.2.47</sparkle:shortVersionString>
+      <title>Blit 0.2.48</title>
+      <pubDate>Thu, 08 Oct 2026 16:18:05 +0000</pubDate>
+      <sparkle:version>51</sparkle:version>
+      <sparkle:shortVersionString>0.2.48</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Renames in place are now recorded in the system log (without file names), so if a name field ever closes on its own before you type, the cause can be traced.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.47.zip" type="application/octet-stream" sparkle:edSignature="Ft65nDCdE44CfNTp/1Z9e8axsyZtnVaQAgEpxsKTIbPFee+u1OUBTQe+Kj7XASrYW0SO8c7aJTf08b+vCqbzAA==" length="6237764" />
+      <description><![CDATA[<p>Torrent status in seedbox folders: what qBittorrent is doing with each item, downloading with time left, stalled, stopped, or seeding with its time and ratio. Downloads arrive with a still from the video, Quick Look and Rename in the notification, and a note when an episode is missing (only when Blit is sure). And after four hours away, a summary of what happened while you were gone.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.48.zip" type="application/octet-stream" sparkle:edSignature="iMgZVWCx9mFQHBVs0QWSY9883MjL+GfGZkqSj0bthQV0RAIC5dZ4FOn9zyFRz5ZGgtHGoZbeZEKmBolaxqzIBw==" length="6357657" />
     </item>
   </channel>
 </rss>
