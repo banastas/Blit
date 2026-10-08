@@ -3833,6 +3833,39 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitEnterLicenseTest <log>`: Blit › Enter License… opens Settings on
+    /// the License tab (the key field the receipt sends buyers to), from
+    /// another tab and with Settings already open. The user's tab is put back.
+    static func runEnterLicenseTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitEnterLicenseTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let saved = SettingsView.tabStore.string(forKey: SettingsView.tabKey)
+            let item = NSApp.mainMenu?.items.first?.submenu?.items.first { $0.title == "Enter License…" }
+            lines.append("Blit menu has Enter License…: \(item != nil)")
+            @MainActor func settingsTitle() -> String {
+                NSApp.windows.first { $0.isVisible && ["General", "Transfers", "Watch", "Updates", "License"].contains($0.title) }?.title ?? "no Settings window"
+            }
+            for label in ["from General, Settings closed", "Settings open on Watch"] {
+                SettingsView.tabStore.set(label.contains("Watch") ? "watch" : "general", forKey: SettingsView.tabKey)
+                try? await Task.sleep(for: .seconds(0.8))
+                if label.contains("Watch") { lines.append("  before: \(settingsTitle())") }
+                if let item, let menu = item.menu, let index = menu.items.firstIndex(of: item) { menu.performActionForItem(at: index) }
+                try? await Task.sleep(for: .seconds(1.2))
+                lines.append("\(label): Settings shows \(settingsTitle())")
+            }
+            NSApp.windows.first { $0.title == "License" }?.close()
+            // The test copies' own tab back, once the window has let go.
+            try? await Task.sleep(for: .seconds(0.5))
+            if let saved { SettingsView.tabStore.set(saved, forKey: SettingsView.tabKey) } else { SettingsView.tabStore.removeObject(forKey: SettingsView.tabKey) }
+            lines.append("the installed Blit's tab untouched: \(UserDefaults.standard.string(forKey: SettingsView.tabKey) ?? "none set")")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitSeedboxProbe <log>`: a read-only look at the first saved server's
     /// torrent client (qBittorrent): its process, the settings that matter for
     /// watch mode, and whether its Web API answers on localhost, with torrent

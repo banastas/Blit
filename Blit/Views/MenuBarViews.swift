@@ -265,11 +265,24 @@ struct SettingsView: View {
     @AppStorage("notifyEachTransfer") private var notifyEachTransfer = true
     @AppStorage("verifyFiles") private var verifyFiles = "sha256"
     @AppStorage("menuBarShows") private var menuBarShows = "timeLeft"
+    /// The tab showing; Blit › Enter License… sets it to the License tab.
+    @AppStorage(SettingsView.tabKey, store: SettingsView.tabStore) private var savedTab = "general"
+    static let tabKey = "settingsTab"
+    /// Test copies keep their own (they share the installed Blit's settings).
+    static let tabStore: UserDefaults = TransferManager.isIsolated ? (UserDefaults(suiteName: "com.banastas.blit.test-copies") ?? .standard) : .standard
+
+    /// The saved tab, or General when it isn't there (License, with licensing off).
+    private var tab: Binding<String> {
+        Binding(get: {
+            let shown = ["general", "transfers", "watch", "updates"] + (LicenseManager.shared.isEnforced ? ["license"] : [])
+            return shown.contains(savedTab) ? savedTab : "general"
+        }, set: { savedTab = $0 })
+    }
 
     // Tabs, as in Finder and Mail: each pane holds a few settings and sizes to
     // fit, so nothing scrolls and the window stays small enough for any screen.
     var body: some View {
-        TabView {
+        TabView(selection: tab) {
             pane {
                 Section {
                     Toggle("Show Blit in the menu bar", isOn: $showMenuBarExtra)
@@ -292,6 +305,7 @@ struct SettingsView: View {
                 Section { FullDiskAccessRow() }
             }
             .tabItem { Label("General", systemImage: "gearshape") }
+            .tag("general")
 
             pane {
                 Section {
@@ -309,16 +323,20 @@ struct SettingsView: View {
                 }
             }
             .tabItem { Label("Transfers", systemImage: "arrow.down.circle") }
+            .tag("transfers")
 
             pane { Section { WatchSettingsSection() } }
                 .tabItem { Label("Watch", systemImage: "eye") }
+                .tag("watch")
 
             pane { UpdatesSection() }
                 .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
+                .tag("updates")
 
             if LicenseManager.shared.isEnforced {
                 pane { LicenseSection() }
                     .tabItem { Label("License", systemImage: "key") }
+                    .tag("license")
             }
         }
         .frame(width: 480)

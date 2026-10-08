@@ -481,7 +481,11 @@ struct AboutCommands: Commands {
             if LicenseManager.shared.isEnforced {
                 Divider()
                 Button("Buy Blit…") { LicenseManager.shared.openBuyPage() }
-                Button("Enter License…") { openSettings() }
+                // Straight to the key field (the receipt and the checkout say so).
+                Button("Enter License…") {
+                    SettingsView.tabStore.set("license", forKey: SettingsView.tabKey)
+                    openSettings()
+                }
             }
         }
     }

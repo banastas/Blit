@@ -646,6 +646,7 @@ struct ContentView: View {
         UITestHarness.runArrivalTestIfRequested(servers: servers)
         UITestHarness.runMissingEpisodesTestIfRequested(transfers: transfers)
         UITestHarness.runWelcomeBackTestIfRequested(transfers: transfers)
+        UITestHarness.runEnterLicenseTestIfRequested()
         UITestHarness.runSeedboxProbeIfRequested(servers: servers, connections: connections)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
