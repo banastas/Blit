@@ -642,6 +642,7 @@ struct ContentView: View {
         UITestHarness.runRenameByHandIfRequested(transfers: transfers)
         UITestHarness.runTorrentStatusTestIfRequested()
         UITestHarness.runTorrentStatusRealIfRequested(servers: servers)
+        UITestHarness.runArrivalTestIfRequested(servers: servers)
         UITestHarness.runSeedboxProbeIfRequested(servers: servers, connections: connections)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)

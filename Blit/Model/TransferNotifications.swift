@@ -20,10 +20,10 @@ enum TransferNotifications {
         let center = UNUserNotificationCenter.current()
         let reveal = UNNotificationAction(identifier: revealAction, title: "Show in Finder", options: [.foreground])
         let details = UNNotificationAction(identifier: detailsAction, title: "Show Details", options: [.foreground])
-        center.setNotificationCategories([
+        center.setNotificationCategories(Set([
             UNNotificationCategory(identifier: doneCategory, actions: [reveal], intentIdentifiers: []),
             UNNotificationCategory(identifier: problemCategory, actions: [details, reveal], intentIdentifiers: []),
-        ])
+        ] + ArrivalNotifications.categories(reveal: reveal)))
         center.delegate = NotificationRouter.shared
     }
 
@@ -176,6 +176,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let action = response.actionIdentifier
         let jobID = (info["job"] as? String).flatMap(UUID.init(uuidString:))
         let paths = info["reveal"] as? [String] ?? []
+        let arrived = info["items"] as? [String] ?? []
+        let preview = info["preview"] as? String
         await MainActor.run {
             if action == TransferNotifications.revealAction {
                 let existing = paths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -190,6 +192,11 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             if let transfers, let jobID, transfers.jobs.contains(where: { $0.id == jobID }) {
                 transfers.pinnedJobID = jobID
                 if action == TransferNotifications.detailsAction { transfers.isExpanded = true }
+            }
+            // A download that landed: its item selected in the active pane,
+            // previewed or ready to rename.
+            if !arrived.isEmpty, action != TransferNotifications.detailsAction {
+                Task { await ArrivalNotifications.act(action, items: arrived, preview: preview) }
             }
         }
     }

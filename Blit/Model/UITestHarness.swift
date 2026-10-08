@@ -8,6 +8,7 @@
 import AppKit
 import QuartzCore
 import AVFoundation
+import UserNotifications
 import BlitLocal
 import BlitRemote
 import BlitSFTP
@@ -3519,6 +3520,101 @@ enum UITestHarness {
             lines.append("a later pass took \(Int(Date().timeIntervalSince(again) * 1000)) ms")
             report("25 s later")
             board.requiresVisibleWindow = true
+            lines.append("done")
+        }
+    }
+
+    /// A test video: `seconds` long at 2 frames a second, black for the first
+    /// `dark` seconds, then a bright scene (so a still taken a fifth of the way
+    /// in has to look further).
+    nonisolated static func makeTestVideo(at url: URL, seconds: Int, dark: Int) async -> Bool {
+        try? FileManager.default.removeItem(at: url)
+        guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mp4) else { return false }
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 180,
+            AVVideoCompressionPropertiesKey: [AVVideoMaxKeyFrameIntervalKey: 1]])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: 320,
+            kCVPixelBufferHeightKey as String: 180])
+        writer.add(input)
+        guard writer.startWriting() else { return false }
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<(seconds * 2) {
+            while !input.isReadyForMoreMediaData { try? await Task.sleep(for: .milliseconds(5)) }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferCreate(nil, 320, 180, kCVPixelFormatType_32BGRA, nil, &buffer)
+            guard let buffer else { return false }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            let bytes = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+            let lit = frame >= dark * 2
+            for index in stride(from: 0, to: CVPixelBufferGetBytesPerRow(buffer) * 180, by: 4) {
+                bytes[index] = lit ? 90 : 0; bytes[index + 1] = lit ? 200 : 0; bytes[index + 2] = lit ? 240 : 0; bytes[index + 3] = 255
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 2))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        return writer.status == .completed
+    }
+
+    /// `-BlitArrivalTest <log>`: a finished download's notification: the still
+    /// (from the feature in a pack, not its sample; past a black lead-in), the
+    /// Quick Look and Rename actions, and what they do (the active pane at the
+    /// item, previewing the video or renaming the pack).
+    static func runArrivalTestIfRequested(servers: ServerStore) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitArrivalTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-arrival")
+            try? fm.removeItem(at: root)
+            defer { try? fm.removeItem(at: root) }
+            let pack = root.appendingPathComponent("Show.S01.1080p.WEB")
+            try? fm.createDirectory(at: pack.appendingPathComponent("Sample"), withIntermediateDirectories: true)
+            let feature = pack.appendingPathComponent("Show.S01E01.1080p.WEB.mp4")
+            let sample = pack.appendingPathComponent("Sample/sample.mp4")
+            let made = await makeTestVideo(at: feature, seconds: 20, dark: 6)
+            _ = await makeTestVideo(at: sample, seconds: 2, dark: 0)
+            lines.append("test videos made: \(made)")
+            lines.append("main video in the pack: \(ArrivalNotifications.mainVideo(in: [pack])?.lastPathComponent ?? "none")")
+            // The still: a fifth of the way in is black, so it looks further.
+            if let still = await ArrivalNotifications.poster(for: feature), let source = CGImageSourceCreateWithURL(still as CFURL, nil),
+               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+                lines.append("still: \(image.width)×\(image.height) · brightness \(String(format: "%.2f", ArrivalNotifications.brightness(image)))")
+                try? fm.removeItem(at: still)
+            } else {
+                lines.append("still: none")
+            }
+            // A finished download of the pack, as its notification would read.
+            let server = ServerConfig()
+            let job = TransferJob(kind: .download(server), sources: [.remote(server: server.id, path: Array("downloads/Show.S01.1080p.WEB".utf8))],
+                                  destination: root, title: "Show.S01.1080p.WEB", destinationName: "blit-arrival")
+            job.status = .finished
+            if let content = TransferNotifications.content(for: job, eachTransfer: true) {
+                await ArrivalNotifications.decorate(content, for: job)
+                lines.append("notification: \(content.title) · category \(content.categoryIdentifier) · attachments \(content.attachments.map(\.identifier)) · items \((content.userInfo["items"] as? [String])?.map { ($0 as NSString).lastPathComponent } ?? []) · Quick Look shows \((content.userInfo["preview"] as? String).map { ($0 as NSString).lastPathComponent } ?? "-")")
+            } else {
+                lines.append("notification: none")
+            }
+            // Its actions.
+            guard let pane = BrowserModel.active else { return lines.append("no pane") }
+            await ArrivalNotifications.act(ArrivalNotifications.quickLookAction, items: [pack.path], preview: feature.path)
+            try? await Task.sleep(for: .seconds(1))
+            lines.append("Quick Look: pane at \(pane.current?.lastComponent ?? "-") · selected \(pane.selectedItems.map(\.name)) · previewing \(pane.previewURL?.lastPathComponent ?? (pane.previewLoading != nil ? "loading" : "nothing"))")
+            if pane.previewURL != nil { pane.togglePreview() }
+            try? await Task.sleep(for: .seconds(0.5))
+            await ArrivalNotifications.act(ArrivalNotifications.renameAction, items: [pack.path], preview: feature.path)
+            try? await Task.sleep(for: .seconds(0.8))
+            let editing = FileListRegistry.coordinator(for: pane)?.renameField != nil
+            lines.append("Rename: pane at \(pane.current?.lastComponent ?? "-") · selected \(pane.selectedItems.map(\.name)) · renaming \(pane.renaming?.lastComponent ?? "-") · field \(editing)")
+            pane.cancelRename()
+            await ArrivalNotifications.act(UNNotificationDefaultActionIdentifier, items: [feature.path], preview: feature.path)
+            try? await Task.sleep(for: .seconds(0.5))
+            lines.append("a click: pane at \(pane.current?.lastComponent ?? "-") · selected \(pane.selectedItems.map(\.name)) · previewing \(pane.previewURL != nil) · renaming \(pane.renaming != nil)")
             lines.append("done")
         }
     }
