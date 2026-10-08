@@ -313,6 +313,7 @@ Apple doesn't let third-party apps put their own interface in a Finder tab. What
 
 ### Finder integration
 
+- **R5.11** **Welcome back:** back at the Mac after four hours or more (the screen unlocked, the Mac awake, or the keyboard and mouse used again after being idle), one notification, **While you were away**, says what happened meanwhile: what arrived ("3 arrived · 24 GB, all verified"), what's being fetched now and about how long it'll take, what qBittorrent is still downloading in watched folders, what stalled while you were away (torrents stalled long before aren't repeated every morning), missing episodes (R5.5) and transfers that failed. Clicking it opens the same in a sheet, where **Show** takes an arrival to its folder in the active pane. With no news, there's no notification. Blit has to be running (its window can be closed) and the Mac awake for anything to arrive; after a night asleep, the summary waits for watch mode's first look on waking (R5.10), so it can say what's being fetched now.
 - **R6.1** A "Blit to…" Quick Action (App Intents) for files selected in Finder, with destinations chosen from saved NAS and drive locations. It's also available in Shortcuts.
 - **R6.2** *(Later, low priority)* A browse-only File Provider extension for servers. Downloads started from Finder go through Blit's engine. It's blocked on confirming whether File Provider can place files on an external drive (open question 7).
 

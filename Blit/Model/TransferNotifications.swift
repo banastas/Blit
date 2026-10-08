@@ -23,6 +23,7 @@ enum TransferNotifications {
         center.setNotificationCategories(Set([
             UNNotificationCategory(identifier: doneCategory, actions: [reveal], intentIdentifiers: []),
             UNNotificationCategory(identifier: problemCategory, actions: [details, reveal], intentIdentifiers: []),
+            UNNotificationCategory(identifier: WelcomeBack.category, actions: [], intentIdentifiers: []),
         ] + ArrivalNotifications.categories(reveal: reveal)))
         center.delegate = NotificationRouter.shared
     }
@@ -179,6 +180,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let arrived = info["items"] as? [String] ?? []
         let preview = info["preview"] as? String
         let gapShows = info["gapShows"] as? [String] ?? []
+        let away = info["away"] != nil
         await MainActor.run {
             // Missing episodes in these shows aren't mentioned again (Blit stays where it is).
             if action == ArrivalNotifications.ignoreGapsAction {
@@ -195,6 +197,8 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             if !NSApp.windows.contains(where: { $0.isVisible && $0.identifier?.rawValue.hasPrefix("main") == true }) {
                 openMainWindow?(id: "main")
             }
+            // The welcome-back summary: its sheet.
+            if away, WelcomeBack.shared.latest != nil { WelcomeBack.shared.showing = true }
             if let transfers, let jobID, transfers.jobs.contains(where: { $0.id == jobID }) {
                 transfers.pinnedJobID = jobID
                 if action == TransferNotifications.detailsAction { transfers.isExpanded = true }

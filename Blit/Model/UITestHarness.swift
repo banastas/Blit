@@ -3595,7 +3595,7 @@ enum UITestHarness {
                                   destination: root, title: "Show.S01.1080p.WEB", destinationName: "blit-arrival")
             job.status = .finished
             if let content = TransferNotifications.content(for: job, eachTransfer: true) {
-                await ArrivalNotifications.decorate(content, for: job, transfers: nil)
+                await ArrivalNotifications.decorate(content, for: job, gap: nil)
                 lines.append("notification: \(content.title) · category \(content.categoryIdentifier) · attachments \(content.attachments.map(\.identifier)) · items \((content.userInfo["items"] as? [String])?.map { ($0 as NSString).lastPathComponent } ?? []) · Quick Look shows \((content.userInfo["preview"] as? String).map { ($0 as NSString).lastPathComponent } ?? "-")")
             } else {
                 lines.append("notification: none")
@@ -3715,7 +3715,7 @@ enum UITestHarness {
             await check("back as it was")
             // The notification itself.
             if let content = TransferNotifications.content(for: job, eachTransfer: true) {
-                await ArrivalNotifications.decorate(content, for: job, transfers: transfers)
+                await ArrivalNotifications.decorate(content, for: job, gap: await MissingEpisodes.note(for: job, transfers: transfers))
                 lines.append("notification: \(content.body.replacingOccurrences(of: "\n", with: " ⏎ ")) · category \(content.categoryIdentifier) · ignore offers \(content.userInfo["gapShows"] as? [String] ?? [])")
             }
             // Ignored.
@@ -3723,6 +3723,112 @@ enum UITestHarness {
             await check("the show ignored")
             MissingEpisodes.ignored = []
             DestinationMemory.shared.reset()
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitWelcomeBackTest <log>` (with `-BlitWatchRecordsHome <folder>`):
+    /// the welcome-back summary: what it gathers since you left (downloads
+    /// that arrived, verified or not, one before you left; one failed; one
+    /// fetching now; qBittorrent's torrents in a watched folder: downloading,
+    /// stalled while you were away, stalled long before, stopped, finished),
+    /// what its notification says, nothing when there's no news, away and back
+    /// (four hours or more, not less), and its sheet (its size, then Done).
+    static func runWelcomeBackTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitWelcomeBackTest"),
+              let recordsHome = UserDefaults.standard.string(forKey: "BlitWatchRecordsHome") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let temporary = fm.temporaryDirectory.path
+            let root = URL(fileURLWithPath: (temporary.hasPrefix("/var/") ? "/private" : "") + temporary).appendingPathComponent("blit-welcome-back")
+            let home = URL(fileURLWithPath: recordsHome)
+            for path in [root, home] { try? fm.removeItem(at: path) }
+            defer { for path in [root, home] { try? fm.removeItem(at: path) } }
+            let ssd = root.appendingPathComponent("SSD"), downloads = root.appendingPathComponent("downloads")
+            let backup = home.appendingPathComponent(".apps/qbittorrent/qBittorrent/BT_backup")
+            for folder in [ssd, downloads, backup] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            let welcome = WelcomeBack.shared
+            welcome.forget()
+            let server = ServerConfig()
+            let now = Date()
+            @MainActor func download(_ name: String, finished: Date, verified: Bool, failed: Bool = false) -> TransferJob {
+                fm.createFile(atPath: ssd.appendingPathComponent(name).path, contents: Data(count: 1000))
+                let job = TransferJob(kind: .download(server), sources: [.local(downloads.appendingPathComponent(name))],
+                                      destination: ssd, title: name, destinationName: "SSD")
+                job.status = failed ? .failed("connection lost") : .finished
+                job.filesVerified = verified ? 1 : 0
+                job.finishedAt = finished
+                return job
+            }
+            welcome.noteFinished(download("Before.You.Left.2023.mkv", finished: now - 6 * 3600, verified: true), gap: nil)
+            welcome.noteFinished(download("Show.Name.S02E05.mkv", finished: now - 3 * 3600, verified: true), gap: "S02E04 isn't here, on the NAS or on the seedbox.")
+            welcome.noteFinished(download("Movie.Title.2024.mkv", finished: now - 2 * 3600, verified: true), gap: nil)
+            welcome.noteFinished(download("Broken.Download.mkv", finished: now - 3600, verified: false, failed: true), gap: nil)
+            let fetching = TransferJob(kind: .download(server), sources: [.local(downloads.appendingPathComponent("Arriving.Now.mkv"))],
+                                       destination: ssd, title: "Arriving.Now.mkv", destinationName: "SSD")
+            fetching.persistent = false
+            fetching.status = .running
+            transfers.debugInsert(fetching)
+            // qBittorrent: a watched folder's torrents.
+            let stamp = Int(now.timeIntervalSince1970)
+            func torrent(_ hash: String, _ name: String, fraction: Double, finished: Bool, lastData: Int, extra: [String: Any] = [:]) {
+                try? bencode(["info": ["name": name, "length": 100, "piece length": 16_384]]).write(to: backup.appendingPathComponent(hash + ".torrent"))
+                var resume: [String: Any] = ["qBt-savePath": downloads.path, "pieces": Data((0..<100).map { $0 < Int(fraction * 100) || finished ? 1 : 0 }),
+                                             "completed_time": finished ? stamp - 100 : 0, "paused": 0, "auto_managed": 1,
+                                             "last_download": lastData]
+                for (key, value) in extra { resume[key] = value }
+                try? bencode(resume).write(to: backup.appendingPathComponent(hash + ".fastresume"))
+            }
+            torrent("cc01", "Downloading.Now.mkv", fraction: 0.44, finished: false, lastData: stamp - 600)
+            torrent("cc02", "Stalled.Overnight.mkv", fraction: 0.30, finished: false, lastData: stamp - 3 * 3600)
+            torrent("cc03", "Stalled.Long.Ago.mkv", fraction: 0.10, finished: false, lastData: stamp - 10 * 86_400)
+            torrent("cc04", "Stopped.mkv", fraction: 0.50, finished: false, lastData: stamp - 3 * 3600, extra: ["paused": 1, "auto_managed": 0])
+            torrent("cc05", "Finished.mkv", fraction: 1, finished: true, lastData: stamp - 3 * 3600)
+            TorrentLibrary.shared?.forget()
+            let watch = SeedboxWatch.shared
+            watch?.add(WatchRule(source: .local(downloads), destination: ssd.path, minutes: 600))
+            if let summary = await welcome.compose(since: now - 5 * 3600) {
+                lines.append("arrived \(summary.arrived.map(\.title)) · failed \(summary.failed.map(\.title)) · fetching \(summary.fetching.map(\.name))")
+                lines.append("in qBittorrent: downloading \(summary.downloading.map { "\($0.name) \(Int($0.fraction * 100))%" }) · stalled while away \(summary.stalled.map(\.name))")
+                let text = WelcomeBack.text(summary)
+                lines.append("notification: \(text.title) · \(text.subtitle) ⏎ " + text.body.replacingOccurrences(of: "\n", with: " ⏎ "))
+                lines.append("news: \(summary.isNews)")
+                // The sheet.
+                welcome.show(summary)
+                try? await Task.sleep(for: .seconds(1.5))
+                if let window = BrowserModel.activeWindow, let sheet = window.attachedSheet {
+                    // Never photographed: a sheet's capture is the whole window, the user's files and all.
+                    lines.append("sheet: \(Int(sheet.frame.width))×\(Int(sheet.frame.height))")
+                    welcome.showing = false
+                    try? await Task.sleep(for: .seconds(0.8))
+                    lines.append("after Done: sheet \(window.attachedSheet != nil)")
+                } else {
+                    lines.append("sheet: none")
+                }
+            }
+            transfers.debugRemove(fetching)
+            if let rule = watch?.rules.first(where: { $0.source == .local(downloads) }) { watch?.remove(rule.id) }
+            // Nothing new since a minute ago (no arrivals, nothing fetching; long-stalled isn't news).
+            if let quiet = await welcome.compose(since: now - 60) {
+                lines.append("a minute ago: news \(quiet.isNews)")
+            }
+            // Away and back.
+            welcome.awayAtLeast = 4 * 3600
+            welcome.forget()
+            welcome.noteFinished(download("Overnight.Arrival.mkv", finished: now - 3600, verified: true), gap: nil)
+            welcome.simulateAway(since: now - 3 * 3600)
+            welcome.simulateBack()
+            try? await Task.sleep(for: .seconds(1.5))
+            lines.append("back after 3 h: summary \(welcome.latest != nil)")
+            welcome.simulateAway(since: now - 5 * 3600)
+            welcome.simulateBack()
+            for _ in 0..<30 where welcome.latest == nil { try? await Task.sleep(for: .milliseconds(200)) }
+            lines.append("back after 5 h: summary \(welcome.latest.map { WelcomeBack.text($0).subtitle } ?? "none")")
+            welcome.forget()
             lines.append("done")
         }
     }

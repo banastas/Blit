@@ -119,6 +119,7 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .blitShowPalette)) { _ in showPalette = true }
         .modifier(ImportServersHost(importing: $importingServers, selection: $selection))
         .modifier(WelcomeHost(showing: $showingWelcome))
+        .modifier(WelcomeBackHost())
         .onChange(of: selection) { _, location in
             // A tick later: the sidebar's list can still be mid-update when its
             // selection changes, and reloading a pane's table from inside that
@@ -644,6 +645,7 @@ struct ContentView: View {
         UITestHarness.runTorrentStatusRealIfRequested(servers: servers)
         UITestHarness.runArrivalTestIfRequested(servers: servers)
         UITestHarness.runMissingEpisodesTestIfRequested(transfers: transfers)
+        UITestHarness.runWelcomeBackTestIfRequested(transfers: transfers)
         UITestHarness.runSeedboxProbeIfRequested(servers: servers, connections: connections)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)

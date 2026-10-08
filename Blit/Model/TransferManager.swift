@@ -1047,7 +1047,7 @@ final class TransferManager {
 
     // MARK: Notifications (PRD R5.5)
 
-    private func notify(_ job: TransferJob) async {
+    private func notify(_ job: TransferJob, gap: (text: String, shows: [String])? = nil) async {
         // Test copies never notify: their jobs aren't the user's.
         guard !isQuitting, !Self.isIsolated else { return }
         let center = UNUserNotificationCenter.current()
@@ -1063,7 +1063,7 @@ final class TransferManager {
             return
         }
         guard let content = TransferNotifications.content(for: job, eachTransfer: notifyEachTransfer) else { return }
-        await ArrivalNotifications.decorate(content, for: job, transfers: self)
+        await ArrivalNotifications.decorate(content, for: job, gap: gap)
         try? await center.add(UNNotificationRequest(identifier: job.id.uuidString, content: content, trigger: nil))
     }
 
@@ -1133,7 +1133,15 @@ final class TransferManager {
             batch.sizeOnly += job.sizeOnlyCount
             batch.unverified += job.unverifiedCount
             onFinished?(job)
-            await notify(job)
+            // What arrived: its notification (a still, a missing episode) and
+            // the welcome-back ledger, without holding up the lane's next job.
+            let complete = job.lane == .download && job.status == .finished && job.failures.isEmpty
+            Task { [weak self] in
+                guard let self else { return }
+                let gap = complete ? await MissingEpisodes.note(for: job, transfers: self) : nil
+                WelcomeBack.shared.noteFinished(job, gap: gap?.text)
+                await self.notify(job, gap: gap)
+            }
             if !isQuitting, !jobs.contains(where: { !$0.isOperation && ($0.status == .queued || $0.isActive) }) {
                 DockProgress.shared.finish(batch.failed > 0 ? .failed : batchVerified ? .verified : .plain)
                 if batch.failed == 0 { showMenuBarDone() }

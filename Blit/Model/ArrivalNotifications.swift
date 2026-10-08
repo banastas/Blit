@@ -33,7 +33,7 @@ enum ArrivalNotifications {
 
     /// Turns a finished download's notification into an arrival: the still,
     /// the actions, and what they act on.
-    static func decorate(_ content: UNMutableNotificationContent, for job: TransferJob, transfers: TransferManager?) async {
+    static func decorate(_ content: UNMutableNotificationContent, for job: TransferJob, gap: (text: String, shows: [String])?) async {
         guard content.categoryIdentifier == TransferNotifications.doneCategory, job.lane == .download else { return }
         let items = landed(job)
         guard !items.isEmpty else { return }
@@ -44,8 +44,8 @@ enum ArrivalNotifications {
         // Quick Look shows the video itself, inside its pack.
         info["preview"] = (video ?? items[0]).path
         content.userInfo = info
-        // A hole in the season it leaves, said only when Blit is sure.
-        if let gap = await MissingEpisodes.note(for: job, transfers: transfers) {
+        // A hole in the season it leaves, said only when Blit is sure (MissingEpisodes).
+        if let gap {
             content.body += "\n" + gap.text
             content.categoryIdentifier = items.count == 1 ? gapCategory : severalGapCategory
             content.userInfo["gapShows"] = gap.shows
