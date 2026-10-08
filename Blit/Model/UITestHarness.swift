@@ -3595,7 +3595,7 @@ enum UITestHarness {
                                   destination: root, title: "Show.S01.1080p.WEB", destinationName: "blit-arrival")
             job.status = .finished
             if let content = TransferNotifications.content(for: job, eachTransfer: true) {
-                await ArrivalNotifications.decorate(content, for: job)
+                await ArrivalNotifications.decorate(content, for: job, transfers: nil)
                 lines.append("notification: \(content.title) · category \(content.categoryIdentifier) · attachments \(content.attachments.map(\.identifier)) · items \((content.userInfo["items"] as? [String])?.map { ($0 as NSString).lastPathComponent } ?? []) · Quick Look shows \((content.userInfo["preview"] as? String).map { ($0 as NSString).lastPathComponent } ?? "-")")
             } else {
                 lines.append("notification: none")
@@ -3615,6 +3615,114 @@ enum UITestHarness {
             await ArrivalNotifications.act(UNNotificationDefaultActionIdentifier, items: [feature.path], preview: feature.path)
             try? await Task.sleep(for: .seconds(0.5))
             lines.append("a click: pane at \(pane.current?.lastComponent ?? "-") · selected \(pane.selectedItems.map(\.name)) · previewing \(pane.previewURL != nil) · renaming \(pane.renaming != nil)")
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitMissingEpisodesTest <log>` (with `-BlitWatchRecordsHome <folder>`):
+    /// the strict rules for naming a missing episode: names (double episodes,
+    /// the TV preset's, a pack, what isn't an episode), which holes count, and
+    /// a download's notification with the SSD, a NAS season folder Blit filed
+    /// to, a stand-in seedbox and its qBittorrent records: said when E04 is
+    /// nowhere, and not when it's on the seedbox (even stalled), queued, the
+    /// NAS folder is unknown or unreadable, or the show is ignored.
+    static func runMissingEpisodesTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitMissingEpisodesTest"),
+              let recordsHome = UserDefaults.standard.string(forKey: "BlitWatchRecordsHome") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            for (name, folder) in [("Show.Name.S02E04.1080p.WEB.h264-GRP.mkv", false), ("Show.Name.S02E04E05.mkv", false),
+                                   ("Show.Name.S02E04-E06.mkv", false), ("Show.Name.S02E04-05.1080p.mkv", false),
+                                   ("Show-Name_S02E07.mkv", false), ("Show.Name.S02E04.x264-2HD.mkv", false),
+                                   ("Show.Name.S02E04.Episode.Title.mkv", false), ("Show.Name.S02.1080p.WEB", true),
+                                   ("Show.Name.2x04.mkv", false), ("Show.Name.S02E04.srt", false), ("Show.Name.S02E04.1080p.WEB", true)] {
+                let parsed = EpisodeName(name, isFolder: folder)
+                lines.append("\(name): " + (parsed.map { "\($0.show) · season \($0.season) · \($0.episodes)" } ?? "not an episode"))
+            }
+            for present in [[1, 2, 3, 5], [1, 5], [1, 6], [3], [0, 1, 3], [2, 3], [1, 2, 4, 6]] {
+                let holes = MissingEpisodes.holes(in: Set(present))
+                lines.append("present \(present): " + (holes.isEmpty ? "nothing said" : MissingEpisodes.label(season: 2, holes)))
+            }
+            // The places: an SSD folder (where it lands), the NAS season folder, the seedbox.
+            let fm = FileManager.default
+            let temporary = fm.temporaryDirectory.path
+            let root = URL(fileURLWithPath: (temporary.hasPrefix("/var/") ? "/private" : "") + temporary).appendingPathComponent("blit-missing")
+            let home = URL(fileURLWithPath: recordsHome)
+            for path in [root, home] { try? fm.removeItem(at: path) }
+            defer { for path in [root, home] { try? fm.removeItem(at: path) } }
+            let ssd = root.appendingPathComponent("SSD"), nas = root.appendingPathComponent("NAS/Show Name/Season 02")
+            let seedbox = root.appendingPathComponent("seedbox"), backup = home.appendingPathComponent(".apps/qbittorrent/qBittorrent/BT_backup")
+            for folder in [ssd, nas, seedbox, backup] { try? fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            for name in ["Show-Name_S02E01.mkv", "Show-Name_S02E02.mkv"] { fm.createFile(atPath: nas.appendingPathComponent(name).path, contents: Data(count: 10)) }
+            for name in ["Show.Name.S02E03.1080p.mkv", "Show.Name.S02E05.1080p.mkv", "Other.Show.S01E01.mkv"] {
+                fm.createFile(atPath: ssd.appendingPathComponent(name).path, contents: Data(count: 10))
+            }
+            fm.createFile(atPath: seedbox.appendingPathComponent("Show.Name.S02E05.1080p.mkv").path, contents: Data(count: 10))
+            DestinationMemory.shared.reset()
+            DestinationMemory.shared.learn([.local(ssd.appendingPathComponent("Show-Name_S02E02.mkv"))], into: .local(nas))
+            TorrentLibrary.shared?.forget()
+            let server = ServerConfig()
+            let job = TransferJob(kind: .download(server), sources: [.local(seedbox.appendingPathComponent("Show.Name.S02E05.1080p.mkv"))],
+                                  destination: ssd, title: "Show.Name.S02E05.1080p.mkv", destinationName: "SSD")
+            job.status = .finished
+            @MainActor func check(_ label: String) async {
+                TorrentLibrary.shared?.forget()
+                let note = await MissingEpisodes.note(for: job, transfers: transfers)
+                lines.append("\(label): " + (note?.text ?? "nothing said"))
+            }
+            await check("E05 arrives; E01–E02 on the NAS, E03 on the SSD, no E04 anywhere, no qBittorrent")
+            // In qBittorrent's records (stalled, and its files not in the folder).
+            let torrent = bencode(["info": ["name": "Show.Name.S02E04.1080p.mkv", "length": 10, "piece length": 16_384]])
+            try? torrent.write(to: backup.appendingPathComponent("bb01.torrent"))
+            try? bencode(["qBt-savePath": seedbox.path, "pieces": Data([0]), "completed_time": 0]).write(to: backup.appendingPathComponent("bb01.fastresume"))
+            await check("E04 stalled in qBittorrent")
+            for name in ["bb01.torrent", "bb01.fastresume"] { try? fm.removeItem(at: backup.appendingPathComponent(name)) }
+            await check("records without E04")
+            // Queued in Blit.
+            let queued = TransferJob(kind: .download(server), sources: [.local(seedbox.appendingPathComponent("Show.Name.S02E04.mkv"))],
+                                     destination: ssd, title: "E04", destinationName: "SSD")
+            queued.persistent = false
+            transfers.debugInsert(queued)
+            await check("E04 queued in Blit")
+            transfers.debugRemove(queued)
+            // The NAS season folder unknown, then unreadable.
+            DestinationMemory.shared.reset()
+            await check("the season's NAS folder unknown")
+            DestinationMemory.shared.learn([.local(ssd.appendingPathComponent("Show-Name_S02E02.mkv"))], into: .local(nas))
+            try? fm.removeItem(at: nas)
+            await check("the NAS folder gone")
+            try? fm.createDirectory(at: nas, withIntermediateDirectories: true)
+            for name in ["Show-Name_S02E01.mkv", "Show-Name_S02E02.mkv"] { fm.createFile(atPath: nas.appendingPathComponent(name).path, contents: Data(count: 10)) }
+            await check("the NAS folder back")
+            // The same show named another way, on the seedbox.
+            let us = seedbox.appendingPathComponent("Show.Name.US.S02E04.720p.mkv")
+            fm.createFile(atPath: us.path, contents: Data(count: 10))
+            await check("E04 on the seedbox as Show.Name.US")
+            try? fm.removeItem(at: us)
+            // A NAS season folder that names an episode another way.
+            let other = nas.appendingPathComponent("Show Name - 2x06 - Title.mkv")
+            fm.createFile(atPath: other.path, contents: Data(count: 10))
+            await check("the NAS folder has a 2x06 name")
+            try? fm.removeItem(at: other)
+            // A file on the SSD that's this show but not S01E05-named.
+            let loose = ssd.appendingPathComponent("Show.Name.Episode.Four.mkv")
+            fm.createFile(atPath: loose.path, contents: Data(count: 10))
+            await check("the SSD has a Show.Name file without S02E04 in its name")
+            try? fm.removeItem(at: loose)
+            await check("back as it was")
+            // The notification itself.
+            if let content = TransferNotifications.content(for: job, eachTransfer: true) {
+                await ArrivalNotifications.decorate(content, for: job, transfers: transfers)
+                lines.append("notification: \(content.body.replacingOccurrences(of: "\n", with: " ⏎ ")) · category \(content.categoryIdentifier) · ignore offers \(content.userInfo["gapShows"] as? [String] ?? [])")
+            }
+            // Ignored.
+            MissingEpisodes.ignored = ["show name"]
+            await check("the show ignored")
+            MissingEpisodes.ignored = []
+            DestinationMemory.shared.reset()
             lines.append("done")
         }
     }

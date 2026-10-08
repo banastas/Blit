@@ -204,6 +204,13 @@ final class DestinationMemory {
                           mayBeNew: false, reason: "Where \(what) went")
     }
 
+    /// The folder on this Mac a show's season was last filed in (a NAS
+    /// season folder), if Blit filed it.
+    func folder(forShow show: String, season: Int) -> BrowseLocation? {
+        load()
+        return entries[Self.id(.show(show))]?.first { $0.season == season && $0.folder.localURL != nil }?.folder
+    }
+
     // MARK: Keeping
 
     private func load() {

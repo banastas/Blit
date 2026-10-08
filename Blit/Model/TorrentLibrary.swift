@@ -137,6 +137,30 @@ final class TorrentLibrary {
         }
     }
 
+    /// The names in a server folder (each with whether it's a folder); nil if
+    /// it can't be listed.
+    func names(in folder: BrowseLocation) async -> [(String, Bool)]? {
+        switch folder {
+        case .remote(let id, let path):
+            guard let server = servers.server(id), let client = try? await connections.browseClient(for: server),
+                  let entries = try? await client.list(RemotePath(bytes: path.isEmpty ? Array(".".utf8) : path)) else { return nil }
+            return entries.map { ($0.filename.description, $0.attributes.isDirectory) }.filter { $0.0 != "." && $0.0 != ".." }
+        case .local(let url):
+            #if DEBUG
+            guard TransferManager.isIsolated, UserDefaults.standard.string(forKey: "BlitWatchRecordsHome") != nil,
+                  let names = try? FileManager.default.contentsOfDirectory(atPath: url.path) else { return nil }
+            return names.map { name in
+                var isFolder: ObjCBool = false
+                FileManager.default.fileExists(atPath: url.appendingPathComponent(name).path, isDirectory: &isFolder)
+                return (name, isFolder.boolValue)
+            }
+            #else
+            _ = url
+            return nil
+            #endif
+        }
+    }
+
     /// For each of `paths` (absolute, on `location`'s server): the bytes its
     /// files take on disk and when one was last written. nil when the server
     /// can't say (no shell, or no GNU find).

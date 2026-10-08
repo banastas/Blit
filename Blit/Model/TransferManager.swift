@@ -1063,7 +1063,7 @@ final class TransferManager {
             return
         }
         guard let content = TransferNotifications.content(for: job, eachTransfer: notifyEachTransfer) else { return }
-        await ArrivalNotifications.decorate(content, for: job)
+        await ArrivalNotifications.decorate(content, for: job, transfers: self)
         try? await center.add(UNNotificationRequest(identifier: job.id.uuidString, content: content, trigger: nil))
     }
 

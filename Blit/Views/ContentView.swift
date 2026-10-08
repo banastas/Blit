@@ -643,6 +643,7 @@ struct ContentView: View {
         UITestHarness.runTorrentStatusTestIfRequested()
         UITestHarness.runTorrentStatusRealIfRequested(servers: servers)
         UITestHarness.runArrivalTestIfRequested(servers: servers)
+        UITestHarness.runMissingEpisodesTestIfRequested(transfers: transfers)
         UITestHarness.runSeedboxProbeIfRequested(servers: servers, connections: connections)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)

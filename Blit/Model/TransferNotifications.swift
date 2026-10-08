@@ -178,7 +178,13 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let paths = info["reveal"] as? [String] ?? []
         let arrived = info["items"] as? [String] ?? []
         let preview = info["preview"] as? String
+        let gapShows = info["gapShows"] as? [String] ?? []
         await MainActor.run {
+            // Missing episodes in these shows aren't mentioned again (Blit stays where it is).
+            if action == ArrivalNotifications.ignoreGapsAction {
+                MissingEpisodes.ignored.formUnion(gapShows)
+                return
+            }
             if action == TransferNotifications.revealAction {
                 let existing = paths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
                 if !existing.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(existing) }

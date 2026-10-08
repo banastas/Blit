@@ -13,20 +13,27 @@ import UserNotifications
 enum ArrivalNotifications {
     static let category = "transfer-arrival"
     static let severalCategory = "transfer-arrival-several"
+    /// The same, with a missing episode named (MissingEpisodes).
+    static let gapCategory = "transfer-arrival-gap"
+    static let severalGapCategory = "transfer-arrival-several-gap"
     static let quickLookAction = "quick-look"
     static let renameAction = "rename"
+    static let ignoreGapsAction = "ignore-gaps"
 
     /// The categories (with Show in Finder, as every finished transfer has).
     static func categories(reveal: UNNotificationAction) -> [UNNotificationCategory] {
         let quickLook = UNNotificationAction(identifier: quickLookAction, title: "Quick Look", options: [.foreground])
         let rename = UNNotificationAction(identifier: renameAction, title: "Rename", options: [.foreground])
+        let ignore = UNNotificationAction(identifier: ignoreGapsAction, title: "Ignore Gaps in This Show", options: [])
         return [UNNotificationCategory(identifier: category, actions: [quickLook, rename, reveal], intentIdentifiers: []),
-                UNNotificationCategory(identifier: severalCategory, actions: [quickLook, reveal], intentIdentifiers: [])]
+                UNNotificationCategory(identifier: severalCategory, actions: [quickLook, reveal], intentIdentifiers: []),
+                UNNotificationCategory(identifier: gapCategory, actions: [quickLook, rename, reveal, ignore], intentIdentifiers: []),
+                UNNotificationCategory(identifier: severalGapCategory, actions: [quickLook, reveal, ignore], intentIdentifiers: [])]
     }
 
     /// Turns a finished download's notification into an arrival: the still,
     /// the actions, and what they act on.
-    static func decorate(_ content: UNMutableNotificationContent, for job: TransferJob) async {
+    static func decorate(_ content: UNMutableNotificationContent, for job: TransferJob, transfers: TransferManager?) async {
         guard content.categoryIdentifier == TransferNotifications.doneCategory, job.lane == .download else { return }
         let items = landed(job)
         guard !items.isEmpty else { return }
@@ -37,6 +44,12 @@ enum ArrivalNotifications {
         // Quick Look shows the video itself, inside its pack.
         info["preview"] = (video ?? items[0]).path
         content.userInfo = info
+        // A hole in the season it leaves, said only when Blit is sure.
+        if let gap = await MissingEpisodes.note(for: job, transfers: transfers) {
+            content.body += "\n" + gap.text
+            content.categoryIdentifier = items.count == 1 ? gapCategory : severalGapCategory
+            content.userInfo["gapShows"] = gap.shows
+        }
         if let video, let still = await poster(for: video),
            let attachment = try? UNNotificationAttachment(identifier: "still", url: still, options: nil) {
             content.attachments = [attachment]
