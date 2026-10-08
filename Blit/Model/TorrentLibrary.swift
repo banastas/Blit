@@ -84,33 +84,57 @@ final class TorrentLibrary {
     }
 
     /// Every torrent in `records` (a records folder on `location`'s server).
+    /// Files new or changed since the last read are read eight at a time (a
+    /// first look at 38 torrents read 76 files: 26 s one by one).
     func torrents(in records: String, on location: BrowseLocation) async -> [TorrentEntry]? {
         guard let access = try? await access(location), let files = try? await access.list(records) else { return nil }
         let server = Self.serverKey(location)
         let byName = Dictionary(files.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
-        var entries: [TorrentEntry] = []
-        for torrent in files where torrent.name.hasSuffix(".torrent") {
+        let pairs = files.filter { $0.name.hasSuffix(".torrent") }.compactMap { torrent -> (id: String, torrent: RecordFile, resume: RecordFile)? in
             let id = String(torrent.name.dropLast(".torrent".count))
-            guard let resumeFile = byName[id + ".fastresume"] else { continue }
-            let torrentKey = server + "|" + records + "/" + torrent.name
-            if metadata[torrentKey]?.modified != torrent.modified || metadata[torrentKey] == nil {
-                guard let data = try? await access.read(records + "/" + torrent.name, torrent.size),
-                      let read = TorrentRecords.metadata(torrent: data) else { continue }
-                metadata[torrentKey] = (torrent.modified, read)
+            return byName[id + ".fastresume"].map { (id, torrent, $0) }
+        }
+        func key(_ file: RecordFile) -> String { server + "|" + records + "/" + file.name }
+        var stale: [RecordFile] = []
+        for pair in pairs {
+            if metadata[key(pair.torrent)]?.modified != pair.torrent.modified || metadata[key(pair.torrent)] == nil { stale.append(pair.torrent) }
+            if resumes[key(pair.resume)]?.modified != pair.resume.modified || resumes[key(pair.resume)] == nil { stale.append(pair.resume) }
+        }
+        let read = await Self.readAll(stale, in: records, with: access)
+        for file in stale {
+            guard let data = read[file.name] else { continue }
+            if file.name.hasSuffix(".torrent") {
+                if let parsed = TorrentRecords.metadata(torrent: data) { metadata[key(file)] = (file.modified, parsed) }
+            } else if let parsed = TorrentRecords.resume(data) {
+                resumes[key(file)] = (file.modified, parsed)
             }
-            let resumeKey = server + "|" + records + "/" + resumeFile.name
-            if resumes[resumeKey]?.modified != resumeFile.modified || resumes[resumeKey] == nil {
-                guard let data = try? await access.read(records + "/" + resumeFile.name, resumeFile.size),
-                      let read = TorrentRecords.resume(data) else { continue }
-                resumes[resumeKey] = (resumeFile.modified, read)
-            }
-            guard let meta = metadata[torrentKey]?.metadata, let resume = resumes[resumeKey]?.resume else { continue }
+        }
+        return pairs.compactMap { pair in
+            guard let meta = metadata[key(pair.torrent)]?.metadata, let resume = resumes[key(pair.resume)]?.resume else { return nil }
             let placed: Set<String> = !resume.renamedRoots.isEmpty ? resume.renamedRoots
                 : !meta.fileRoots.isEmpty && resume.layout == "NoSubfolder" ? meta.fileRoots
                 : [meta.name]
-            entries.append(TorrentEntry(id: id, names: meta.names, placed: placed, size: meta.size, resume: resume, recorded: resumeFile.modified))
+            return TorrentEntry(id: pair.id, names: meta.names, placed: placed, size: meta.size, resume: resume, recorded: pair.resume.modified)
         }
-        return entries
+    }
+
+    /// `files` (in `records`), read eight at a time; a file that can't be read is left out.
+    nonisolated private static func readAll(_ files: [RecordFile], in records: String, with access: RecordAccess) async -> [String: Data] {
+        await withTaskGroup(of: (String, Data?).self) { group in
+            var pending = files.makeIterator()
+            func next() -> Bool {
+                guard let file = pending.next() else { return false }
+                group.addTask { (file.name, try? await access.read(records + "/" + file.name, file.size)) }
+                return true
+            }
+            for _ in 0..<8 where next() {}
+            var read: [String: Data] = [:]
+            for await (name, data) in group {
+                if let data { read[name] = data }
+                _ = next()
+            }
+            return read
+        }
     }
 
     /// For each of `paths` (absolute, on `location`'s server): the bytes its
@@ -202,7 +226,7 @@ final class TorrentLibrary {
 
     // MARK: Reaching the records
 
-    struct RecordFile {
+    struct RecordFile: Sendable {
         var name: String
         var size: UInt64
         var modified: Date?
@@ -210,7 +234,7 @@ final class TorrentLibrary {
 
     /// Reading qBittorrent's records: over SFTP, or (a test copy's stand-in)
     /// on this Mac, with -BlitWatchRecordsHome.
-    struct RecordAccess {
+    struct RecordAccess: @unchecked Sendable {
         var find: () async -> String?
         var absolute: () async throws -> String
         var list: (String) async throws -> [RecordFile]

@@ -245,6 +245,8 @@ final class TorrentStatusBoard {
     }
 
     #if DEBUG
+    var isTicking: Bool { ticking }
+
     /// What it holds (a test reads it).
     var describe: String {
         "ticks \(ticks) · ticking \(ticking) · folders " + folders.map { "\($0.key.lastComponent): \($0.value.torrents.count) torrents \($0.value.torrents.map { $0.placed.sorted().joined(separator: "+") })" }.joined(separator: "; ")

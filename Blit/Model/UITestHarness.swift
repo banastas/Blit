@@ -3469,6 +3469,60 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitTorrentStatusReal <log>` (with `-BlitTorrentStatusRemote YES`
+    /// and `-BlitTorrentStatusFolder <path>`): torrent status on the first
+    /// server's folder, read-only, reported as counts and figures (never a
+    /// name): how many of each status, and each download's percentage and
+    /// time left, measured twice 25 seconds apart.
+    static func runTorrentStatusRealIfRequested(servers: ServerStore) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitTorrentStatusReal"),
+              let folderPath = UserDefaults.standard.string(forKey: "BlitTorrentStatusFolder") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard let server = servers.browsable.first, let browser = BrowserModel.active else { return lines.append("no server") }
+            let folder = BrowseLocation.remote(server: server.id, path: Array(folderPath.utf8))
+            let board = TorrentStatusBoard.shared
+            board.requiresVisibleWindow = false
+            board.liveInterval = 1
+            board.liveIntervalInBackground = 1
+            browser.open(folder)
+            for _ in 0..<60 where browser.rows.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }
+            @MainActor func report(_ label: String) {
+                let statuses = browser.rows.compactMap { board.status(for: $0) }
+                let kinds = Dictionary(grouping: statuses) { status -> String in
+                    if status.isWarning { return "stalled" }
+                    if status.text.hasPrefix("seeding") { return "seeding" }
+                    if status.text.hasPrefix("stopped") { return "stopped" }
+                    if status.text.hasPrefix("queued") { return "queued" }
+                    return status.glyph == "▼" ? "downloading" : "other"
+                }
+                lines.append("\(label): \(browser.rows.count) items, \(statuses.count) with a status · " + kinds.keys.sorted().map { "\($0) \(kinds[$0]!.count)" }.joined(separator: ", "))
+                for status in statuses where status.glyph == "▼" {
+                    lines.append("  downloading: \(status.text) · " + (status.help.contains("from its files") ? "live from its files" : "from the records"))
+                }
+                let stalledFor = statuses.filter(\.isWarning).map { $0.text.replacingOccurrences(of: "stalled · ", with: "") }
+                if !stalledFor.isEmpty { lines.append("  stalled for: " + stalledFor.joined(separator: ", ")) }
+                let seeding = statuses.filter { $0.text.hasPrefix("seeding") }.map { $0.text.replacingOccurrences(of: "seeding ", with: "") }
+                if !seeding.isEmpty { lines.append("  seeding: " + seeding.joined(separator: ", ")) }
+            }
+            let started = Date()
+            for _ in 0..<600 where board.statuses.isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
+            lines.append("statuses appeared \(Int(Date().timeIntervalSince(started) * 1000)) ms after the folder's rows")
+            report("first look")
+            try? await Task.sleep(for: .seconds(25))
+            for _ in 0..<100 where board.isTicking { try? await Task.sleep(for: .milliseconds(100)) }
+            let again = Date()
+            await board.tick()
+            lines.append("a later pass took \(Int(Date().timeIntervalSince(again) * 1000)) ms")
+            report("25 s later")
+            board.requiresVisibleWindow = true
+            lines.append("done")
+        }
+    }
+
     /// `-BlitSeedboxProbe <log>`: a read-only look at the first saved server's
     /// torrent client (qBittorrent): its process, the settings that matter for
     /// watch mode, and whether its Web API answers on localhost, with torrent
