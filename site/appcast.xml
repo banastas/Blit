@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 0.2.46</title>
-      <pubDate>Wed, 07 Oct 2026 20:42:52 +0000</pubDate>
-      <sparkle:version>49</sparkle:version>
-      <sparkle:shortVersionString>0.2.46</sparkle:shortVersionString>
+      <title>Blit 0.2.47</title>
+      <pubDate>Thu, 08 Oct 2026 07:44:13 +0000</pubDate>
+      <sparkle:version>50</sparkle:version>
+      <sparkle:shortVersionString>0.2.47</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Watch mode now asks qBittorrent whether each download has finished. When qBittorrent runs on the server, Blit reads its own records (no qBittorrent login needed) and fetches a torrent only once qBittorrent has completed it, so a stalled torrent is never fetched however long its files have been quiet; Settings › Watch shows how far along each one is. qBittorrent's incomplete folder is never fetched. Downloads from other clients still wait until their files have stopped changing.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.46.zip" type="application/octet-stream" sparkle:edSignature="IEQqdqdrhhONshINVjYx/dHr357VyJEtbOzX5up+ktNmJbDMvBVoApTYfACYM12YvaWGzmUgrtXPD5s6zkPtDw==" length="6231436" />
+      <description><![CDATA[<p>Renames in place are now recorded in the system log (without file names), so if a name field ever closes on its own before you type, the cause can be traced.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-0.2.47.zip" type="application/octet-stream" sparkle:edSignature="Ft65nDCdE44CfNTp/1Z9e8axsyZtnVaQAgEpxsKTIbPFee+u1OUBTQe+Kj7XASrYW0SO8c7aJTf08b+vCqbzAA==" length="6237764" />
     </item>
   </channel>
 </rss>
