@@ -79,6 +79,9 @@ extension FileListCoordinator: NSTextFieldDelegate {
     private func finishRename(_ text: String?) {
         guard !renameFinished, let item = renamingItem, let model = renamingModel else { return }
         renameFinished = true
+        #if DEBUG
+        UITestHarness.renameTrail.append("finished (\(text == nil ? "cancel" : "commit")) · " + UITestHarness.callers())
+        #endif
         // Still in the field (Return, Esc): the keyboard goes back to the list.
         // Ended by a click elsewhere: it stays where it went.
         let refocus = (table.window?.firstResponder as? NSText)?.delegate === renameField
@@ -93,6 +96,9 @@ extension FileListCoordinator: NSTextFieldDelegate {
 
     func removeRenameField() {
         guard let field = renameField else { return }
+        #if DEBUG
+        UITestHarness.renameTrail.append("field removed · " + UITestHarness.callers())
+        #endif
         renameFinished = true
         renameField = nil
         renamingItem = nil

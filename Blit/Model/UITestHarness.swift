@@ -2939,6 +2939,91 @@ enum UITestHarness {
         }
     }
 
+    /// `-BlitMenuRenameTest <log>`: Rename chosen from a real right-click menu
+    /// (a posted right mouse down, the item chosen inside the menu's tracking
+    /// loop) on a local file, selected and not: whether the name field stays
+    /// up, sampled for two seconds after.
+    static func runMenuRenameTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitMenuRenameTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let folder = fm.temporaryDirectory.appendingPathComponent("blit-menu-rename")
+            try? fm.removeItem(at: folder)
+            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            for name in ["Alpha.Movie.2021.mkv", "Beta.Show.S01E01.mkv", "Gamma.txt"] {
+                fm.createFile(atPath: folder.appendingPathComponent(name).path, contents: Data(count: 100))
+            }
+            defer { try? fm.removeItem(at: folder) }
+            guard let window = BrowserModel.activeWindow, let first = PaneTabs.shared.current?.first else { return lines.append("no window") }
+            // -BlitMenuRenameOtherPane YES: in the second pane while the first is the active one.
+            let otherPane = UserDefaults.standard.bool(forKey: "BlitMenuRenameOtherPane")
+            guard let browser = otherPane ? BrowserModel.oppositePane?(first) : first else { return lines.append("no second pane") }
+            browser.open(.local(folder))
+            browser.sort(by: .name)
+            if otherPane {
+                first.open(.local(fm.temporaryDirectory))
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let list = FileListRegistry.coordinator(for: browser) else { return lines.append("no list") }
+            lines.append(otherPane ? "in the second pane, the first one active" : "in the only pane")
+            let table = list.table
+            @MainActor func state() -> String {
+                let editing = (window.firstResponder as? NSText)?.delegate === list.renameField && list.renameField != nil
+                return "renaming \(browser.renaming?.lastComponent ?? "-") · field \(list.renameField?.window != nil) · typing in it \(editing) · selected \(browser.selectedItems.map(\.name))"
+            }
+            for (name, preselect) in [("Alpha.Movie.2021.mkv", false), ("Beta.Show.S01E01.mkv", true), ("Gamma.txt", false)] {
+                browser.cancelRename()
+                try? await Task.sleep(for: .milliseconds(200))
+                renameTrail = []
+                if otherPane {
+                    BrowserModel.onInteraction?(first)
+                    first.requestKeyboardFocus()
+                }
+                browser.selection = preselect ? Set(browser.rows.filter { $0.name == name }.map(\.id)) : Set(browser.rows.filter { $0.name == "Gamma.txt" && name != "Gamma.txt" }.map(\.id))
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let row = browser.rows.firstIndex(where: { $0.name == name }) else { lines.append("no \(name)"); continue }
+                var chosen = false
+                let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { note in
+                    nonisolated(unsafe) let menu = note.object as? NSMenu
+                    MainActor.assumeIsolated {
+                        guard !chosen, let menu, let index = menu.items.firstIndex(where: { $0.title == "Rename" }) else { return }
+                        chosen = true
+                        nonisolated(unsafe) let tracked = menu
+                        let timer = Timer(timeInterval: 0.3, repeats: false) { _ in
+                            MainActor.assumeIsolated {
+                                tracked.performActionForItem(at: index)
+                                tracked.cancelTrackingWithoutAnimation()
+                            }
+                        }
+                        RunLoop.main.add(timer, forMode: .eventTracking)
+                    }
+                }
+                let rect = table.rect(ofRow: row)
+                let point = table.convert(NSPoint(x: rect.minX + 80, y: rect.midY), to: nil)
+                if let event = NSEvent.mouseEvent(with: .rightMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    NSApp.postEvent(event, atStart: false)
+                }
+                var samples: [String] = []
+                for wait in [0.6, 0.3, 0.5, 1.0] {
+                    try? await Task.sleep(for: .seconds(wait))
+                    samples.append(state())
+                }
+                NotificationCenter.default.removeObserver(observer)
+                lines.append("\(name) (\(preselect ? "selected" : "not selected") before): menu chose Rename \(chosen)")
+                for entry in renameTrail { lines.append("  trail: " + entry) }
+                renameTrail = []
+                for (time, sample) in zip(["0.6 s", "0.9 s", "1.4 s", "2.4 s"], samples) { lines.append("  \(time): \(sample)") }
+            }
+            browser.cancelRename()
+            lines.append("done")
+        }
+    }
+
     /// `-BlitSeedboxProbe <log>`: a read-only look at the first saved server's
     /// torrent client (qBittorrent): its process, the settings that matter for
     /// watch mode, and whether its Web API answers on localhost, with torrent
@@ -4565,6 +4650,20 @@ enum UITestHarness {
     /// The last drop a file list handled (for the drop test).
     static var lastDrop = ""
     static var dropTrail: [String] = []
+    /// How each rename ended (the menu rename test).
+    static var renameTrail: [String] = []
+
+    /// The calling frames, short: Blit's own and AppKit's method names.
+    static func callers(_ count: Int = 18) -> String {
+        Thread.callStackSymbols.dropFirst(2).prefix(count).compactMap { line -> String? in
+            let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard parts.count > 3 else { return nil }
+            let symbol = parts[3...].joined(separator: " ")
+            let module = String(parts[1])
+            guard module == "Blit" || module.hasPrefix("AppKit") || module.hasPrefix("SwiftUI") else { return nil }
+            return String(symbol.prefix(90))
+        }.joined(separator: " < ")
+    }
 
     static func runDropTestIfRequested() {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitDropTest") else { return }
