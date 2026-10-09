@@ -69,4 +69,4 @@ says how it's checked.
   what they think.
 - **Answer every comment** through the day; that's most of what a launch is.
 - **The site and the store** are live: Blit 1.0, blit.banast.as, Download and Buy on.
-- **dev.banast.as** still lists Blit as Beta (`src/data/projects.ts`); it's Released since 1.0.
+- **dev.banast.as** lists Blit as Released (since 1.0, 2026-10-08).
