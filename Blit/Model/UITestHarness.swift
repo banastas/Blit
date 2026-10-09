@@ -899,6 +899,12 @@ enum UITestHarness {
             // One real request with a key that doesn't exist.
             let problem = await license.activate("BLIT-TEST-0000-0000-NOT-A-REAL-KEY", instanceName: "Blit test")
             lines.append("live API, made-up key: \(problem ?? "activated?!") · state \(license.summary)")
+            // Which products' keys unlock Blit: the live one; the test-mode one in debug builds only;
+            // never another product in the same store (Rune's).
+            for (label, product) in [("Blit live", 1_423_615), ("Blit test mode", 1_390_732), ("Rune", 1_423_364)] {
+                let problem = LicenseManager.mismatch(LicenseManager.APIResponse.Meta(store_id: 484_060, product_id: product))
+                lines.append("a key for \(label) (\(product)): \(problem ?? "accepted")")
+            }
             // A real test-mode key (-BlitLicenseTestKey): activate, check, then free the activation.
             if let real = UserDefaults.standard.string(forKey: "BlitLicenseTestKey") {
                 memory.items["license"] = nil

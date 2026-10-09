@@ -18,8 +18,10 @@ enum LicenseConfig {
     /// Lemon Squeezy store and product. Keys from any other store or product
     /// are refused once these are set (nil: not checked yet).
     static let storeID: Int? = 484_060
-    /// The test-mode product for now; the live product gets its own ID.
-    static let productID: Int? = 1_390_732
+    /// The live product (since 2026-10-08), and the test-mode one whose keys
+    /// debug builds also accept (test keys never unlock a release build).
+    static let productID: Int? = 1_423_615
+    static let testProductID = 1_390_732
     /// Test-mode keys (bought with test cards) only unlock debug builds.
     static var acceptsTestKeys: Bool {
         #if DEBUG
@@ -28,9 +30,8 @@ enum LicenseConfig {
         false
         #endif
     }
-    /// Where Buy Blit… goes: the product's Lemon Squeezy checkout. (Test mode
-    /// for now; the live product gets its own link when the store goes live.)
-    static let buyURL = URL(string: "https://banastas.lemonsqueezy.com/checkout/buy/1eb9b37f-ef04-4947-a7ab-ee13a6af1fc6")!
+    /// Where Buy Blit… goes: the live product's Lemon Squeezy checkout.
+    static let buyURL = URL(string: "https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46")!
     static let trialDays = 7
     static let revalidateEvery: TimeInterval = 7 * 86_400
     static let offlineGrace: TimeInterval = 30 * 86_400
@@ -188,7 +189,8 @@ final class LicenseManager {
 
     static func mismatch(_ meta: APIResponse.Meta?) -> String? {
         if let store = LicenseConfig.storeID, meta?.store_id != store { return "This key isn't for Blit." }
-        if let product = LicenseConfig.productID, meta?.product_id != product { return "This key isn't for Blit." }
+        if let product = LicenseConfig.productID, meta?.product_id != product,
+           !(LicenseConfig.acceptsTestKeys && meta?.product_id == LicenseConfig.testProductID) { return "This key isn't for Blit." }
         return nil
     }
 

@@ -275,6 +275,17 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
   .rate .big { font-size: 28px; }
   .link { display: none; }
 }
+/* Lemon Squeezy's checkout over the page: the embed page in a full-window frame, as lemon.js
+   draws it, with a dark backdrop and a pulse until the checkout says it's mounted (as Rune's). */
+.checkout-backdrop { position: fixed; inset: 0; z-index: 2147483646; background: rgba(0,0,0,0.88);
+  display: flex; align-items: center; justify-content: center; }
+.checkout-backdrop .pulse { width: 40px; height: 40px; border-radius: 40px; background: var(--bright);
+  animation: checkout-pulse 1s ease-out infinite forwards; }
+.checkout-backdrop.mounted .pulse { display: none; }
+@keyframes checkout-pulse { 0% { opacity: 1; transform: scale(0.1); } 100% { opacity: 0; transform: scale(1); } }
+.checkout-frame { position: fixed; inset: 0; z-index: 2147483647; width: 100%; height: 100%;
+  border: 0; background: transparent; color-scheme: normal; }
+body.checkout-open { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -317,7 +328,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         </div>
         <div class="cta">
           <a class="btn is-soon" id="download-button" aria-disabled="true" data-href="downloads/Blit.zip">Download free trial</a>
-          <a class="btn btn-quiet" href="#buy">Buy · $19</a>
+          <a class="btn btn-quiet" id="buy-top" href="#buy">Buy · $19</a>
           <span class="label dim" id="download-note">Coming soon · macOS 27 · Apple silicon</span>
         </div>
       </div>
@@ -591,8 +602,11 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         </ul>
         <div class="price-cta">
           <a class="btn is-soon" id="trial-button" aria-disabled="true" data-href="downloads/Blit.zip">Download free trial</a>
+          <!-- Blit's live Lemon Squeezy checkout (product 1423615), as an overlay (?embed=1&desc=0, as
+               Rune's; the hero's Buy opens it too). Off for visitors until LIVE = true below;
+               ?checkout=test turns it on to try (a real purchase: the product is live). -->
           <a class="btn is-soon" id="buy-button" aria-disabled="true"
-             data-checkout="https://banastas.lemonsqueezy.com/checkout/buy/1eb9b37f-ef04-4947-a7ab-ee13a6af1fc6?embed=1&desc=0">Buy Blit · $19</a>
+             data-checkout="https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46?embed=1&desc=0">Buy Blit · $19</a>
           <span class="label dim" id="buy-note">Checkout opens soon · secure payment by Lemon Squeezy</span>
         </div>
       </div>
@@ -765,11 +779,13 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
   }
 
   // ---------- download and checkout ----------
-  // Off for visitors until launch (LIVE). Then the Download buttons fetch the
-  // current release (the release script publishes downloads/Blit.zip) and Buy
-  // opens Lemon Squeezy's checkout overlay. ?checkout=test turns Buy on to try
-  // the test-mode checkout. lemon.js loads only when Buy is clicked, so a plain
-  // visit makes no third-party requests.
+  // Off for visitors until launch (LIVE). Then the Download buttons fetch the current release
+  // (the release script publishes downloads/Blit.zip) and Buy opens Lemon Squeezy's checkout
+  // overlay (both Buy buttons). ?checkout=test turns Buy on before then, to try the checkout:
+  // it's the live product, so a purchase is real. The overlay is drawn here, as lemon.js draws
+  // it and as Rune's site does, not by lemon.js: a content blocker that stopped the script would
+  // have left Buy doing nothing. Nothing loads from Lemon Squeezy until Buy is clicked, so a
+  // plain visit makes no third-party requests.
   const LIVE = false;
   const CHECKOUT_LIVE = LIVE;
   if (LIVE) {
@@ -783,32 +799,55 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
     $("download-note").textContent = "Free for 7 days · macOS 27 · Apple silicon";
   }
   const buy = $("buy-button");
-  if (buy && (CHECKOUT_LIVE || new URLSearchParams(location.search).has("checkout"))) {
-    const url = buy.dataset.checkout;
-    // The same checkout as a plain page (without embed=1), for the fallback.
-    const page = new URL(url);
+  const checkout = buy && buy.dataset.checkout;
+  if (checkout && (CHECKOUT_LIVE || new URLSearchParams(location.search).has("checkout"))) {
+    // The same checkout as a plain page (without embed=1), for ⌘-clicks and the fallback.
+    const page = new URL(checkout);
     page.searchParams.delete("embed");
     buy.href = page.href;
     buy.classList.remove("is-soon");
     buy.removeAttribute("aria-disabled");
-    $("buy-note").textContent = (CHECKOUT_LIVE ? "" : "TEST MODE · ") + "Secure payment by Lemon Squeezy · 30-day refunds";
-    let loading = null;
-    const lemon = () => loading ||= new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://assets.lemonsqueezy.com/lemon.js";
-      s.onload = () => { window.createLemonSqueezy && window.createLemonSqueezy(); resolve(); };
-      s.onerror = reject;
-      document.head.appendChild(s);
+    $("buy-note").textContent = (CHECKOUT_LIVE ? "" : "PREVIEW · ") + "Secure payment by Lemon Squeezy · 30-day refunds";
+    const origin = new URL(checkout).origin;
+    let backdrop = null, frame = null, fallback = 0;
+    const close = () => {
+      clearTimeout(fallback);
+      backdrop && backdrop.remove();
+      frame && frame.remove();
+      backdrop = frame = null;
+      document.body.classList.remove("checkout-open");
+    };
+    const open = () => {
+      if (frame) return;
+      backdrop = document.createElement("div");
+      backdrop.className = "checkout-backdrop";
+      backdrop.innerHTML = '<div class="pulse"></div>';
+      backdrop.addEventListener("click", close);
+      frame = document.createElement("iframe");
+      frame.className = "checkout-frame";
+      frame.title = "Buy Blit";
+      frame.allow = "payment";
+      frame.src = checkout;
+      document.body.append(backdrop, frame);
+      document.body.classList.add("checkout-open");
+      // Blocked or never answering: the plain checkout page.
+      fallback = setTimeout(() => { close(); location.href = page.href; }, 15000);
+    };
+    // The checkout's own messages: "mounted" once it's drawn, "close" from its ✕.
+    addEventListener("message", (event) => {
+      if (!frame || event.origin !== origin || event.source !== frame.contentWindow) return;
+      if (event.data === "mounted") { clearTimeout(fallback); backdrop.classList.add("mounted"); }
+      if (event.data === "close") close();
     });
-    buy.addEventListener("click", async (event) => {
-      event.preventDefault();
-      try {
-        await lemon();
-        window.LemonSqueezy.Url.Open(url);
-      } catch {
-        location.href = buy.href;   // the script didn't load: the plain checkout page
-      }
-    });
+    addEventListener("keydown", (event) => { if (event.key === "Escape" && frame) close(); });
+    for (const b of [buy, $("buy-top")]) {
+      b.href = page.href;
+      b.addEventListener("click", (event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;   // a new tab or window: the plain page
+        event.preventDefault();
+        open();
+      });
+    }
   }
 
   // Signal bars light up one by one, then hold (connecting → connected).
