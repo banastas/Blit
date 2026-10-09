@@ -11,10 +11,10 @@ import Observation
 import Security
 
 enum LicenseConfig {
-    /// Off until launch (0.3.0): no trial clock, no Keychain writes, no License
-    /// UI, and transfers are never locked. Turning it on starts each Mac's trial
-    /// at its next launch.
-    static let enforced = false
+    /// On since 1.0 (2026-10-08): each Mac's 7-day trial starts at its first
+    /// launch of 1.0 or later, the License UI shows, and after the trial only
+    /// starting transfers needs a key. (0.2.5–0.2.48 shipped with it off.)
+    static let enforced = true
     /// Lemon Squeezy store and product. Keys from any other store or product
     /// are refused once these are set (nil: not checked yet).
     static let storeID: Int? = 484_060
