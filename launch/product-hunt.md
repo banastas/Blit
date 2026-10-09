@@ -3,8 +3,10 @@
 Everything the submission form asks for, ready to paste, as Rune's (Rune's `launch/product-hunt.md`).
 Written plainly: what Blit does, said literally. The images are in `launch/product-hunt/`, made by
 `scripts/make-brand.sh`: the first from `scripts/brand/blit-brand.html#ph`, the rest from
-`scripts/brand/blit-ph.html`. The speeds are the site's (section 02); if the benchmarks are rerun,
-change them there, in the speed image and in the comment below.
+`scripts/brand/blit-ph.html`. Speeds are given as percentages, measured against other methods on the
+same connection (the site's section 02): a speed in MB/s depends on the reader's connection. The gain
+is largest from a distant server on a fast connection, and the copy says so. If the benchmarks are
+rerun, change the numbers on the site, in the speed image and in the comment below.
 
 ## The form
 
@@ -25,9 +27,9 @@ says how it's checked.
 
 **Description** (260 at most; this is the length shown in previews)
 
-> Blit is a native Mac app for moving big files between SFTP servers, external drives and NAS shares. It checks every file by SHA-256 at its destination, runs at up to 8.7× the speed of stock sftp, and fetches new downloads from your server as they finish.
+> Blit is a native Mac app for moving big files between SFTP servers, external drives and NAS shares. It checks every file by SHA-256 at its destination, is up to 769% faster than stock sftp from distant servers, and fetches new downloads as they finish.
 
-(254 characters.)
+(252 characters.)
 
 **Links:** https://blit.banast.as
 
@@ -40,16 +42,16 @@ says how it's checked.
 **Gallery** (1270×760, in this order; the first is also the preview when the page is shared):
 1. `1-blit-1270x760.png`: the icon, name and tagline, and the transfer HUD mid-download (74.2 MB/s, 17 of 26 files verified).
 2. `2-verified-1270x760.png`: SHA-256 on the server while downloading, with a mismatch caught and retried, and `sha256sum` on the NAS while copying.
-3. `3-speed-1270x760.png`: one big file from a server 148 ms away: Blit 93.0 MB/s, the fastest single-connection Mac client measured 24.6, stock sftp 10.7.
+3. `3-speed-1270x760.png`: one big file from a server 148 ms away, against stock sftp on the same connection: Blit 769% faster, the fastest single-connection Mac client measured 130% faster.
 4. `4-new-downloads-1270x760.png`: a watched server folder with qBittorrent's status beside each item, and a download's notification with its still, Quick Look and Rename. The names are freely shared downloads (Linux ISOs, Blender's open movies).
 
 **Makers:** you. **Hunter:** you, or someone else willing to post it.
 
 ## The maker's first comment
 
-> My work depends on moving large files between servers in other countries and my own drives, and production waits until they arrive. I used Transmit and ForkLift for years, and they're good apps, but in my measurements they moved a big file from a distant server over one connection at 10 to 25 MB/s. Blit started with one question: could those files move faster?
+> My work depends on moving large files between servers in other countries and my own drives, and production waits until they arrive. I used Transmit and ForkLift for years, and they're good apps, but they move a big file over one connection, and over a long distance one connection can't use a fast line. Blit started with one question: could those files move faster?
 >
-> They can. From a server 148 ms away, Blit downloads one big file at 93 MB/s, where stock sftp manages 10.7, and it checks every file it moves.
+> They can. From a server 148 ms away, Blit downloads a big file up to 278% faster than the fastest Mac app I measured, and up to 769% faster than stock sftp, and it checks every file it moves. The gain is largest when the server is far away and your connection is fast.
 >
 > - Each file is split across 3 connections, and transfers resume after a dropped connection, sleep or a quit.
 > - Every file is checked by SHA-256 at its destination. The server computes its own hash, and copies to a NAS are checked by running `sha256sum` on the NAS, so the check reads the NAS's disk, not the Mac's cache. A file gets its real name only after the hashes match.
@@ -61,9 +63,9 @@ says how it's checked.
 > I'd like to hear from anyone who moves big files over long distances: what's missing, and which servers cause it problems.
 
 The story is production work: large files between servers abroad and your own drives. It doesn't
-describe what the files are or where they come from. The 10 to 25 MB/s for Transmit and ForkLift is
-from your own measurements (the site's comparison is "the fastest single-connection Mac client we
-measured", 24.6 MB/s); the site itself still names no competitors.
+describe what the files are or where they come from. No speed is given for Transmit or ForkLift by
+name; the comparison is with "the fastest Mac app I measured",
+as the site's "the fastest single-connection Mac client we measured". The site names no competitors.
 
 ## Before and on the day
 

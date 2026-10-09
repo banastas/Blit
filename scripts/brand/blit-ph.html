@@ -115,10 +115,10 @@ body.thumb { width: 240px; height: 240px; }
 <section class="shot" id="speed">
   <div>
     <h2>Fast across an ocean</h2>
-    <p class="sub">One big file from a server 148 ms away: parallel connections, pipelined reads, and a larger receive buffer than macOS gives by default.</p>
+    <p class="sub">One big file from a server 148 ms away, against stock sftp on the same connection. The gain is largest when the server is far away and your connection is fast.</p>
   </div>
   <div class="bars" data-bars></div>
-  <p class="note">Same server, same network, every method measured from the Mac. SSD to NAS: 106.3 MB/s on 1 GbE, every file verified on the NAS.</p>
+  <p class="note">Same server and network for every method. SSD to NAS: 94% of a 1 GbE link's line rate, every file verified on the NAS.</p>
 </section>
 
 <section class="shot" id="watch">
@@ -208,14 +208,16 @@ for (const el of document.querySelectorAll("[data-lines]")) {
 }
 
 // Speed: the site's measurements (site/index.html, section 02).
+// Bars in proportion to the measured speeds (93.0, 24.6 and 10.7 MB/s); the labels say how much
+// faster than stock sftp, since a speed in MB/s depends on the reader's connection.
 const BARS = [
-  ["Blit · 3 connections", 93.0, true],
-  ["The fastest single-connection Mac client we measured", 24.6, false],
-  ["Stock sftp (OpenSSH)", 10.7, false],
+  ["Blit · 3 connections", 93.0, true, "769%", "FASTER"],
+  ["The fastest single-connection Mac client we measured", 24.6, false, "130%", "FASTER"],
+  ["Stock sftp (OpenSSH)", 10.7, false, "", "BASELINE"],
 ];
 const barsEl = document.querySelector("[data-bars]");
-if (barsEl) barsEl.innerHTML = BARS.map(([name, v, us]) =>
-  `<div class="bar${us ? " us" : ""}"><span class="name">${esc(name)}</span><span class="v">${v.toFixed(1)}<small> MB/S</small></span>` +
+if (barsEl) barsEl.innerHTML = BARS.map(([name, v, us, gain, word]) =>
+  `<div class="bar${us ? " us" : ""}"><span class="name">${esc(name)}</span><span class="v">${gain}<small> ${word}</small></span>` +
   `<span class="cells" data-fraction="${v / 93.0}"></span></div>`).join("");
 
 // New downloads: a server folder with qBittorrent's status beside each item (R2.25).
