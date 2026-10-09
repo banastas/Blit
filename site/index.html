@@ -4,21 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Blit — verified transfers for macOS</title>
-<meta name="description" content="Blit is a native macOS app for fast, verified transfers of big files: SFTP servers, external drives and NAS shares, every file checked by SHA-256 where it lands.">
+<meta name="description" content="Blit is a native macOS app for fast, verified transfers of big files: SFTP servers, external drives and NAS shares, every file checked by SHA-256 at its destination.">
 <meta name="theme-color" content="#0a0a0a">
 <!-- The link preview on X, Hacker News, Slack, Messages and the rest. -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://blit.banast.as/">
 <meta property="og:site_name" content="Blit">
 <meta property="og:title" content="Blit — big files, moved fast, proven intact">
-<meta property="og:description" content="A native Mac app that moves big files fast between SFTP servers, external drives and NAS shares, and checks every file by SHA-256 where it lands.">
+<meta property="og:description" content="A native Mac app that moves big files fast between SFTP servers, external drives and NAS shares, and checks every file by SHA-256 at its destination.">
 <meta property="og:image" content="https://blit.banast.as/brand/blit-card-1200x630.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Blit's pixel-terminal transfer HUD: a 61 GB camera shoot downloading at 74 MB/s over 3 connections, 17 of 26 files verified by SHA-256.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Blit — big files, moved fast, proven intact">
-<meta name="twitter:description" content="A native Mac app that moves big files fast between SFTP servers, external drives and NAS shares, and checks every file by SHA-256 where it lands.">
+<meta name="twitter:description" content="A native Mac app that moves big files fast between SFTP servers, external drives and NAS shares, and checks every file by SHA-256 at its destination.">
 <meta name="twitter:image" content="https://blit.banast.as/brand/blit-card-1200x630.png">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <style>
@@ -308,7 +308,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       <div>
         <h1>BLIT</h1>
         <p class="tagline">Big files, moved fast, proven intact.<span class="cursor" aria-hidden="true"></span></p>
-        <p class="sub">A native Mac app for moving large files between SFTP servers, external drives and NAS shares. Every file is checked by SHA-256 where it lands, before it gets its real name, and new downloads on your server come to you on their own.</p>
+        <p class="sub">A native Mac app for moving large files between SFTP servers, external drives and NAS shares. Every file is checked by SHA-256 at its destination before it gets its real name, and Blit can fetch new downloads from your server as they finish.</p>
         <div class="chips label">
           <span class="chip">macOS <b>27</b></span>
           <span class="chip">Apple silicon</span>
@@ -383,21 +383,21 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         <div class="card">
           <h3><span data-glyph="check"></span> Hashed on the server</h3>
           <p>Blit asks the server for each file's <span class="k">SHA-256</span> while the file is still in its cache, and hashes its own copy as the bytes arrive. The two have to match before the file gets its real name.</p>
-          <p class="dim">Until then it's a <span class="k">.blitpart</span>. A half-written file never sits under a real name.</p>
-          <p class="dim">The check runs alongside the download and shows its own progress and time left, on the server, the NAS or a read-back, so a 70 GB file never just sits at "verifying". Want raw speed instead? Switch to size checks in Settings; moves still verify.</p>
+          <p class="dim">Until then it's a <span class="k">.blitpart</span>. A partly written file never has its final name.</p>
+          <p class="dim">The check runs alongside the download and shows its own progress and time left, whether it runs on the server, on the NAS or as a read-back, so a 70 GB file never shows "verifying" with no progress. For more speed, switch to size checks in Settings; moves still verify by SHA-256.</p>
         </div>
         <div class="card">
           <h3><span data-glyph="check"></span> Hashed on the NAS</h3>
-          <p>Copies to a Synology share are checked by <span class="k">sha256sum</span> on the NAS itself, over SSH, so a copy can't pass by coming back from the Mac's own cache.</p>
+          <p>Copies to a Synology share are checked by <span class="k">sha256sum</span> on the NAS itself, over SSH, so the result comes from the data on the NAS, not from the Mac's cache.</p>
           <p class="dim">94% of a 1 GbE link's line rate, every file verified on the NAS.</p>
         </div>
         <div class="card">
-          <h3><span data-glyph="cross"></span> Never quietly downgraded</h3>
-          <p>An interrupted hash is never accepted as "size looks right". Size-only checks are labelled everywhere they appear, and a move deletes a source only after its copy's hash has matched.</p>
+          <h3><span data-glyph="cross"></span> No silent size-only checks</h3>
+          <p>If a hash is interrupted, Blit doesn't accept a matching size instead. Size-only checks are labelled everywhere they appear, and a move deletes a source only after its copy's hash has matched.</p>
         </div>
         <div class="card">
-          <h3><span data-glyph="arrow"></span> Proof you can look up</h3>
-          <p>Every file lands in the Transfer Log: size, hash, how it was verified, and when. Search it by name or SHA-256, and export it as CSV.</p>
+          <h3><span data-glyph="arrow"></span> A record of every file</h3>
+          <p>Every file is recorded in the Transfer Log: size, hash, how it was verified, and when. Search it by name or SHA-256, and export it as CSV.</p>
         </div>
       </div>
     </div>
@@ -406,30 +406,30 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
   <section class="block" id="speed">
     <div class="wrap">
       <div class="section-head"><span class="label">02</span><h2>Fast across an ocean</h2></div>
-      <p class="sub" style="margin-bottom:22px">Tuned for a server 148 ms away, where one stock SFTP connection crawls. Parallel connections, pipelined reads, and a receive buffer bigger than macOS allows by default: 22.5 TB a month in about 4.7 days instead of 24.5.</p>
+      <p class="sub" style="margin-bottom:22px">Tuned for a server 148 ms away, where one standard SFTP connection manages about 10 MB/s. Parallel connections, pipelined reads, and a receive buffer bigger than macOS allows by default: 22.5 TB a month in about 4.7 days instead of 24.5.</p>
       <div class="metrics">
         <div class="metric"><div class="label dim">Up to</div><div class="v">769%<small> FASTER</small></div><div class="d">for one big file than stock <span class="k">sftp</span> <span class="dim">(93.0 vs 10.7 MB/s)</span></div></div>
         <div class="metric"><div class="label dim">Up to</div><div class="v">300%<small> FASTER</small></div><div class="d">per connection than stock <span class="k">sftp</span> <span class="dim">(42.9 vs 10.7 MB/s)</span></div></div>
         <div class="metric"><div class="label dim">Up to</div><div class="v">278%<small> FASTER</small></div><div class="d">than the fastest single-connection Mac client we measured <span class="dim">(93.0 vs 24.6 MB/s)</span></div></div>
         <div class="metric"><div class="label dim">SSD → NAS</div><div class="v">94%<small> OF LINE RATE</small></div><div class="d">on 1 GbE, with every file verified on the NAS <span class="dim">(106.3 of ~113 MB/s)</span></div></div>
       </div>
-      <p class="label dim" style="margin:10px 2px 0">Measured from the Mac to a server 148 ms away, same server and network for every method. Verification runs alongside the transfer, or can be switched to size checks for raw speed.</p>
+      <p class="label dim" style="margin:10px 2px 0">Measured from the Mac to a server 148 ms away, same server and network for every method. Verification runs alongside the transfer, or can be switched to size checks for more speed.</p>
       <div class="grid" style="margin-top:14px">
         <div class="card">
           <h3><span data-glyph="up"></span> Resumes anything</h3>
-          <p>Each part file records which byte ranges are on disk. Quit, sleep, lose Wi-Fi, unplug the drive: the queue survives and picks up mid-file.</p>
+          <p>Each part file records which byte ranges are on disk. Quit, sleep, lose Wi-Fi, unplug the drive: the queue is kept, and each file continues from where it stopped.</p>
         </div>
         <div class="card">
-          <h3><span data-glyph="pause"></span> A queue you steer</h3>
-          <p>Pause, resume, reorder, cancel, Retry Now. Downloads and drive-to-NAS copies run side by side in separate lanes. A full disk waits for space instead of failing, and Blit offers to empty that drive's Trash to make room.</p>
+          <h3><span data-glyph="pause"></span> Control the queue</h3>
+          <p>Pause, resume, reorder, cancel, Retry Now. Downloads and drive-to-NAS copies run side by side in separate lanes. When a disk is full, the transfer waits for space instead of failing, and Blit offers to empty that drive's Trash.</p>
         </div>
         <div class="card">
-          <h3><span data-glyph="arrow"></span> Shares come back</h3>
-          <p>When the NAS sleeps or the network drops, queued copies wait for the share, then Blit remounts it with the password macOS already saved. No dialog, no trip to Finder.</p>
+          <h3><span data-glyph="arrow"></span> Shares reconnect</h3>
+          <p>When the NAS sleeps or the network drops, queued copies wait for the share, then Blit remounts it with the password macOS already saved. You don't see a dialog or need to reconnect it in Finder.</p>
         </div>
         <div class="card">
           <h3><span data-glyph="down"></span> Says why it's slow</h3>
-          <p>The HUD shows the round trip, the route (and warns when Wi-Fi carries it while a cable is plugged in), and says when the server's disk, not the network, is the limit.</p>
+          <p>The HUD shows the round trip, the route (and warns when traffic goes over Wi-Fi while a cable is plugged in), and says when the server's disk, not the network, is the limit.</p>
         </div>
       </div>
     </div>
@@ -437,28 +437,28 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
 
   <section class="block" id="watch">
     <div class="wrap">
-      <div class="section-head"><span class="label">03</span><h2>Downloads come to you</h2></div>
-      <p class="sub" style="margin-bottom:22px">Watch a folder on your server, and each download comes to your drive once it's finished, verified like everything else. What moves on to the NAS stays your call.</p>
+      <div class="section-head"><span class="label">03</span><h2>New downloads, fetched automatically</h2></div>
+      <p class="sub" style="margin-bottom:22px">Blit watches a folder on your server and copies each download to your drive once it's finished, verified like everything else. You still decide what goes on to the NAS.</p>
       <div class="grid">
         <div class="card">
           <h3><span data-glyph="down"></span> Watch a folder</h3>
-          <p>Right-click a folder on your server and pick where things go. Each download comes over once it's finished, as a verified copy, and the original stays where it is.</p>
+          <p>Right-click a folder on your server and choose a destination. Each download is copied once it's finished, verified, and the original stays on the server.</p>
           <p class="dim">With qBittorrent on the server, Blit reads its own records, so a download stuck at 43% for a month is never taken for finished. With any other client, it waits for the files to stop changing.</p>
         </div>
         <div class="card">
-          <h3><span data-glyph="pause"></span> Where each one stands</h3>
+          <h3><span data-glyph="pause"></span> Download status</h3>
           <p>In a folder on your server, each item says how far its download has come and the time left, how long it's been stalled, or how long it's been seeding and at what ratio.</p>
           <p class="dim">Measured live from the files on the server, not from records an hour old.</p>
         </div>
         <div class="card">
           <h3><span data-glyph="arrow"></span> Review from the notification</h3>
-          <p>A finished download's notification shows a still from the video, past any black opening, with Quick Look and Rename. Click it and Blit opens with the file selected.</p>
-          <p class="dim">An episode missing from its season gets one more line, said only once Blit has checked the drive, the NAS and the server.</p>
+          <p>A finished download's notification shows a still from the video, skipping black frames at the start, with Quick Look and Rename buttons. Click it and Blit opens with the file selected.</p>
+          <p class="dim">If an episode is missing from the season, the notification says so, but only after Blit has checked the drive, the NAS and the server.</p>
         </div>
         <div class="card">
           <h3><span data-glyph="check"></span> While you were away</h3>
-          <p>Back after a few hours, one notification says what arrived and whether it's all verified, what's still downloading, and what stalled meanwhile.</p>
-          <p class="dim">Nothing new, nothing said.</p>
+          <p>When you're back after a few hours, one notification lists what arrived and whether it's all verified, what's still downloading, and what stalled.</p>
+          <p class="dim">If nothing happened, there's no notification.</p>
         </div>
       </div>
     </div>
@@ -467,7 +467,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
   <section class="block" id="hud">
     <div class="wrap">
       <div class="section-head"><span class="label">04</span><h2>The HUD</h2></div>
-      <p class="sub">Everything else in Blit is a plain Mac app. Status and motion get a 1-bit, pixel-terminal instrument, inspired by 1-bit pixel art and the Nostromo's screens: black and grey, with muted red reserved for failures. Every state has a glyph or a word, never color alone.</p>
+      <p class="sub">The rest of Blit is a standard Mac app. Transfer status is shown in a 1-bit pixel-terminal display, styled after 1-bit pixel art and the Nostromo's screens in Alien: black and grey, with muted red only for failures. Every state has a glyph or a word, never color alone.</p>
       <div class="legend">
         <div><span class="g" data-glyph="down"></span> coming in: downloads, drive to drive</div>
         <div><span class="g" data-glyph="up"></span> going out to a NAS share</div>
@@ -492,7 +492,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         <div class="card">
           <h3>Two panes, in tabs</h3>
           <p>Where it came from beside where it goes. F5 copies to the other pane, F6 moves, ⌘U swaps them.</p>
-          <p class="dim">Each tab keeps its own pair of folders, and shows the progress of any transfer that touches them. Tabs come back when Blit opens.</p>
+          <p class="dim">Each tab keeps its own pair of folders, and shows the progress of transfers started from it. Tabs are restored when Blit opens.</p>
         </div>
         <div class="card">
           <h3>Finder-style browser</h3>
@@ -514,37 +514,37 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
         </div>
         <div class="card">
           <h3>Compare Panes</h3>
-          <p><span class="k">⌃⌘C</span> marks every file against the other pane: only here, the same, verified there, or different. A last look before a move.</p>
+          <p><span class="k">⌃⌘C</span> marks every file against the other pane: only here, the same, verified there, or different. Useful as a check before a move.</p>
         </div>
         <div class="card">
-          <h3>Bring your servers</h3>
-          <p>Import your servers from Transmit or ForkLift in one step. Measure… finds how many connections each one likes best.</p>
+          <h3>Import your servers</h3>
+          <p>Import your servers from Transmit or ForkLift in one step. Measure… finds the number of connections that is fastest for each server.</p>
         </div>
         <div class="card">
-          <h3>Menu bar at a glance</h3>
-          <p>Time left, at a width that never nudges its neighbours, while the arrow's tray fills. A download and a NAS copy at once show as two lines, one per lane.</p>
+          <h3>In the menu bar</h3>
+          <p>Time left, at a fixed width so other menu bar items don't shift, while the arrow's tray fills. A download and a NAS copy at once show as two lines, one per lane.</p>
           <p class="dim">A failure leaves a red <span data-glyph="cross"></span> until you've seen it. The Mac stays awake while Blit works.</p>
         </div>
         <div class="card">
-          <h3>Notifications that report</h3>
+          <h3>Detailed notifications</h3>
           <p><span class="k">Copied to Movies</span> · 71.6 GB · verified on the NAS · 11 min at 108 MB/s.</p>
-          <p class="dim">Show in Finder when it's done, Show Details when something needs you.</p>
+          <p class="dim">Show in Finder when it's done, Show Details when something went wrong.</p>
         </div>
         <div class="card">
-          <h3>Room when you need it</h3>
-          <p>Deleted files keep their space until the Trash is emptied. Empty one drive's Trash from the sidebar, or straight from a transfer waiting for room.</p>
+          <h3>Empty a drive's Trash</h3>
+          <p>Deleted files keep their space until the Trash is emptied. Empty one drive's Trash from the sidebar, or from a transfer waiting for space.</p>
         </div>
         <div class="card">
-          <h3>Out of the way</h3>
-          <p>The full HUD opens when a transfer starts, if the window has room for it, and steps back to the strip once everything has verified. Anything that needs you keeps it open.</p>
+          <h3>The HUD opens and closes itself</h3>
+          <p>The full HUD opens when a transfer starts, if the window has room for it, and collapses to the strip once everything has verified. It stays open while something needs your attention.</p>
         </div>
         <div class="card">
-          <h3>Keeps itself current</h3>
+          <h3>Automatic updates</h3>
           <p>Signed updates, checked once a day and installed in a click from Blit › Check for Updates.</p>
         </div>
       </div>
       <div style="margin-top:14px">
-        <div class="caption label dim"><span>The same engine, from the terminal</span></div>
+        <div class="caption label dim"><span>A command-line tool, too</span></div>
         <div class="term"><span class="p">$</span> blit get me@server downloads/SHOOT_2026-09 /Volumes/SSD/Incoming
 <span class="p">CONNECT · 3 CONNECTIONS · 255K×32 · EN7</span>
 <span class="ok" data-glyph="check"></span> A001_C001.MOV  4.1 GB  SHA256 9F3A1C… VERIFIED
