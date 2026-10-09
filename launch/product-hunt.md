@@ -47,6 +47,16 @@ says how it's checked.
 
 **Makers:** you. **Hunter:** you, or someone else willing to post it.
 
+**Shoutouts** (products used to build and run Blit; all have Product Hunt pages, checked 2026-10-08):
+1. **Lemon Squeezy:** checkout, sales tax and the license keys; Blit checks keys with its license API, so there's no server of ours.
+2. **Sparkle** (the "Open source software update framework for the Mac" listing, not the others of that name): Blit's signed updates.
+3. **Cloudflare Pages:** hosts blit.banast.as, the downloads and the update feed.
+4. **Xcode:** Blit is built in it, in Swift.
+5. **Claude Code** (optional; your call to say it): Blit, its tests and its site were written with it.
+
+Not on Product Hunt: QuickLook Video (MKV in Quick Look) and Synology. Transmit and ForkLift aren't
+shoutouts either way: shoutouts are for what you built with, and they're the apps Blit is compared with.
+
 ## The maker's first comment
 
 > My work depends on moving large files between servers in other countries and my own drives, and production waits until they arrive. I used Transmit and ForkLift for years, and they're good apps, but they move a big file over one connection, and over a long distance one connection can't use a fast line. Blit started with one question: could those files move faster?
