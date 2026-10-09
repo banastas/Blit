@@ -50,7 +50,7 @@ says how it's checked.
 **Product Hunt page:** https://www.producthunt.com/products/blit-2
 
 **Promo** (the form's offer for the Product Hunt community): 25% off, for Blit and Rune alike, until
-Friday 16 October 2026. Code: `__________` (fill in the code you made in Lemon Squeezy). Offer
+Friday 16 October 2026. Code: `PRODUCTHUNT`. Offer
 text: "25% off Blit for the Product Hunt community, until 16 October."
 
 **Shoutouts** (products used to build and run Blit; all have Product Hunt pages, checked 2026-10-08):
@@ -74,7 +74,7 @@ shoutouts either way: shoutouts are for what you built with, and they're the app
 > - Choose a folder on your server, and Blit copies each new download once it's finished. If the server runs qBittorrent, Blit reads its records, so a download stuck at 43% is never fetched, and each item shows its status.
 > - A two-pane browser with tabs (F5 copies, F6 moves), Rename N Items with presets, and a pixel-terminal display for transfers.
 >
-> There's no account and no analytics, and your files go only between your servers, your Mac and your NAS. It's $19 once for 3 Macs, with 7 days free on each, and 25% off with the code `__________` until 16 October.
+> There's no account and no analytics, and your files go only between your servers, your Mac and your NAS. It's $19 once for 3 Macs, with 7 days free on each, and 25% off with the code `PRODUCTHUNT` until 16 October.
 >
 > I'd like to hear from anyone who moves big files over long distances: what's missing, and which servers cause it problems.
 
