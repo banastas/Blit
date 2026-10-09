@@ -47,16 +47,23 @@ says how it's checked.
 
 ## The maker's first comment
 
-> I move 27–30 TB a month from a server in Europe, 148 ms away, to an external SSD, look through it there, and archive what I keep on a Synology NAS. The Mac apps I used for this were slow at that distance (one connection, 10 to 25 MB/s), had become unreliable on recent macOS releases, and none of them told me whether every file arrived intact. So I built Blit, a Mac app that does only this.
+> My work depends on moving large files between servers in other countries and my own drives, and production waits until they arrive. I used Transmit and ForkLift for years, and they're good apps, but in my measurements they moved a big file from a distant server over one connection at 10 to 25 MB/s. Blit started with one question: could those files move faster?
 >
-> - Downloads split each file across 3 connections and resume after a dropped connection, sleep or a quit. One big file comes in at 93 MB/s here, where stock sftp manages 10.7.
-> - Every file is checked by SHA-256 at its destination. The server computes its own hash, and copies to the NAS are checked by running `sha256sum` on the NAS, so the check reads the NAS's disk, not the Mac's cache. A file gets its real name only after the hashes match.
-> - Point it at a folder on your server and it copies each download once it's finished. If the server runs qBittorrent, Blit reads its records, so a download stuck at 43% is never fetched, and each item shows its status.
+> They can. From a server 148 ms away, Blit downloads one big file at 93 MB/s, where stock sftp manages 10.7, and it checks every file it moves.
+>
+> - Each file is split across 3 connections, and transfers resume after a dropped connection, sleep or a quit.
+> - Every file is checked by SHA-256 at its destination. The server computes its own hash, and copies to a NAS are checked by running `sha256sum` on the NAS, so the check reads the NAS's disk, not the Mac's cache. A file gets its real name only after the hashes match.
+> - Choose a folder on your server, and Blit copies each new download once it's finished. If the server runs qBittorrent, Blit reads its records, so a download stuck at 43% is never fetched, and each item shows its status.
 > - A two-pane browser with tabs (F5 copies, F6 moves), Rename N Items with presets, and a pixel-terminal display for transfers.
 >
 > There's no account and no analytics, and your files go only between your servers, your Mac and your NAS. It's $19 once for 3 Macs, with 7 days free on each.
 >
-> I'd like to hear from anyone moving big files over long distances: what's missing, and which servers give it trouble.
+> I'd like to hear from anyone who moves big files over long distances: what's missing, and which servers cause it problems.
+
+The story is production work: large files between servers abroad and your own drives. It doesn't
+describe what the files are or where they come from. The 10 to 25 MB/s for Transmit and ForkLift is
+from your own measurements (the site's comparison is "the fastest single-connection Mac client we
+measured", 24.6 MB/s); the site itself still names no competitors.
 
 ## Before and on the day
 
