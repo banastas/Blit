@@ -252,6 +252,9 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
 .price-cta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; border-top: 1px dashed var(--off); padding-top: 16px; }
 .btn { font-family: var(--label); font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--bright); color: var(--bright); padding: 10px 16px 9px; display: inline-block; }
 .btn:hover { background: var(--bright); color: var(--bg); }
+.ph { margin: 18px 0 0; }
+.ph a { color: var(--dim); }
+.ph a:hover { color: var(--bright); }
 .btn.is-soon { border-color: var(--border); color: var(--dim); cursor: default; }
 .btn.is-soon:hover { background: none; color: var(--dim); }
 @media (max-width: 820px) { .price { grid-template-columns: 1fr; } }
@@ -331,6 +334,7 @@ body.checkout-open { overflow: hidden; }
           <a class="btn btn-quiet" id="buy-top" href="#buy">Buy · $19</a>
           <span class="label dim" id="download-note">Coming soon · macOS 27 · Apple silicon</span>
         </div>
+        <p class="label ph" id="ph-line" hidden><a id="ph-link" href="#">Blit is on Product Hunt today →</a></p>
       </div>
     </div>
   </section>
@@ -797,6 +801,20 @@ body.checkout-open { overflow: hidden; }
       b.removeAttribute("aria-disabled");
     }
     $("download-note").textContent = "Free for 7 days · macOS 27 · Apple silicon";
+  }
+  // ---------- Product Hunt (launch week) ----------
+  // A plain link, not Product Hunt's badge: the badge is an image from their server, and a plain
+  // visit makes no third-party requests (legal.html). Shown from midnight Pacific on launch day
+  // for a week, so the site can be pushed before then; "today" on the day itself. As Rune's.
+  {
+    const PH_URL = "https://www.producthunt.com/products/blit-2";   // Blit's page on Product Hunt
+    const start = Date.parse("2026-10-09T00:00:00-07:00"), today = Date.now();
+    if (today >= start && today < start + 7 * 86400e3) {
+      const link = $("ph-link");
+      link.href = PH_URL;
+      if (today >= start + 86400e3) link.textContent = "Blit on Product Hunt →";
+      $("ph-line").hidden = false;
+    }
   }
   const buy = $("buy-button");
   const checkout = buy && buy.dataset.checkout;

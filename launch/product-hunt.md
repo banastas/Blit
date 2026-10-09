@@ -47,6 +47,12 @@ says how it's checked.
 
 **Makers:** you. **Hunter:** you, or someone else willing to post it.
 
+**Product Hunt page:** https://www.producthunt.com/products/blit-2
+
+**Promo** (the form's offer for the Product Hunt community): 25% off, for Blit and Rune alike, until
+Friday 16 October 2026. Code: `__________` (fill in the code you made in Lemon Squeezy). Offer
+text: "25% off Blit for the Product Hunt community, until 16 October."
+
 **Shoutouts** (products used to build and run Blit; all have Product Hunt pages, checked 2026-10-08):
 1. **Lemon Squeezy:** checkout, sales tax and the license keys; Blit checks keys with its license API, so there's no server of ours.
 2. **Sparkle** (the "Open source software update framework for the Mac" listing, not the others of that name): Blit's signed updates.
@@ -68,7 +74,7 @@ shoutouts either way: shoutouts are for what you built with, and they're the app
 > - Choose a folder on your server, and Blit copies each new download once it's finished. If the server runs qBittorrent, Blit reads its records, so a download stuck at 43% is never fetched, and each item shows its status.
 > - A two-pane browser with tabs (F5 copies, F6 moves), Rename N Items with presets, and a pixel-terminal display for transfers.
 >
-> There's no account and no analytics, and your files go only between your servers, your Mac and your NAS. It's $19 once for 3 Macs, with 7 days free on each.
+> There's no account and no analytics, and your files go only between your servers, your Mac and your NAS. It's $19 once for 3 Macs, with 7 days free on each, and 25% off with the code `__________` until 16 October.
 >
 > I'd like to hear from anyone who moves big files over long distances: what's missing, and which servers cause it problems.
 
@@ -79,11 +85,13 @@ as the site's "the fastest single-connection Mac client we measured". The site n
 
 ## Before and on the day
 
-- **Not the same day as Rune** (Rune's Product Hunt day is 9 October 2026). Two launches on one day
-  split your attention and the comments. A weekday a week or more later suits Blit.
+- **The same day as Rune: Friday 9 October 2026.** They're different apps with different audiences,
+  so they draw different people. On the day, answering comments on both pages is the work; when
+  telling people it's live, one message can name both, with the shared 25% code.
 - **Schedule** the launch for 12:01 AM Pacific: the day's ranking runs midnight to midnight PT.
-- **The site's launch-week line,** as Rune's: a plain link to Blit's Product Hunt page, shown from
-  midnight Pacific on the day for a week. Add it once the page's address and the date are known.
+- **The site's launch-week line,** as Rune's: "Blit is on Product Hunt today →" under the hero's
+  buttons, a plain link to Blit's page, shown from midnight Pacific on 9 October ("Blit on Product
+  Hunt →" from the 10th) until the 16th.
 - **Don't ask for upvotes:** Product Hunt's guidelines say not to. Tell people it's live and ask
   what they think.
 - **Answer every comment** through the day; that's most of what a launch is.
