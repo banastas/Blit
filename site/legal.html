@@ -42,14 +42,14 @@ footer { border-top: 1px solid var(--border); margin-top: 40px; padding: 24px 0 
 </header>
 <main class="wrap">
   <h1>Terms, privacy, refunds</h1>
-  <p class="label">Last updated 26 September 2026 · Blit is sold by banast.as</p>
+  <p class="label">Last updated <time datetime="2026-10-08">8 October 2026</time> · Blit is sold by banast.as</p>
 
   <section id="terms">
     <h2>License terms</h2>
     <p>Blit is software for macOS, sold by banast.as ("we"). Purchases are processed by Lemon Squeezy, our reseller and merchant of record, which also handles payment, sales tax and receipts.</p>
     <ul>
-      <li><strong>Trial.</strong> You can use Blit free for 7 days from its first launch. After that, starting new transfers needs a license; transfers already queued still finish, and browsing, file management and the transfer log keep working.</li>
-      <li><strong>License.</strong> A purchase gives you a personal, non-transferable license to use Blit on your own Macs, up to the number of activations shown at checkout. You can move a license by deactivating it on one Mac (Settings › License) and activating it on another. Business use is fine.</li>
+      <li><strong>Trial.</strong> You can use Blit free for 7 days from its first launch on each Mac. After that, starting new transfers needs a license; transfers already queued still finish, and browsing, file management and the transfer log keep working.</li>
+      <li><strong>License.</strong> A purchase gives you a personal, non-transferable license to use Blit on your own Macs, up to 3 at a time. You can move a license by deactivating it on one Mac (Settings › License) and activating it on another. Business use is fine.</li>
       <li><strong>Updates.</strong> The license includes updates to Blit 1.x. A future major version may be a paid upgrade.</li>
       <li><strong>Please don't</strong> share or resell license keys, or remove the license check.</li>
       <li><strong>Your data is your responsibility.</strong> Blit verifies transfers with SHA-256 so problems are caught, but no software can rule out every failure of disks, networks or servers. Keep backups of anything you can't afford to lose.</li>
@@ -63,6 +63,8 @@ footer { border-top: 1px solid var(--border); margin-top: 40px; padding: 24px 0 
     <p><strong>Blit has no accounts, analytics, ads or tracking.</strong> What you transfer, where from and where to stays on your Mac.</p>
     <ul>
       <li><strong>Your servers and drives.</strong> Blit connects only to the SFTP servers and NAS devices you add, and to drives on your Mac. Passwords are stored in your Mac's Keychain; SSH keys are read from the file you choose each time Blit connects, and never copied.</li>
+      <li><strong>Watch mode and download status.</strong> Using the login you added, Blit reads your download client's records on your server (qBittorrent's: each torrent's name, progress and sharing figures) and, for a download in progress, how much of it is on disk, with one command. None of it is sent anywhere else.</li>
+      <li><strong>Notifications.</strong> The still in a download's notification is made on your Mac from the file itself. The welcome-back summary is made on your Mac from your own transfers.</li>
       <li><strong>Updates.</strong> Once a day, Blit checks <em>blit.banast.as/appcast.xml</em> for a newer version (turn this off in Settings › Updates). The request includes Blit's version number, and updates are signed so only genuine ones install.</li>
       <li><strong>Transfer history.</strong> The transfer log (file names, sizes, SHA-256 hashes, sources and destinations) is kept only on your Mac, in its Application Support folder.</li>
       <li><strong>Licensing.</strong> To activate a license, Blit sends your license key and your Mac's name to Lemon Squeezy's license service (api.lemonsqueezy.com), and checks the key there about once a week. Lemon Squeezy returns whether the key is valid and the name and email it was bought with, which Blit shows in Settings.</li>
