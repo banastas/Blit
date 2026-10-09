@@ -315,7 +315,7 @@ struct SettingsView: View {
                     }
                     note(verifyFiles == "sizeOnly"
                          ? "Files are checked by size only, with no hashing on the server or NAS, and Replace if different compares sizes only. Moves still verify by SHA-256 before removing anything. Applies to transfers queued from now on."
-                         : "Each file is checked by SHA-256 where it lands, alongside the download, before it gets its real name. Applies to transfers queued from now on.")
+                         : "Each file is checked by SHA-256 at its destination, alongside the download, before it gets its real name. Applies to transfers queued from now on.")
                     Picker("When a file already exists", selection: $existsRule) {
                         ForEach(ExistsRule.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
