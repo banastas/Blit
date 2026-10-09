@@ -292,6 +292,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
     <nav class="label" aria-label="Sections">
       <a href="#verified">Verified</a>
       <a href="#speed">Speed</a>
+      <a href="#watch">Watch</a>
       <a href="#hud">HUD</a>
       <a href="#mac">Mac</a>
       <a href="#spec">Spec</a>
@@ -307,7 +308,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
       <div>
         <h1>BLIT</h1>
         <p class="tagline">Big files, moved fast, proven intact.<span class="cursor" aria-hidden="true"></span></p>
-        <p class="sub">A native Mac app for moving large files between SFTP servers, external drives and NAS shares. Every file is checked by SHA-256 where it lands, before it gets its real name.</p>
+        <p class="sub">A native Mac app for moving large files between SFTP servers, external drives and NAS shares. Every file is checked by SHA-256 where it lands, before it gets its real name, and new downloads on your server come to you on their own.</p>
         <div class="chips label">
           <span class="chip">macOS <b>27</b></span>
           <span class="chip">Apple silicon</span>
@@ -434,9 +435,38 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
     </div>
   </section>
 
+  <section class="block" id="watch">
+    <div class="wrap">
+      <div class="section-head"><span class="label">03</span><h2>Downloads come to you</h2></div>
+      <p class="sub" style="margin-bottom:22px">Watch a folder on your server, and each download comes to your drive once it's finished, verified like everything else. What moves on to the NAS stays your call.</p>
+      <div class="grid">
+        <div class="card">
+          <h3><span data-glyph="down"></span> Watch a folder</h3>
+          <p>Right-click a folder on your server and pick where things go. Each download comes over once it's finished, as a verified copy, and the original stays where it is.</p>
+          <p class="dim">With qBittorrent on the server, Blit reads its own records, so a download stuck at 43% for a month is never taken for finished. With any other client, it waits for the files to stop changing.</p>
+        </div>
+        <div class="card">
+          <h3><span data-glyph="pause"></span> Where each one stands</h3>
+          <p>In a folder on your server, each item says how far its download has come and the time left, how long it's been stalled, or how long it's been seeding and at what ratio.</p>
+          <p class="dim">Measured live from the files on the server, not from records an hour old.</p>
+        </div>
+        <div class="card">
+          <h3><span data-glyph="arrow"></span> Review from the notification</h3>
+          <p>A finished download's notification shows a still from the video, past any black opening, with Quick Look and Rename. Click it and Blit opens with the file selected.</p>
+          <p class="dim">An episode missing from its season gets one more line, said only once Blit has checked the drive, the NAS and the server.</p>
+        </div>
+        <div class="card">
+          <h3><span data-glyph="check"></span> While you were away</h3>
+          <p>Back after a few hours, one notification says what arrived and whether it's all verified, what's still downloading, and what stalled meanwhile.</p>
+          <p class="dim">Nothing new, nothing said.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="block" id="hud">
     <div class="wrap">
-      <div class="section-head"><span class="label">03</span><h2>The HUD</h2></div>
+      <div class="section-head"><span class="label">04</span><h2>The HUD</h2></div>
       <p class="sub">Everything else in Blit is a plain Mac app. Status and motion get a 1-bit, pixel-terminal instrument, inspired by 1-bit pixel art and the Nostromo's screens: black and grey, with muted red reserved for failures. Every state has a glyph or a word, never color alone.</p>
       <div class="legend">
         <div><span class="g" data-glyph="down"></span> coming in: downloads, drive to drive</div>
@@ -452,7 +482,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
 
   <section class="block" id="mac">
     <div class="wrap">
-      <div class="section-head"><span class="label">04</span><h2>A real Mac app</h2></div>
+      <div class="section-head"><span class="label">05</span><h2>A native Mac app</h2></div>
       <figure class="shot">
         <figcaption class="caption label dim"><span>Two panes in tabs, with a download in the full HUD</span></figcaption>
         <img src="brand/blit-window.webp" width="2000" height="1274" loading="lazy"
@@ -477,6 +507,18 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
           <h3>Copy to / Move to</h3>
           <p>Send reviewed files to a NAS folder without dragging. A move removes each file only once its copy is verified.</p>
           <p class="dim">Already there? Blit asks: Replace, Keep Both, Skip or Stop.</p>
+        </div>
+        <div class="card">
+          <h3>Files where they go</h3>
+          <p>Blit remembers where a show's last episode or a 4K movie went, and offers that folder: Move to “Season 29”, or ⇧F6. A new season gets its folder beside the last.</p>
+        </div>
+        <div class="card">
+          <h3>Compare Panes</h3>
+          <p><span class="k">⌃⌘C</span> marks every file against the other pane: only here, the same, verified there, or different. A last look before a move.</p>
+        </div>
+        <div class="card">
+          <h3>Bring your servers</h3>
+          <p>Import your servers from Transmit or ForkLift in one step. Measure… finds how many connections each one likes best.</p>
         </div>
         <div class="card">
           <h3>Menu bar at a glance</h3>
@@ -516,34 +558,36 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
 
   <section class="block" id="spec">
     <div class="wrap">
-      <div class="section-head"><span class="label">05</span><h2>Spec sheet</h2></div>
+      <div class="section-head"><span class="label">06</span><h2>Spec sheet</h2></div>
       <table class="spec">
         <tr><td>Platform</td><td>macOS 27, Apple silicon. SwiftUI and AppKit, following the Human Interface Guidelines.</td></tr>
         <tr><td>Transport</td><td>SwiftNIO SSH with Blit's own pipelined SFTP v3 client. Password or ed25519 / ECDSA keys, stored in the Keychain.</td></tr>
         <tr><td>Verification</td><td>SHA-256 on the server (with a hash cache), on the NAS, or by read-back, labelled by strength.</td></tr>
         <tr><td>Resume</td><td>Byte-range state beside each part file, a durable queue, and retries with backoff.</td></tr>
+        <tr><td>Watch mode</td><td>Looks every 1, 2, 5 or 15 minutes. Reads qBittorrent's records over SFTP; any other client by its files.</td></tr>
         <tr><td>Preview</td><td>The system's Quick Look, including formats that Media Extensions add (QuickLook Video: MKV, WebM, AVI).</td></tr>
         <tr><td>Updates</td><td>Sparkle, with EdDSA-signed releases, checked daily (or off in Settings).</td></tr>
         <tr><td>Trust</td><td>Host keys pinned, known_hosts honoured (hashed entries too), and a changed key refused.</td></tr>
-        <tr><td>Distribution</td><td>Sold directly, one-time, through Lemon Squeezy. Builds are signed with Developer ID and notarized by Apple.</td></tr>
+        <tr><td>Privacy</td><td>No accounts, analytics or telemetry. Blit talks only to your servers, NAS and drives, plus a daily update check.</td></tr>
+        <tr><td>Distribution</td><td>Developer ID, notarized by Apple. Sold directly, one-time, through Lemon Squeezy.</td></tr>
       </table>
     </div>
   </section>
 
   <section class="block" id="buy">
     <div class="wrap">
-      <div class="section-head"><span class="label">06</span><h2>Price</h2></div>
+      <div class="section-head"><span class="label">07</span><h2>Price</h2></div>
       <div class="price">
         <div class="price-main">
           <div class="label dim">One-time</div>
           <div class="price-v">$19</div>
-          <div class="dim">A license for your Macs. No subscription.</div>
+          <div class="dim">A license for 3 Macs. No subscription.</div>
         </div>
         <ul class="price-list">
-          <li><span data-glyph="check"></span> 7-day free trial, everything included</li>
+          <li><span data-glyph="check"></span> 7-day free trial on each Mac, everything included</li>
+          <li><span data-glyph="check"></span> After it, transfers already queued still finish, and browsing and file management keep working</li>
           <li><span data-glyph="check"></span> 30-day refunds, no questions asked</li>
           <li><span data-glyph="check"></span> Updates to Blit 1.x included</li>
-          <li><span data-glyph="check"></span> After the trial, transfers already queued still finish</li>
         </ul>
         <div class="price-cta">
           <a class="btn is-soon" id="trial-button" aria-disabled="true" data-href="downloads/Blit.zip">Download free trial</a>
@@ -558,7 +602,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
 
 <footer>
   <div class="wrap label">
-    <span>BLIT · © 2026 banast.as</span>
+    <span>BLIT · © 2026 banast.as · From the maker of <a href="https://rune.banast.as/">Rune</a></span>
     <span class="footer-links"><a href="legal.html#terms">Terms</a><a href="legal.html#privacy">Privacy</a><a href="legal.html#refunds">Refunds</a><a href="mailto:me@banast.as">Contact</a></span>
   </div>
 </footer>
