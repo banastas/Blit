@@ -786,7 +786,7 @@ body.checkout-open { overflow: hidden; }
   // it and as Rune's site does, not by lemon.js: a content blocker that stopped the script would
   // have left Buy doing nothing. Nothing loads from Lemon Squeezy until Buy is clicked, so a
   // plain visit makes no third-party requests.
-  const LIVE = false;
+  const LIVE = true;   // since 1.0 (2026-10-08): Download and Buy on
   const CHECKOUT_LIVE = LIVE;
   if (LIVE) {
     for (const id of ["download-button", "trial-button"]) {
