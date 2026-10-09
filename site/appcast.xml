@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0</title>
-      <pubDate>Fri, 09 Oct 2026 01:38:53 +0000</pubDate>
-      <sparkle:version>52</sparkle:version>
-      <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
+      <title>Blit 1.0.1</title>
+      <pubDate>Fri, 09 Oct 2026 21:32:36 +0000</pubDate>
+      <sparkle:version>53</sparkle:version>
+      <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit 1.0. Blit is now sold from blit.banast.as: free for 7 days on each Mac, then $19 for a license for 3 Macs (Blit › Buy Blit…). Enter your key with Blit › Enter License…. After the trial, transfers already queued still finish, and browsing and file management keep working.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.zip" type="application/octet-stream" sparkle:edSignature="l5AwQcU3ObOUcp76IvKukjfeXm75U9HM9kk7Q/mu02UkuiDqBw2x4Szjh7fSp31bTocBGHHeeK3f73XC3lGwCA==" length="6367524" />
+      <description><![CDATA[<p>Blit 1.0.1. Move To, Move to the other pane, Move to Suggested and F6 now move files to another drive: each file is removed from its old place once its copy is verified. Before, they copied the files there and left the originals. A move within one drive renames the files instead of copying them.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.1.zip" type="application/octet-stream" sparkle:edSignature="rQrWLer6vN07WWVAbtYnkSd2QMpzjdoebv9ZeB2wfF89fU6pvz4+P+fypdaldb22+hl9ntjFyuLGmHP/2hqWDQ==" length="6375192" />
     </item>
   </channel>
 </rss>
