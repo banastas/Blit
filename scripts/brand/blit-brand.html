@@ -1,0 +1,261 @@
+<!doctype html>
+<!-- Blit's brand images, drawn as the app draws its HUD (Blit/Views/TransferHUD.swift: HUDColor,
+     HUDFont, PixelCells, PixelHistogram, the pixel glyphs) and the site draws its icon
+     (site/index.html), at a fixed size, for scripts/make-brand.sh to render with WebKit:
+     #product, 1600×1200, Lemon Squeezy's product image (checkout, the receipt email, sharing);
+     #card, 1200×630, the site's link preview (og:image); #github, 1280×640, the repository's
+     social preview, everything inside GitHub's 80-pixel border. Icon, name, tagline, the
+     subline, then the expanded HUD with a simulated download: the product image has the tall
+     HUD (the six-line log in a panel), the card and the GitHub preview the compact one. Made-up
+     job and file names only. Lengths in the HUD are the app's points; the product image draws
+     it at 1.25× (whole-pixel cells), as the app's first render of it did. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+@font-face { font-family: "Silkscreen"; src: url("../../site/fonts/Silkscreen-Regular.ttf") format("truetype"); }
+@font-face { font-family: "VT323"; src: url("../../site/fonts/VT323-Regular.ttf") format("truetype"); }
+/* HUDColor in the app. */
+:root {
+  --bg: #0a0a0a; --border: #2b2b2b; --panel-line: #3b3b3b; --bright: #f0f0f0; --dim: #7d7d7d;
+  --off: #262626; --tile: #121212;
+  --label: "Silkscreen", monospace; --term: "VT323", monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--bright); overflow: hidden; }
+body { font-family: var(--term); -webkit-font-smoothing: subpixel-antialiased; }
+.dim { color: var(--dim); }
+
+.frame { display: flex; flex-direction: column; align-items: stretch; }
+.head { display: flex; align-items: center; }
+.tile { flex: none; display: grid; place-items: center; background: var(--tile); box-shadow: inset 0 0 0 1px var(--border); }
+.tile svg { display: block; shape-rendering: crispEdges; }
+.titles { display: flex; flex-direction: column; white-space: nowrap; }
+h1 { font-family: var(--label); font-weight: normal; }
+.sub { font-family: var(--label); color: var(--dim); white-space: pre; }
+
+/* ---------- the expanded HUD (TransferHUD), in the app's points ---------- */
+.hud-box { flex: none; }
+.hud { display: flex; flex-direction: column; gap: 10px; padding: 14px; background: var(--bg); border-radius: 12px;
+       box-shadow: inset 0 0 0 0.5px var(--border); transform-origin: 0 0; white-space: nowrap; }
+.glyph { display: inline-block; vertical-align: -1px; fill: currentColor; shape-rendering: crispEdges; }
+/* Lines with a pixel glyph in them stand a little taller in SwiftUI; its pixel-font labels sit a
+   little higher in their lines than WebKit puts them (the line-heights and paddings below). */
+.hud-head { display: flex; justify-content: space-between; font: 11px/13.1px var(--label); padding-bottom: 2px; white-space: pre; }
+.panels { display: flex; gap: 10px; }
+.panel { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px;
+         box-shadow: inset 0 0 0 1px var(--panel-line); }
+.panel.link { flex: none; width: 210px; }
+.panel h3 { font: normal 11px/13.08px var(--label); color: var(--dim); text-transform: uppercase; padding-bottom: 3px; }
+.title { font: 20px/20px var(--term); }
+.source { font: 15px/15.72px var(--term); color: var(--dim); white-space: pre; }
+.progress { padding: 4px 0; }
+.cells { display: flex; gap: 2px; overflow: hidden; }
+.cells i { flex: none; width: 4px; background: var(--off); }
+.cells i.on { background: var(--bright); }
+.progress .cells i { height: 10px; }
+.kv { display: flex; justify-content: space-between; gap: 6px; font: 18px/18px var(--term); }
+.kv > :first-child { color: var(--dim); }
+.detail { padding-top: 4px; }
+.line { display: flex; align-items: center; height: 18px; }
+.line .cells { flex: 1 1 0; min-width: 0; }
+.line .cells i { height: 6px; }
+.lbl { font: 11px/14.08px var(--label); color: var(--dim); }
+.val { flex: none; width: 40px; text-align: right; }
+.rate { display: flex; align-items: baseline; gap: 4px; }
+.rate .unit { font: 18px/18px var(--term); color: var(--dim); }
+.hist { display: block; width: 100%; }
+.log { font: 16px/18px var(--term); color: var(--dim); }
+.log div { height: 18px; overflow: hidden; text-overflow: ellipsis; }
+
+/* The tall HUD (the product image): six detail lines in the Item panel, ten Link rows, the log in a panel. */
+.full .detail { height: 112px; }
+.full .line { gap: 6px; font: 16px/18px var(--term); }
+.full .line .key { flex: none; width: 22px; color: var(--dim); }
+.full .line .name { flex: none; width: 140px; color: var(--dim); }
+.full .rate .big { font: 40px/40px var(--term); }
+.full .hist { height: 64px; }
+/* The compact HUD (the card): connections on one line, files hashing on the next, two log lines unboxed. */
+.tight .line { font: 15px/18px var(--term); }
+.tight .line.conn { gap: 10px; }
+.tight .meter { display: flex; align-items: center; gap: 4px; }
+.tight .meter .cells { flex: none; width: 52px; justify-content: center; }
+.tight .line.hash { gap: 6px; }
+.tight .rate .big { font: 32px/32px var(--term); }
+.tight .hist { height: 44px; }
+.tight .log { padding: 5.5px 10px 6.5px; }   /* 6 and 6, half a pixel up as SwiftUI drew it */
+
+/* 1600×1200: Lemon Squeezy's product image. */
+body.product { width: 1600px; height: 1200px; }
+.product .frame { padding: 194px 80px 0; gap: 34px; }
+.product .head { gap: 34px; }
+.product .tile { width: 168px; height: 168px; border-radius: 34px; }
+.product .tile svg { width: 112px; height: 112px; }
+.product .titles { gap: 10px; }
+.product h1 { font-size: 92px; line-height: 117.76px; }
+.product .tagline { font-size: 44px; line-height: 44px; }
+.product .sub { font-size: 15px; line-height: 19.2px; }
+.product .hud-box { width: 1440px; height: 576.25px; }
+.product .hud { width: 1152px; transform: scale(1.25); }
+/* The app's first render of it drew at 1.25× and snapped differently: half the header's nudge. */
+.product .hud-head { line-height: 14.1px; padding-bottom: 1px; }
+
+/* 1200×630: the link preview. The name and the tagline share a line. */
+body.card { width: 1200px; height: 630px; }
+.card .frame { padding: 108px 56px 0; gap: 26px; }
+/* 1280×640: GitHub's social preview. Its template keeps what matters 80 px in from each edge
+   (40 pt at 2×): everything here is inside 1120×480, centred, as on the card. */
+body.github { width: 1280px; height: 640px; }
+.github .frame { padding: 112px 80px 0; gap: 26px; }
+.card .head, .github .head { gap: 24px; }
+.card .tile, .github .tile { width: 104px; height: 104px; border-radius: 22px; }
+.card .tile svg, .github .tile svg { width: 70px; height: 70px; }
+.card .titles, .github .titles { gap: 6px; position: relative; top: -0.5px; }   /* half a pixel up, as on the first card */
+.row { display: flex; align-items: baseline; gap: 18px; }
+.card h1, .github h1 { font-size: 56px; line-height: 71.68px; }
+.card .tagline, .github .tagline { font-size: 34px; line-height: 34px; }
+.card .sub, .github .sub { font-size: 12px; line-height: 15.36px; }
+</style>
+</head>
+<body data-ready="no">
+<div class="frame">
+  <div class="head">
+    <div class="tile"><svg viewBox="0 0 14 14" data-art="icon"></svg></div>
+    <div class="titles">
+      <div class="row">
+        <h1>BLIT</h1>
+        <p class="tagline">Big files, moved fast, proven intact.</p>
+      </div>
+      <p class="sub">SFTP · DRIVES · NAS  —  EVERY FILE SHA-256 VERIFIED AT ITS DESTINATION</p>
+    </div>
+  </div>
+  <div class="hud-box"><div class="hud" id="hud"></div></div>
+</div>
+<script>
+const kind = { "#card": "card", "#github": "github" }[location.hash] || "product";
+document.body.className = kind;
+// The product image stacks the name, the tagline and the subline; the card puts the first two on one line.
+if (kind === "product") {
+  const titles = document.querySelector(".titles"), row = document.querySelector(".row");
+  titles.insertBefore(row.querySelector("h1"), row);
+  titles.insertBefore(row.querySelector(".tagline"), row);
+  row.remove();
+}
+
+// ---------- pixel art: the 1-bit grids the app uses ----------
+function rects(rows, colors = {}, dy = 0) {
+  let out = "";
+  rows.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch !== ".") out += `<rect x="${x}" y="${y + dy}" width="1" height="1" fill="${colors[ch] || "currentColor"}"/>`;
+  }));
+  return out;
+}
+// The app icon (scripts/make-icon.swift, as site/index.html draws it).
+document.querySelector('[data-art="icon"]').innerHTML = rects([
+  "......##......", "......##......", "......##......", "......##......",
+  "..##########..", "...########...", "....######....", ".....####.....",
+  "......##......", "..............", "..............", "##.##.##.##.::",
+], { "#": "#f0f0f0", ":": "#4a4a4a" }, 1);
+// PixelGlyphs.swift, 7×7: Silkscreen and VT323 have no ✓ ▼ →, so the HUD draws them.
+const GLYPHS = {
+  "✓": [".......", "......#", ".....#.", "#...#..", ".#.#...", "..#....", "......."],
+  "▼": [".......", ".......", "#######", ".#####.", "..###..", "...#...", "......."],
+  "→": [".......", "....#..", ".....#.", "#######", ".....#.", "....#..", "......."],
+};
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+// Text with ✓ ▼ → drawn as pixel glyphs (hudText in the app).
+const hudText = s => esc(s).replace(/[✓▼→]/g, ch => `<svg class="glyph" viewBox="0 0 7 7" width="7" height="7">${rects(GLYPHS[ch])}</svg>`);
+
+// ---------- the simulated download (made-up names) ----------
+const job = {
+  transferred: 40.9, total: 61.2,   // GB
+  rate: 74.2, peak: 81.3,           // MB/s
+  history: Array.from({ length: 60 }, (_, i) => 62 + 12 * Math.sin(i / 5) + i % 7),
+  connections: [25.1, 23.8, 25.3],
+  hashing: { name: "A001_C017.MOV", fraction: 2.6 / 4.1 },
+};
+const progress = job.transferred / job.total;
+const etaSeconds = Math.floor((job.total - job.transferred) * 1e3 / job.rate);
+const eta = `${String(Math.floor(etaSeconds / 60)).padStart(2, "0")}:${String(etaSeconds % 60).padStart(2, "0")}`;
+const fastest = Math.max(...job.connections);
+// A PixelCells row: lit cells for `fraction`, as many as fit (count) or a fixed number.
+const cells = (fraction, min, count = 0) => `<span class="cells" data-fraction="${fraction}" data-min="${min}" data-count="${count}"></span>`;
+const kv = (k, v) => `<div class="kv"><span>${hudText(k)}</span><span>${hudText(v)}</span></div>`;
+const full = kind === "product";
+
+const LOG = [
+  "CONNECT · 3 CONNECTIONS · 255K×32 · EN7",
+  "RESUME A001_C015.MOV · 1.4 GB ON DISK",
+  "✓ SHA256 9F3A1C… VERIFIED · A001_C015.MOV",
+  "DOWNLOADED A001_C016.MOV · VERIFYING",
+  "✓ SHA256 2B77E0… VERIFIED · A001_C016.MOV · SERVER CACHE",
+  "GET A001_C018.MOV → INCOMING",
+];
+const pct = f => `${Math.round(f * 100)}%`;
+const detail = full
+  ? `<div class="line"><span class="lbl">CONNECTIONS</span></div>` +
+    job.connections.map((r, i) => `<div class="line"><span class="key">C${i + 1}</span>${cells(r / fastest, 8)}<span class="val">${r.toFixed(1)}</span></div>`).join("") +
+    `<div class="line"><span class="lbl">SERVER SHA256</span></div>` +
+    `<div class="line"><span class="name">${job.hashing.name}</span>${cells(job.hashing.fraction, 8)}<span class="val">${pct(job.hashing.fraction)}</span></div>`
+  : `<div class="line conn"><span class="lbl">CONN</span>` +
+    job.connections.map(r => `<span class="meter">${cells(r / fastest, 8, 8)}<span class="dim">${r.toFixed(1)}</span></span>`).join("") + `</div>` +
+    // The name truncated in the middle, as SwiftUI does where the line runs out of room.
+    `<div class="line hash"><span class="lbl">SERVER SHA…1_C017.MOV</span>${cells(job.hashing.fraction, 8)}<span class="val">${pct(job.hashing.fraction)}</span></div>`;
+const linkRows = full
+  ? [["CONN", "3"], ["LINK", "3× · 255K×32 · EN7"], ["RTT", "148 MS"], ["WINDOW", "16 MB · RCVBUF 7 MB"], ["HASH CACHE", "5/17"],
+     ["VERIFY", "SERVER SHA256"], ["EXISTS", "SKIP SAME SIZE"], ["RESUMED", "—"], ["PRESENT", "0"], ["ELAPSED", "—"]]
+  : [["CONN", "3"], ["LINK", "3× · 255K×32 · EN7"], ["RTT", "148 MS"], ["VERIFY", "SERVER SHA256"], ["HASH CACHE", "5/17"], ["ELAPSED", "9:11"]];
+const logLines = full ? LOG.map(l => `14:28:34 ${l}`) : LOG.slice(-2).map(l => `07:44:56 ${l}`);
+const log = logLines.map(l => `<div>${hudText(l)}</div>`).join("");
+
+const hud = document.getElementById("hud");
+hud.classList.add(full ? "full" : "tight");
+hud.innerHTML = `
+  <div class="hud-head"><span>${hudText("▼ TRANSFER ·  → INCOMING")}</span><span class="dim">BLIT://HUD</span></div>
+  <div class="panels">
+    <section class="panel item">
+      <h3>Item</h3>
+      <div class="title">SHOOT_2026-09</div>
+      <div class="source">${hudText(" → INCOMING")}</div>
+      <div class="progress">${cells(progress, 16)}</div>
+      ${kv(`${job.transferred} GB / ${job.total} GB`, pct(progress))}
+      ${kv("FILES 17/26", "VERIFIED 17")}
+      <div class="detail">${detail}</div>
+    </section>
+    <section class="panel thr">
+      <h3>Throughput · 60 s</h3>
+      <div class="rate"><span class="big">${job.rate.toFixed(1)}</span><span class="unit">MB/S</span></div>
+      <svg class="hist"></svg>
+      ${kv(`PEAK ${job.peak.toFixed(1)}`, `ETA ${eta}`)}
+    </section>
+    <section class="panel link">
+      <h3>Link data</h3>
+      ${linkRows.map(([k, v]) => kv(k, v)).join("")}
+    </section>
+  </div>
+  ${full ? `<section class="panel log"><h3>Log</h3>${log}</section>` : `<div class="log">${log}</div>`}`;
+
+// Laid out, with the fonts in (a label's width decides how many cells follow it): fill the cell
+// rows (as many 4-point cells as fit at a 6-point pitch, as the app's GeometryReader does) and
+// draw the histogram (PixelHistogram: 60 columns, the newest bright).
+document.fonts.ready.then(() => {
+  const scale = full ? 1.25 : 1;
+  // SwiftUI gives a text a whole number of points: so the cells after a label start on a pixel.
+  for (const el of document.querySelectorAll(".line .lbl")) el.style.width = `${Math.ceil(el.getBoundingClientRect().width / scale)}px`;
+  for (const el of document.querySelectorAll(".cells")) {
+    const count = +el.dataset.count || Math.max(+el.dataset.min, Math.floor(el.getBoundingClientRect().width / scale / 6));
+    const on = Math.floor(Math.min(1, +el.dataset.fraction) * count);
+    el.innerHTML = Array.from({ length: count }, (_, i) => `<i${i < on ? ' class="on"' : ""}></i>`).join("");
+  }
+  const hist = document.querySelector(".hist");
+  const w = hist.getBoundingClientRect().width / scale, h = full ? 64 : 44, col = w / 60;
+  hist.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  hist.innerHTML = job.history.map((v, i) => {
+    const bh = Math.max(1, Math.round(v / job.peak * h));
+    return `<rect x="${i * col}" y="${h - bh}" width="${Math.max(1, col - 0.6)}" height="${bh}" fill="${i === 59 ? "#f0f0f0" : "#999"}"/>`;
+  }).join("");
+  document.body.dataset.ready = "yes";
+});
+</script>
+</body>
+</html>
