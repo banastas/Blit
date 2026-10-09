@@ -625,6 +625,7 @@ struct ContentView: View {
         UITestHarness.runNativeCellsTestIfRequested(transfers: transfers)
         UITestHarness.runNativeKeysTestIfRequested()
         UITestHarness.runNativeDropTestIfRequested(transfers: transfers)
+        UITestHarness.runNestedMoveTestIfRequested(transfers: transfers)
         UITestHarness.runNativeHardeningTestIfRequested(transfers: transfers)
         UITestHarness.runRenameScrollTestIfRequested()
         UITestHarness.runNewSinceTestIfRequested()

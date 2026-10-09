@@ -2392,6 +2392,113 @@ enum UITestHarness {
     /// folder, never a folder being dragged; the list otherwise), a folder
     /// selected in the receiving pane taking a drag from the other, and where
     /// the dropped files land.
+    /// `-BlitNestedMoveTest <log>`: a file dragged out of an expanded folder
+    /// onto a folder beside it, on one volume, is moved (a rename), not copied.
+    /// `-BlitNestedMoveTestDest <folder>` makes the files there (another volume).
+    static func runNestedMoveTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitNestedMoveTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let base = UserDefaults.standard.string(forKey: "BlitNestedMoveTestDest").map { URL(fileURLWithPath: $0) } ?? fm.temporaryDirectory
+            let root = base.appendingPathComponent("blit-nested-move")
+            try? fm.removeItem(at: root)
+            let folder = root.appendingPathComponent("Clip.24.10.30.Sample.1080p.MP4-GRP[TAG]")
+            let target = root.appendingPathComponent("_untitled folder")
+            let clip = "Clip.24.10.30.Sample.1080p.mp4"
+            try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? fm.createDirectory(at: target, withIntermediateDirectories: true)
+            fm.createFile(atPath: folder.appendingPathComponent(clip).path, contents: Data(count: 4_000_000))
+            fm.createFile(atPath: folder.appendingPathComponent("info .nfo").path, contents: Data("x".utf8))
+            defer { try? fm.removeItem(at: root) }
+            func inode(_ url: URL) -> String {
+                ((try? fm.attributesOfItem(atPath: url.path))?[.systemFileNumber] as? Int).map(String.init) ?? "none"
+            }
+            let before = inode(folder.appendingPathComponent(clip))
+            guard let first = PaneTabs.shared.current?.first, let window = BrowserModel.activeWindow else { return lines.append("no window") }
+            first.open(.local(root))
+            first.sort(by: .name)
+            for _ in 0..<30 where first.rows.count < 2 { try? await Task.sleep(for: .milliseconds(200)) }
+            if let row = first.rows.first(where: { $0.name == folder.lastPathComponent }) { first.setExpanded(row.location, true) }
+            for _ in 0..<30 where first.rows.count < 4 { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .milliseconds(600))
+            guard let list = FileListRegistry.coordinator(for: first) else { return lines.append("no list") }
+            lines.append("rows \(first.rows.map { String(repeating: "  ", count: $0.depth) + $0.name })")
+            guard let index = first.rows.firstIndex(where: { $0.name == clip }),
+                  let over = first.rows.firstIndex(where: { $0.name == target.lastPathComponent }) else { return lines.append("rows missing") }
+            let moved = target.appendingPathComponent(clip)
+            func contents(_ url: URL) -> [String] { ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).sorted() }
+            @MainActor func jobs() -> [String] {
+                transfers.jobs.map { job in
+                    let kind = switch job.kind {
+                    case .download: "download"
+                    case .copy: "copy"
+                    case .operation(let verb, _): verb
+                    }
+                    return "\(kind) deleteSources \(job.deleteSources) outcomes \(job.outcomes.values.sorted())"
+                }
+            }
+            // By hand: the person drags the clip onto _untitled folder themselves.
+            if UserDefaults.standard.bool(forKey: "BlitNestedMoveByHand") {
+                NSApp.activate()
+                window.makeKeyAndOrderFront(nil)
+                lines.append("ready: drag \(clip) onto _untitled folder, with no keys held")
+                for _ in 0..<3000 where !fm.fileExists(atPath: moved.path) { try? await Task.sleep(for: .milliseconds(200)) }
+                try? await Task.sleep(for: .seconds(2))
+                lines += dropLog
+                lines.append("on disk: folder \(contents(folder)) · _untitled folder \(contents(target))")
+                lines.append("same file: \(before == inode(moved)) (inode \(before) → \(inode(moved)))")
+                lines.append("jobs: \(jobs())")
+                lines.append("done")
+                return
+            }
+            first.selection = [first.rows[index].id]
+            list.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            let board = NSPasteboard(name: NSPasteboard.Name("blit-nested-move"))
+            board.clearContents()
+            if let writer = list.tableView(list.table, pasteboardWriterForRow: index) { board.writeObjects([writer]) }
+            let drag = StandInDrag(pasteboard: board, sequence: 3000, window: window)
+            list.dragEntered(drag)
+            let rect = list.table.rect(ofRow: over)
+            drag.location = list.table.convert(NSPoint(x: rect.minX + 60, y: rect.midY), to: nil)
+            let operation = list.tableView(list.table, validateDrop: drag, proposedRow: -1, proposedDropOperation: .on)
+            lines.append("over _untitled folder: operation \(operation == .move ? "move" : operation == .copy ? "copy" : "\(operation.rawValue)") · ⌥ \(NSEvent.modifierFlags.contains(.option))")
+            let accepted = list.tableView(list.table, acceptDrop: drag, row: -1, dropOperation: .on)
+            for _ in 0..<40 where !fm.fileExists(atPath: moved.path) { try? await Task.sleep(for: .milliseconds(150)) }
+            try? await Task.sleep(for: .seconds(1))
+            lines.append("dropped: accepted \(accepted) · \(lastDrop)")
+            lines += dropLog
+            lines.append("on disk: folder \(contents(folder)) · _untitled folder \(contents(target))")
+            lines.append("same file: \(before == inode(moved)) (inode \(before) → \(inode(moved)))")
+            lines.append("jobs: \(jobs())")
+            // Move To another volume (`-BlitNestedMoveOther <folder>`): a verified
+            // copy there, and the original removed.
+            if let otherPath = UserDefaults.standard.string(forKey: "BlitNestedMoveOther") {
+                let other = URL(fileURLWithPath: otherPath).appendingPathComponent("blit-nested-move-other")
+                try? fm.removeItem(at: other)
+                try? fm.createDirectory(at: other, withIntermediateDirectories: true)
+                defer { try? fm.removeItem(at: other) }
+                fm.createFile(atPath: folder.appendingPathComponent("second.mp4").path, contents: Data(count: 2_000_000))
+                first.reload()
+                for _ in 0..<30 where !first.rows.contains(where: { $0.name == "second.mp4" }) { try? await Task.sleep(for: .milliseconds(200)) }
+                guard let second = first.rows.first(where: { $0.name == "second.mp4" }) else { return lines.append("second.mp4 missing") }
+                dropLog = []
+                first.send([second], to: .local(other), name: other.lastPathComponent, move: true)
+                let arrived = other.appendingPathComponent("second.mp4")
+                for _ in 0..<100 where !fm.fileExists(atPath: arrived.path) || fm.fileExists(atPath: folder.appendingPathComponent("second.mp4").path) {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                lines += dropLog
+                lines.append("Move To another volume: there \(contents(other)) · left behind \(contents(folder))")
+                lines.append("jobs: \(jobs())")
+            }
+            lines.append("done")
+        }
+    }
+
     static func runNativeDropTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitNativeDropTest") else { return }
         var lines: [String] = [] {
@@ -5570,6 +5677,8 @@ enum UITestHarness {
     /// The last drop a file list handled (for the drop test).
     static var lastDrop = ""
     static var dropTrail: [String] = []
+    /// What DropLog wrote (the nested move test).
+    static var dropLog: [String] = []
     /// How each rename ended (the menu rename test). With `-BlitRenameByHand`
     /// each entry also goes to its log as it happens, timed.
     static var renameTrail: [String] = [] {

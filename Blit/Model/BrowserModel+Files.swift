@@ -116,10 +116,12 @@ extension BrowserModel {
     /// sidebar's favorites (NAS folders first).
     @MainActor static var destinations: () -> [(name: String, detail: String?, location: BrowseLocation)] = { [] }
 
-    /// Verified copy (or move: each source removed once its copy is verified)
-    /// into `folder`, as a drop there would.
+    /// Copy To / Move To and F5 / F6: into `folder`; a move on one volume is a
+    /// rename, and across volumes each source is removed once its copy is verified.
     func send(_ items: [FileItem], to folder: BrowseLocation, name: String, move: Bool) {
-        drop(items.map(\.location), into: folder, name: name, copy: !move)
+        // A move, across volumes too: not a drop's rule, which copies there.
+        if current.map({ FileOperations.same($0, folder) }) == true { items.forEach { noteOwn($0.name) } }
+        run(sources: items.map(\.location), into: folder, name: name, mode: move ? .move : .copy)
     }
 
     /// Where the selection might go, from where items like it went (PRD R2.23).
@@ -266,6 +268,7 @@ extension BrowserModel {
         // What's dropped here isn't news to whoever dropped it.
         if current.map({ FileOperations.same($0, folder) }) == true { sources.forEach { noteOwn($0.lastComponent) } }
         let mode: FileOperations.Mode = (copy ?? NSEvent.modifierFlags.contains(.option)) ? .copy : .automatic
+        DropLog.note("drop: ⌥ \(copy.map { "\($0) (read at the drop)" } ?? "\(NSEvent.modifierFlags.contains(.option)) (read now)") → \(mode)")
         run(sources: sources, into: folder, name: name, mode: mode)
     }
 

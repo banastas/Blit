@@ -170,6 +170,10 @@ extension FileListCoordinator {
         UITestHarness.dropTrail.append("perform \(items)")
         #endif
         let sources = DropReader.locations(on: info.draggingPasteboard)
+        let local = sources.filter { $0.localURL != nil }.count
+        DropLog.note("list drop: keys \(DropLog.keys(NSEvent.modifierFlags)) · the event's \(DropLog.keys(NSApp.currentEvent?.modifierFlags ?? [])) · "
+                     + "allowed \(DropLog.operations(info.draggingSourceOperationMask)) · onto \(target == .list ? "the list" : "a folder row") · "
+                     + "\(sources.count) items (\(local) local)")
         let accepted = drop(sources, onto: target, copy: copy, in: model)
         #if DEBUG
         let onto = if case .folder(let folder) = target { folder.lastComponent } else { "the list" }

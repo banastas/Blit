@@ -207,10 +207,9 @@ final class FileOperations {
         var keepingBoth = Set<String>()
         let conflicts = await ConflictPrompt.conflicts(local.map { .local($0) } + remote, in: folder)
         if !conflicts.isEmpty {
-            let volume = Self.volumeID(folder)
+            let device = Self.device(folder)
             let moves = mode == .move || (mode == .automatic && remote.isEmpty && local.allSatisfy { url in
-                guard let volume, let other = Self.volumeID(url) else { return false }
-                return other.isEqual(volume)
+                device != nil && Self.device(url, ownLink: true) == device
             })
             switch await ConflictPrompt.ask(conflicts, folderName: destinationName, move: moves) {
             case .stop:
@@ -230,15 +229,26 @@ final class FileOperations {
         }
 
         // Moves within one volume are renames.
+        var placed = "place: \(mode) · \(local.count) local, \(remote.count) on a server, \(inPlace.count) in their own folder"
         if mode != .copy {
-            let volume = Self.volumeID(folder)
+            // By device number, as the copy engine decides to clone: a move it
+            // would make a clone of is a rename.
+            let device = Self.device(folder)
+            var why: [String: Int] = [:]
             let sameVolume = local.filter { url in
-                guard let volume, let other = Self.volumeID(url) else { return false }
+                let other = Self.device(url, ownLink: true)
+                guard let device, let other else {
+                    why[device == nil ? "the folder unreadable" : "unreadable", default: 0] += 1
+                    return false
+                }
                 // A file only in the cloud (iCloud Drive, Proton Drive…) goes as a
                 // verified copy: renaming its placeholder out of the provider's
                 // folder can fail, and reading it downloads it.
-                return other.isEqual(volume) && !CloudFolders.isDataless(url.path)
+                guard other == device else { why["on another volume", default: 0] += 1; return false }
+                guard !CloudFolders.isDataless(url.path) else { why["only in the cloud", default: 0] += 1; return false }
+                return true
             }
+            placed += " · \(sameVolume.count) renamed" + why.sorted { $0.key < $1.key }.map { " · \($0.value) \($0.key)" }.joined()
             local.removeAll { url in sameVolume.contains(url) }
             if !sameVolume.isEmpty {
                 var moved: [(from: URL, to: URL)] = []
@@ -281,6 +291,7 @@ final class FileOperations {
         // Everything else crosses devices: a verified transfer. For a Cut, the
         // sources are removed only once their copies are verified.
         let crossing = local.map { BrowseLocation.local($0) } + remote
+        DropLog.note(placed + " · \(crossing.count) transferred" + (crossing.isEmpty ? "" : mode == .move ? " (a move)" : " (a copy)"))
         if !crossing.isEmpty {
             // A drag between devices copies (Finder's rule); a server's items only move within it.
             if let message = transfers.enqueue(crossing, to: here, destinationName: destinationName,
@@ -726,8 +737,11 @@ final class FileOperations {
         return "\(error)"
     }
 
-    nonisolated private static func volumeID(_ url: URL) -> NSObject? {
-        (try? url.resourceValues(forKeys: [.volumeIdentifierKey]))?.volumeIdentifier as? NSObject
+    /// The device a local item is on (`ownLink`: a symlink's own, which is
+    /// what a rename moves), or nil if it can't be read.
+    nonisolated private static func device(_ url: URL, ownLink: Bool = false) -> dev_t? {
+        var info = stat()
+        return (ownLink ? lstat(url.path, &info) : stat(url.path, &info)) == 0 ? info.st_dev : nil
     }
 
     nonisolated private static func moveLocal(_ url: URL, into folder: URL) throws {
