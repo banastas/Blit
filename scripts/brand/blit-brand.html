@@ -4,7 +4,8 @@
      (site/index.html), at a fixed size, for scripts/make-brand.sh to render with WebKit:
      #product, 1600×1200, Lemon Squeezy's product image (checkout, the receipt email, sharing);
      #card, 1200×630, the site's link preview (og:image); #github, 1280×640, the repository's
-     social preview, everything inside GitHub's 80-pixel border. Icon, name, tagline, the
+     social preview, everything inside GitHub's 80-pixel border; #ph, 1270×760, the first image of
+     the Product Hunt gallery (launch/product-hunt.md), laid out as Rune's. Icon, name, tagline, the
      subline, then the expanded HUD with a simulated download: the product image has the tall
      HUD (the six-line log in a panel), the card and the GitHub preview the compact one. Made-up
      job and file names only. Lengths in the HUD are the app's points; the product image draws
@@ -115,6 +116,16 @@ body.github { width: 1280px; height: 640px; }
 .card h1, .github h1 { font-size: 56px; line-height: 71.68px; }
 .card .tagline, .github .tagline { font-size: 34px; line-height: 34px; }
 .card .sub, .github .sub { font-size: 12px; line-height: 15.36px; }
+/* 1270×760: Product Hunt's gallery, first image (as Rune's: the name over the tagline, centred). */
+body.ph { width: 1270px; height: 760px; }
+.ph .frame { height: 760px; justify-content: center; padding: 0 80px; gap: 30px; }
+.ph .head { gap: 26px; }
+.ph .tile { width: 104px; height: 104px; border-radius: 24px; }
+.ph .tile svg { width: 70px; height: 70px; }
+.ph .titles { gap: 10px; }
+.ph h1 { font-size: 64px; line-height: 64px; }
+.ph .tagline { font-size: 38px; line-height: 38px; }
+.ph .sub { font-size: 13px; line-height: 16.64px; }
 </style>
 </head>
 <body data-ready="no">
@@ -132,10 +143,10 @@ body.github { width: 1280px; height: 640px; }
   <div class="hud-box"><div class="hud" id="hud"></div></div>
 </div>
 <script>
-const kind = { "#card": "card", "#github": "github" }[location.hash] || "product";
+const kind = { "#card": "card", "#github": "github", "#ph": "ph" }[location.hash] || "product";
 document.body.className = kind;
 // The product image stacks the name, the tagline and the subline; the card puts the first two on one line.
-if (kind === "product") {
+if (kind === "product" || kind === "ph") {
   const titles = document.querySelector(".titles"), row = document.querySelector(".row");
   titles.insertBefore(row.querySelector("h1"), row);
   titles.insertBefore(row.querySelector(".tagline"), row);

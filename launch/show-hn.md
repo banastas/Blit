@@ -40,7 +40,7 @@ The bracketed numbers are from one run on 2026-09-29. Replace them with the `ROU
 
 ## Before posting
 
-- [ ] Lemon Squeezy live, and 0.3.0 released with licensing on (see the launch checklist in the PRD and the website notes). HN readers will try it right away.
+- [x] Lemon Squeezy live, and 1.0 released with licensing on (2026-10-08). HN readers will try it right away.
 - [ ] Benchmarks rerun with `ROUNDS=3 PORT=… scripts/sftp-compare.sh …` on two different days; update the numbers here, in the X thread, and on the site.
 - [ ] Decide whether to link the benchmark script. It's in the private repo; publishing it (a gist, or the engine going open source) makes the numbers checkable, which HN rewards.
 - [ ] The site loads fast, the download works without the checkout, and the trial starts without an account.

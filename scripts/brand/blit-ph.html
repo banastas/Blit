@@ -1,0 +1,246 @@
+<!doctype html>
+<!-- Blit's Product Hunt images after the first (that one is blit-brand.html#ph), drawn as the site
+     and the app draw Blit (their palette, fonts and pixel glyphs), laid out as Rune's
+     (Rune's scripts/brand/rune-ph.html), rendered by scripts/make-brand.sh: #verified, #speed and
+     #watch at 1270×760 (the gallery), #thumb at 240×240 (the thumbnail). Made-up names, or
+     freely shared downloads (Linux ISOs, Blender's open movies); the speeds are the site's. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+@font-face { font-family: "Silkscreen"; src: url("../../site/fonts/Silkscreen-Regular.ttf") format("truetype"); }
+@font-face { font-family: "VT323"; src: url("../../site/fonts/VT323-Regular.ttf") format("truetype"); }
+:root {
+  --bg: #0a0a0a; --border: #2b2b2b; --line: #3b3b3b; --bright: #f0f0f0; --dim: #7d7d7d; --text: #c4c4c4;
+  --off: #262626; --failure: #b35c5c; --orange: #ff9f0a;
+  --label: "Silkscreen", monospace; --term: "VT323", monospace;
+  --system: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { background: var(--bg); color: var(--bright); overflow: hidden; }
+body { width: 1270px; height: 760px; font-family: var(--term); -webkit-font-smoothing: none; }
+svg.px, .px svg { shape-rendering: crispEdges; }
+.glyph { display: inline-block; fill: currentColor; shape-rendering: crispEdges; vertical-align: -1px; }
+.shot { display: none; width: 1270px; height: 760px; padding: 64px 80px; flex-direction: column; justify-content: center; gap: 30px; }
+.shot.on { display: flex; }
+h2 { font-family: var(--label); font-weight: normal; font-size: 40px; letter-spacing: 0.04em; text-transform: uppercase; }
+.sub { font-size: 30px; color: var(--text); max-width: 1060px; line-height: 1.15; margin-top: 12px; }
+.label { font-family: var(--label); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
+.cap { margin-bottom: 8px; }
+.term { border: 1px solid var(--border); background: #070707; padding: 14px 18px; font-size: 22px; line-height: 1.25; color: var(--text); white-space: pre; }
+.term .ok { color: var(--bright); }
+.term .bad { color: var(--failure); }
+.term .p { color: var(--dim); }
+
+/* verified */
+.pair { display: grid; grid-template-columns: 1.25fr 1fr; gap: 22px; align-items: start; }
+
+/* speed: PixelCells bars, as the HUD draws its connections */
+.bars { display: flex; flex-direction: column; gap: 22px; }
+.bar { display: grid; grid-template-columns: 1fr auto; row-gap: 8px; }
+.bar .name { font-family: var(--label); font-size: 13px; letter-spacing: 0.06em; color: var(--dim); text-transform: uppercase; }
+.bar .v { grid-row: 1 / span 2; grid-column: 2; align-self: end; font-size: 44px; line-height: 0.9; padding-left: 22px; min-width: 190px; text-align: right; }
+.bar .v small { font-size: 22px; color: var(--dim); }
+.cells { display: flex; gap: 3px; }
+.cells i { flex: none; width: 7px; height: 22px; background: var(--off); }
+.cells i.on { background: var(--bright); }
+.bar.us .name { color: var(--bright); }
+.note { font-size: 22px; color: var(--dim); }
+
+/* new downloads: a server folder in the list, and a notification */
+.watchgrid { display: grid; grid-template-columns: 1fr 380px; gap: 22px; align-items: start; }
+.win { border: 1px solid #3a3a3c; border-radius: 12px; overflow: hidden; background: #1e1e20; box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+       font-family: var(--system); -webkit-font-smoothing: antialiased; }
+.pane-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #262628; border-bottom: 1px solid #111; font-size: 14px; color: #e6e6e6; }
+.pane-head .chip { font-family: var(--label); font-size: 9px; letter-spacing: 0.06em; color: #9a9a9a; border: 1px solid #4a4a4d; border-radius: 4px; padding: 2px 5px 1px; -webkit-font-smoothing: none; }
+.cols, .row { display: grid; grid-template-columns: 1fr 112px 76px; gap: 12px; padding: 0 14px; align-items: center; }
+.cols { height: 28px; font-size: 12px; color: #9a9a9a; border-bottom: 1px solid #2c2c2e; }
+.row { height: 34px; font-size: 14px; color: #e6e6e6; }
+.row:nth-child(odd) { background: #232325; }
+.row .name { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; }
+.row .name .t { overflow: hidden; text-overflow: ellipsis; }
+.row .date, .row .size { color: #a8a8a8; font-variant-numeric: tabular-nums; }
+.row .size { text-align: right; }
+.icon { flex: none; width: 16px; height: 16px; border-radius: 3px; background: #6b6b70; }
+.icon.folder { background: #4a8ad4; }
+.status { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #a0a0a0; margin-left: 4px; }
+.status.warn { color: var(--orange); }
+.note-card { border-radius: 16px; background: rgba(58,58,62,0.96); box-shadow: 0 20px 50px rgba(0,0,0,0.6); padding: 14px 16px 12px;
+             font-family: var(--system); -webkit-font-smoothing: antialiased; color: #f2f2f2; }
+.note-top { display: flex; gap: 10px; align-items: flex-start; }
+.note-icon { flex: none; width: 34px; height: 34px; border-radius: 8px; background: #121212; display: grid; place-items: center; }
+.note-icon svg { width: 22px; height: 22px; }
+.note-text { min-width: 0; font-size: 13px; line-height: 1.3; }
+.note-text b { display: block; font-size: 13px; }
+.note-text .s { display: block; color: #d8d8d8; }
+.note-text .d { display: block; color: #bdbdbd; }
+/* A frame of a film, drawn: sky, a low sun, two lines of hills, a field. */
+.note-still { position: relative; overflow: hidden; margin: 10px 0 10px 44px; height: 150px; border-radius: 8px;
+              background: radial-gradient(circle at 72% 58%, #ffe3a3 0 14px, rgba(255,214,140,0.55) 15px, rgba(255,200,120,0) 70px),
+                          linear-gradient(180deg, #5b86b3 0%, #9cc0d8 48%, #f1cf98 70%, #e3a96a 100%); }
+.note-still::before, .note-still::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; }
+.note-still::before { height: 62px; background: #6f7f86; clip-path: polygon(0 55%, 14% 30%, 29% 48%, 45% 18%, 62% 44%, 78% 26%, 100% 50%, 100% 100%, 0 100%); }
+.note-still::after { height: 40px; background: #3e5a3a; clip-path: polygon(0 40%, 22% 20%, 40% 46%, 63% 14%, 84% 38%, 100% 22%, 100% 100%, 0 100%); }
+.note-actions { display: flex; gap: 8px; margin-left: 44px; }
+.note-actions span { font-size: 12px; background: rgba(255,255,255,0.12); border-radius: 6px; padding: 4px 10px; }
+
+/* the thumbnail */
+body.thumb { width: 240px; height: 240px; }
+.thumbshot { display: none; width: 240px; height: 240px; place-items: center; background: var(--bg); }
+.thumbshot.on { display: grid; }
+.tile { display: grid; place-items: center; background: #121212; box-shadow: inset 0 0 0 1px var(--border); }
+.thumbshot .tile { width: 200px; height: 200px; border-radius: 46px; }
+.thumbshot .tile svg { width: 66%; height: 66%; }
+</style>
+</head>
+<body data-ready="no">
+
+<section class="shot" id="verified">
+  <div>
+    <h2>Verified, not assumed</h2>
+    <p class="sub">Each file's SHA-256 is computed on the server and by Blit as the bytes arrive. They have to match before the file gets its real name.</p>
+  </div>
+  <div class="pair">
+    <div>
+      <p class="label cap">Downloading · SHA-256 on the server</p>
+      <div class="term" data-lines="download"></div>
+    </div>
+    <div>
+      <p class="label cap">Copying to the NAS · sha256sum on the NAS</p>
+      <div class="term" data-lines="nas"></div>
+    </div>
+  </div>
+</section>
+
+<section class="shot" id="speed">
+  <div>
+    <h2>Fast across an ocean</h2>
+    <p class="sub">One big file from a server 148 ms away: parallel connections, pipelined reads, and a larger receive buffer than macOS gives by default.</p>
+  </div>
+  <div class="bars" data-bars></div>
+  <p class="note">Same server, same network, every method measured from the Mac. SSD to NAS: 106.3 MB/s on 1 GbE, every file verified on the NAS.</p>
+</section>
+
+<section class="shot" id="watch">
+  <div>
+    <h2>New downloads, fetched automatically</h2>
+    <p class="sub">Blit watches a folder on your server and copies each download once it's finished. Beside each item is qBittorrent's status: how much is downloaded, or how long it has been seeding.</p>
+  </div>
+  <div class="watchgrid">
+    <div class="win">
+      <div class="pane-head"><span>downloads</span><span class="chip">SERVER</span></div>
+      <div class="cols"><span>Name</span><span>Modified</span><span style="text-align:right">Size</span></div>
+      <div data-rows></div>
+    </div>
+    <div class="note-card">
+      <div class="note-top">
+        <div class="note-icon"><svg class="px" viewBox="0 0 14 14" data-art="icon"></svg></div>
+        <div class="note-text">
+          <b>Downloaded to Incoming</b>
+          <span class="s">Sprite.Fright.2021.2160p.mkv</span>
+          <span class="d">7.9 GB · SHA-256 verified · 2 min at 68 MB/s</span>
+        </div>
+      </div>
+      <div class="note-still"></div>
+      <div class="note-actions"><span>Quick Look</span><span>Rename</span><span>Show in Finder</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="thumbshot" id="thumb">
+  <div class="tile"><svg class="px" viewBox="0 0 14 14" data-art="icon"></svg></div>
+</section>
+
+<script>
+const which = (location.hash || "#verified").slice(1);
+document.getElementById(which).classList.add("on");
+if (which === "thumb") document.body.className = "thumb";
+
+function rects(rows, colors = {}, dy = 0) {
+  let out = "";
+  rows.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch !== ".") out += `<rect x="${x}" y="${y + dy}" width="1" height="1" fill="${colors[ch] || "currentColor"}"/>`;
+  }));
+  return out;
+}
+// The app icon (as site/index.html and blit-brand.html draw it).
+const ICON = ["......##......", "......##......", "......##......", "......##......",
+              "..##########..", "...########...", "....######....", ".....####.....",
+              "......##......", "..............", "..............", "##.##.##.##.::"];
+for (const svg of document.querySelectorAll('[data-art="icon"]')) svg.innerHTML = rects(ICON, { "#": "#f0f0f0", ":": "#4a4a4a" }, 1);
+// PixelGlyphs.swift, 7×7.
+const GLYPHS = {
+  "✓": [".......", "......#", ".....#.", "#...#..", ".#.#...", "..#....", "......."],
+  "✕": ["#.....#", ".#...#.", "..#.#..", "...#...", "..#.#..", ".#...#.", "#.....#"],
+  "▼": [".......", ".......", "#######", ".#####.", "..###..", "...#...", "......."],
+  "▲": [".......", "...#...", "..###..", ".#####.", "#######", ".......", "......."],
+  "→": [".......", "....#..", ".....#.", "#######", ".....#.", "....#..", "......."],
+  "‖": [".......", ".##.##.", ".##.##.", ".##.##.", ".##.##.", ".##.##.", "......."],
+};
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+const glyphs = (s, size) => esc(s).replace(/[✓✕▼▲→‖]/g, ch =>
+  `<svg class="glyph" viewBox="0 0 7 7" width="${size}" height="${size}">${rects(GLYPHS[ch])}</svg>`);
+
+// Verified: the log lines, as the HUD writes them.
+const LOGS = {
+  download: [
+    ["p", "$ blit get me@server downloads/SHOOT_2026-09 /Volumes/SSD/Incoming"],
+    ["ok", "✓ SHA256 9F3A1C… VERIFIED · A001_C015.MOV"],
+    ["ok", "✓ SHA256 2B77E0… VERIFIED · A001_C016.MOV"],
+    ["bad", "✕ A001_C017.MOV: SHA-256 MISMATCH"],
+    ["bad", "   KEPT .BLITPART · RETRY QUEUED"],
+    ["ok", "✓ SHA256 4C0D91… VERIFIED · A001_C017.MOV"],
+    ["ok", "✓ 26/26 VERIFIED · 61.2 GB · 54.4 MB/S"],
+  ],
+  nas: [
+    ["p", "→ SHOOT_2026-09 → ARCHIVE (NAS)"],
+    ["ok", "✓ VERIFIED ON NAS · A001_C001.MOV"],
+    ["ok", "✓ VERIFIED ON NAS · A001_C002.MOV"],
+    ["", "  …"],
+    ["ok", "✓ 26/26 VERIFIED ON NAS"],
+    ["ok", "  106.3 MB/S"],
+    ["p", "  Moves remove a source only"],
+    ["p", "  after its copy's hash matches."],
+  ],
+};
+for (const el of document.querySelectorAll("[data-lines]")) {
+  el.innerHTML = LOGS[el.dataset.lines].map(([cls, text]) => `<div class="${cls}">${glyphs(text, 14)}</div>`).join("");
+}
+
+// Speed: the site's measurements (site/index.html, section 02).
+const BARS = [
+  ["Blit · 3 connections", 93.0, true],
+  ["The fastest single-connection Mac client we measured", 24.6, false],
+  ["Stock sftp (OpenSSH)", 10.7, false],
+];
+const barsEl = document.querySelector("[data-bars]");
+if (barsEl) barsEl.innerHTML = BARS.map(([name, v, us]) =>
+  `<div class="bar${us ? " us" : ""}"><span class="name">${esc(name)}</span><span class="v">${v.toFixed(1)}<small> MB/S</small></span>` +
+  `<span class="cells" data-fraction="${v / 93.0}"></span></div>`).join("");
+
+// New downloads: a server folder with qBittorrent's status beside each item (R2.25).
+const ROWS = [
+  ["ubuntu-26.04-desktop-amd64.iso", "today, 10:41", "6.2 GB", "▼ 43% · 12 min", ""],
+  ["Sprite.Fright.2021.2160p.mkv", "today, 08:12", "7.9 GB", "▲ seeding 6 h · 0.4×", ""],
+  ["Caminandes.Llamigos.2016.1080p.mkv", "Oct 2", "1.1 GB", "▲ seeding 6 d · 1.4×", ""],
+  ["debian-13.1.0-amd64-DVD-1.iso", "Sep 21", "3.9 GB", "stalled · 3 d", "warn"],
+  ["Big.Buck.Bunny.2008.1080p.mkv", "Sep 14", "885 MB", "‖ stopped · 60%", ""],
+  ["Agent.327.2017.1080p.mkv", "Sep 3", "742 MB", "▲ seeding 35 d · 2.1×", ""],
+];
+const rowsEl = document.querySelector("[data-rows]");
+if (rowsEl) rowsEl.innerHTML = ROWS.map(([name, date, size, status, tone]) =>
+  `<div class="row"><span class="name"><span class="icon"></span><span class="t">${esc(name)}</span>` +
+  `<span class="status ${tone}">${glyphs(status, 9)}</span></span><span class="date">${date}</span><span class="size">${size}</span></div>`).join("");
+
+document.fonts.ready.then(() => {
+  // As many 7-pixel cells as fit at a 10-pixel pitch, lit for the fraction.
+  for (const el of document.querySelectorAll(".cells")) {
+    const count = Math.floor((el.getBoundingClientRect().width + 3) / 10);
+    const on = Math.max(1, Math.round(+el.dataset.fraction * count));
+    el.innerHTML = Array.from({ length: count }, (_, i) => `<i${i < on ? ' class="on"' : ""}></i>`).join("");
+  }
+  document.body.dataset.ready = "yes";
+});
+</script>
+</body>
+</html>
