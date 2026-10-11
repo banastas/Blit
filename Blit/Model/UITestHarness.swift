@@ -3975,6 +3975,27 @@ enum UITestHarness {
             try? await Task.sleep(for: .seconds(0.5))
             if let saved { SettingsView.tabStore.set(saved, forKey: SettingsView.tabKey) } else { SettingsView.tabStore.removeObject(forKey: SettingsView.tabKey) }
             lines.append("the installed Blit's tab untouched: \(UserDefaults.standard.string(forKey: SettingsView.tabKey) ?? "none set")")
+            // Once licensed, License… in place of Buy Blit… and Enter License…; back again without a key.
+            // Only in an isolated copy, whose license is in memory, never the Keychain's.
+            if TransferManager.isIsolated {
+                @MainActor func appMenu() -> [String] {
+                    guard let menu = NSApp.mainMenu?.items.first?.submenu else { return [] }
+                    menu.delegate?.menuNeedsUpdate?(menu)   // SwiftUI brings a menu up to date as it opens
+                    menu.update()
+                    return menu.items.map(\.title).filter { $0.contains("Buy") || $0.contains("License") }
+                }
+                let license = LicenseManager.shared
+                let saved = license.storage.read("license")
+                let fake = StoredLicense(key: "TEST-0000", instanceID: "i", email: "buyer@example.com", name: nil, lastValidated: Date())
+                license.storage.write(try? JSONEncoder().encode(fake), "license")
+                license.refresh()
+                try? await Task.sleep(for: .seconds(0.5))
+                lines.append("licensed: Blit menu has \(appMenu())")
+                license.storage.write(saved, "license")
+                license.refresh()
+                try? await Task.sleep(for: .seconds(0.5))
+                lines.append("without a key again: Blit menu has \(appMenu())")
+            }
             lines.append("done")
         }
     }

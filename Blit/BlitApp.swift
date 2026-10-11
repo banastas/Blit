@@ -480,14 +480,32 @@ struct AboutCommands: Commands {
                 .disabled(!Updates.shared.isAvailable)
             if LicenseManager.shared.isEnforced {
                 Divider()
-                Button("Buy Blit…") { LicenseManager.shared.openBuyPage() }
-                // Straight to the key field (the receipt and the checkout say so).
-                Button("Enter License…") {
-                    SettingsView.tabStore.set("license", forKey: SettingsView.tabKey)
-                    openSettings()
-                }
+                LicenseMenuItems()
             }
         }
+    }
+}
+
+/// Blit › Buy Blit… and Enter License…, or License… once a key is in (nothing to buy or enter
+/// then; Settings › License shows whose it is and Deactivate This Mac). A view of its own: SwiftUI
+/// follows what a view's body reads, and in the commands' body a change of license left the menu
+/// as it was (as Rune found, 2026-10-11).
+struct LicenseMenuItems: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        if LicenseManager.shared.isLicensed {
+            Button("License…") { openLicense() }
+        } else {
+            Button("Buy Blit…") { LicenseManager.shared.openBuyPage() }
+            // Straight to the key field (the receipt and the checkout say so).
+            Button("Enter License…") { openLicense() }
+        }
+    }
+
+    private func openLicense() {
+        SettingsView.tabStore.set("license", forKey: SettingsView.tabKey)
+        openSettings()
     }
 }
 

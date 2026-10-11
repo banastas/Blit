@@ -115,6 +115,11 @@ final class LicenseManager {
     /// license test still runs).
     var isEnforced: Bool { LicenseConfig.enforced || TransferManager.isIsolated }
 
+    /// A key is in and valid: the app menu offers License… in place of Buy and Enter License.
+    var isLicensed: Bool {
+        if case .licensed = state { true } else { false }
+    }
+
     var canStartTransfers: Bool {
         guard isEnforced else { return true }
         switch state {
