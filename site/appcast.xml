@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.1</title>
-      <pubDate>Fri, 09 Oct 2026 21:32:36 +0000</pubDate>
-      <sparkle:version>53</sparkle:version>
-      <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+      <title>Blit 1.0.2</title>
+      <pubDate>Thu, 15 Oct 2026 08:01:44 +0000</pubDate>
+      <sparkle:version>54</sparkle:version>
+      <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit 1.0.1. Move To, Move to the other pane, Move to Suggested and F6 now move files to another drive: each file is removed from its old place once its copy is verified. Before, they copied the files there and left the originals. A move within one drive renames the files instead of copying them.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.1.zip" type="application/octet-stream" sparkle:edSignature="rQrWLer6vN07WWVAbtYnkSd2QMpzjdoebv9ZeB2wfF89fU6pvz4+P+fypdaldb22+hl9ntjFyuLGmHP/2hqWDQ==" length="6375192" />
+      <description><![CDATA[<p>Blit 1.0.2. Clear Queue… removes every transfer from the queue at once (in the queue panel, the strip's right-click menu and View › Clear Queue…): running transfers stop, queued and paused ones are cancelled, and finished ones are cleared. Files already transferred stay, and a download's part files stay so it can be resumed. Once a license is entered, the Blit menu shows License… in place of Buy Blit… and Enter License….</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.2.zip" type="application/octet-stream" sparkle:edSignature="koRcbyo3YG3E+/b3frY+e3uoqZ9LyKkUTqICUOKw2Pl6Yra6zki462t9UYs53MYEIOgpTrAqbZF0Fukj1EPJBw==" length="6381381" />
     </item>
   </channel>
 </rss>
