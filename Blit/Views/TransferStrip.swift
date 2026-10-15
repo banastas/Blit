@@ -198,6 +198,7 @@ struct TransferStrip: View {
             } else {
                 Button("Pause All") { transfers.pauseAll() }
             }
+            Button("Clear Queue…") { ClearQueue.confirm(transfers) }
             Button("Show Queue") { transfers.isExpanded = true }
         }
     }

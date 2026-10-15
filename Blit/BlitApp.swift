@@ -348,6 +348,7 @@ struct BrowserCommands: Commands {
             }
             .keyboardShortcut("t", modifiers: [.command, .shift])   // ⌥⌘T is Show/Hide Toolbar
             .disabled(details?.available != true)
+            ClearQueueMenuItem(transfers: transfers)
         }
     }
 }

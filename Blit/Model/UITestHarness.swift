@@ -131,6 +131,65 @@ enum UITestHarness {
     /// `-BlitQueueTest <log> -BlitQueueTestDest <folder on another volume>`:
     /// exercises pause / resume / pause all / cancel / retry on real copies and
     /// renders the HUD's queue panel next to the log.
+    /// `-BlitClearQueueTest <log> -BlitClearQueueTestDest <folder on another volume>`
+    /// (with `-BlitDebugCopyMBps 20`): Clear Queue removes every transfer. The
+    /// running one stops and goes, queued and paused ones are cancelled, a
+    /// finished one is cleared; a held queue is let go.
+    static func runClearQueueTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitClearQueueTest"),
+              let destPath = UserDefaults.standard.string(forKey: "BlitClearQueueTestDest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let fm = FileManager.default
+            let src = fm.temporaryDirectory.appendingPathComponent("blit-clear-queue-src")
+            let dest = URL(fileURLWithPath: destPath)
+            for folder in [src, dest] {
+                try? fm.removeItem(at: folder)
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            }
+            defer { try? fm.removeItem(at: src); try? fm.removeItem(at: dest) }
+            for (name, megabytes) in [("done.bin", 1), ("run.bin", 200), ("queued.bin", 1), ("paused.bin", 1), ("later.bin", 1)] {
+                fm.createFile(atPath: src.appendingPathComponent(name).path, contents: Data(count: megabytes << 20))
+            }
+            func listing(_ url: URL) -> [String] { ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).sorted() }
+            @MainActor func states() -> String { transfers.transferJobs.map { "\($0.title) \($0.status)" }.joined(separator: ", ") }
+            @MainActor func wait(_ what: String, _ condition: () -> Bool) async {
+                for _ in 0..<400 where !condition() { try? await Task.sleep(for: .milliseconds(50)) }
+                lines.append("\(condition() ? "ok" : "TIMEOUT") \(what) · [\(states())]")
+            }
+            @MainActor func send(_ name: String) -> TransferJob? {
+                _ = transfers.enqueue([.local(src.appendingPathComponent(name))], to: .local(dest), destinationName: "dest")
+                return transfers.transferJobs.last
+            }
+            guard let done = send("done.bin") else { return lines.append("no job") }
+            await wait("done.bin finished") { done.status == .finished }
+            guard let running = send("run.bin") else { return lines.append("no job") }
+            await wait("run.bin running") { running.status == .running && running.transferred > 0 }
+            guard let queued = send("queued.bin"), let paused = send("paused.bin") else { return lines.append("no job") }
+            transfers.pause(paused)
+            await wait("queued and paused behind it") { queued.status == .queued && paused.status == .paused }
+            lines.append("unfinished \(transfers.unfinishedCount) of \(transfers.transferJobs.count)")
+            transfers.clearQueue()
+            lines.append("just after Clear Queue: [\(states())] · queued \(queued.status) · paused \(paused.status)")
+            await wait("all gone once run.bin stopped") { transfers.transferJobs.isEmpty }
+            lines.append("run.bin ended \(running.status) · HUD expanded \(transfers.isExpanded)")
+            lines.append("destination \(listing(dest)) · sources \(listing(src).count) files")
+            // A held queue: Clear Queue lets it go, so the next transfer starts.
+            guard let held = send("queued.bin") else { return lines.append("no job") }
+            transfers.pauseAll()
+            await wait("held") { transfers.queuePaused && (held.status == .paused || held.status == .queued) }
+            transfers.clearQueue()
+            lines.append("after Clear Queue: held \(transfers.queuePaused) · [\(states())]")
+            guard let later = send("later.bin") else { return lines.append("no job") }
+            await wait("a new transfer runs to the end") { later.status == .finished }
+            lines.append("destination \(listing(dest))")
+            lines.append("done")
+        }
+    }
+
     static func runQueueTestIfRequested(transfers: TransferManager) {
         guard let logPath = UserDefaults.standard.string(forKey: "BlitQueueTest"),
               let destPath = UserDefaults.standard.string(forKey: "BlitQueueTestDest") else { return }

@@ -310,6 +310,8 @@ final class TransferJob: Identifiable {
     }
     /// Connections this job holds while running (closed on pause, cancel or quit).
     @ObservationIgnored var liveConnections: [SSHConnection] = []
+    /// Cleared from the queue while running: it leaves the list once it has stopped.
+    @ObservationIgnored var clearWhenStopped = false
 
     /// Set when the user pauses or cancels this job while it runs.
     var stopRequest: StopRequest? {
@@ -639,8 +641,10 @@ final class TransferManager {
     // MARK: Queue control (PRD R5.2)
 
     /// The whole queue is held: nothing new starts, and the running job pauses.
-    private(set) var queuePaused = UserDefaults.standard.bool(forKey: "queuePaused") {
-        didSet { UserDefaults.standard.set(queuePaused, forKey: "queuePaused") }
+    /// An isolated test copy starts unheld and keeps its own: the flag is the
+    /// user's, and a copy that let it go would start their queue at next launch.
+    private(set) var queuePaused = TransferManager.isIsolated ? false : UserDefaults.standard.bool(forKey: "queuePaused") {
+        didSet { if !Self.isIsolated { UserDefaults.standard.set(queuePaused, forKey: "queuePaused") } }
     }
 
     private func isRunning(_ job: TransferJob) -> Bool { runningJobs[job.lane] === job }
@@ -721,6 +725,32 @@ final class TransferManager {
     func pauseAll() {
         queuePaused = true
         for job in runningJobs.values { stop(job, .pause) }
+    }
+
+    /// Transfers in the queue that haven't ended: running, waiting, queued or paused.
+    var unfinishedCount: Int { transferJobs.filter { $0.isActive || $0.status == .queued || $0.status == .paused }.count }
+
+    /// Clear Queue: every transfer leaves the queue. Running ones stop (and go
+    /// once they have), queued and paused ones are cancelled, ended ones are
+    /// cleared, and a held queue is let go, so the next transfer starts as
+    /// usual. Files already transferred stay, and so do a download's part
+    /// files: it can still be resumed from the file list.
+    func clearQueue() {
+        let running = runningJobs.values.filter { !$0.isOperation }
+        for job in transferJobs where !running.contains(where: { $0 === job }) && (job.status == .queued || job.status == .paused) {
+            job.status = .cancelled
+        }
+        // File operations under way (a move, a delete) finish; ended ones are cleared too.
+        jobs.removeAll { job in job.isOperation ? !job.isActive : !running.contains { $0 === job } }
+        for job in running {
+            job.clearWhenStopped = true
+            stop(job, .cancel)
+        }
+        queuePaused = false
+        if let pinnedJobID, !jobs.contains(where: { $0.id == pinnedJobID }) { self.pinnedJobID = nil }
+        clearMenuBarDone()
+        saveQueue()
+        if jobs.isEmpty { isExpanded = false }
     }
 
     func resumeAll() {
@@ -1114,6 +1144,15 @@ final class TransferManager {
             await run(job)
             runningJobs[lane] = nil
             runTasks[lane] = nil
+            if job.clearWhenStopped {
+                // Clear Queue: gone once stopped, however it ended.
+                jobs.removeAll { $0 === job }
+                if let pinnedJobID, pinnedJobID == job.id { self.pinnedJobID = nil }
+                if jobs.isEmpty { isExpanded = false }
+                saveQueue()
+                runNext()
+                return
+            }
             saveQueue()
             if job.isPausedOrCancelled {
                 // Held or stopped by the user: no notification, no batch verdict.

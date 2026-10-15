@@ -511,6 +511,7 @@ struct QueuePanel: View {
             HStack {
                 Text("QUEUE · \(transfers.transferJobs.count)").font(HUDFont.label()).foregroundStyle(HUDColor.dim)
                 Spacer()
+                HUDButton("✕ CLEAR QUEUE", help: "Remove every transfer from the queue (asks first)") { ClearQueue.confirm(transfers) }
                 if transfers.queuePaused {
                     HUDButton("▶ RESUME ALL") { transfers.resumeAll() }
                 } else {

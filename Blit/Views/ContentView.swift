@@ -607,6 +607,7 @@ struct ContentView: View {
         #if DEBUG
         transfers.startFakeTransferIfRequested()
         UITestHarness.runQueueTestIfRequested(transfers: transfers)
+        UITestHarness.runClearQueueTestIfRequested(transfers: transfers)
         UITestHarness.renderStripIfRequested(transfers: transfers)
         UITestHarness.runHUDKeysTestIfRequested(transfers: transfers)
         UITestHarness.runNoticeTestIfRequested(transfers: transfers)
