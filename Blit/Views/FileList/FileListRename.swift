@@ -16,6 +16,15 @@ struct ListPress {
 }
 
 extension FileListCoordinator: NSTextFieldDelegate {
+    /// The name field being edited in any list (one at a time: it has the keyboard).
+    static weak var editingField: NSTextField?
+
+    /// Whether `delegate` (a field editor's) is a list's name field being edited.
+    static func isRenameField(_ delegate: (any NSTextDelegate)?) -> Bool {
+        guard let field = editingField, let delegate else { return false }
+        return delegate === field
+    }
+
     /// Follows the model's `renaming`: starts editing that row once it's in
     /// the list (a new folder's row comes a moment after), or stops.
     func showRenaming(_ location: BrowseLocation?) {
@@ -51,6 +60,7 @@ extension FileListCoordinator: NSTextFieldDelegate {
         field.delegate = self
         cell.beginEditing(with: field)
         renameField = field
+        Self.editingField = field
         renamingItem = item
         renamingModel = model
         renameFinished = false
@@ -105,6 +115,7 @@ extension FileListCoordinator: NSTextFieldDelegate {
         keyboardWatch = nil
         renameFinished = true
         renameField = nil
+        if Self.editingField === field { Self.editingField = nil }
         renamingItem = nil
         field.delegate = nil
         (field.superview as? NameCellView)?.endEditing()

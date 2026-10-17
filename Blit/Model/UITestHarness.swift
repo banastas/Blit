@@ -2451,6 +2451,59 @@ enum UITestHarness {
     /// folder, never a folder being dragged; the list otherwise), a folder
     /// selected in the receiving pane taking a drag from the other, and where
     /// the dropped files land.
+    /// `-BlitRenameStealTest <log>` (two panes): the other pane's list takes the
+    /// keyboard, and in the same turn a rename starts here, as a right-click ›
+    /// Rename can order them. The activation the other list queued when it took
+    /// the keyboard must not take it back from the name field (seen 2026-10-17:
+    /// "list asked for the keyboard while a field has it (another field)").
+    static func runRenameStealTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitRenameStealTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-rename-steal")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            for name in ["a.mp4", "b.mp4", "c.mp4"] { fm.createFile(atPath: root.appendingPathComponent(name).path, contents: Data("x".utf8)) }
+            defer { try? fm.removeItem(at: root) }
+            guard let first = PaneTabs.shared.current?.first, let window = BrowserModel.activeWindow else { return lines.append("no window") }
+            guard let second = BrowserModel.oppositePane?(first) else { return lines.append("no second pane (showSecondPane off?)") }
+            first.open(.local(root))
+            second.open(.local(root))
+            first.sort(by: .name)
+            second.sort(by: .name)
+            for _ in 0..<30 where first.rows.count < 3 || second.rows.count < 3 { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let here = FileListRegistry.coordinator(for: first), let there = FileListRegistry.coordinator(for: second),
+                  let item = first.rows.first(where: { $0.name == "b.mp4" }) else { return lines.append("no lists") }
+            window.makeKeyAndOrderFront(nil)
+            for round in 1...2 {
+                renameTrail = []
+                window.makeFirstResponder(nil)
+                try? await Task.sleep(for: .milliseconds(300))
+                // The other list takes the keyboard (its activation is queued for the next turn)…
+                window.makeFirstResponder(there.table)
+                // …and before that turn, the rename starts here.
+                first.beginRename(item)
+                here.showRenaming(item.location)
+                let editing = (window.firstResponder as? NSText)?.delegate === here.renameField && here.renameField != nil
+                try? await Task.sleep(for: .milliseconds(600))
+                let still = (window.firstResponder as? NSText)?.delegate === here.renameField && here.renameField != nil
+                lines.append("round \(round): editing at once \(editing) · still editing after the other list's turn \(still) · renaming \(first.renaming != nil)")
+                lines += renameTrail.map { "  " + $0.prefix(110) }
+                if let field = here.renameField {
+                    here.control(field, textView: field.currentEditor() as? NSTextView ?? NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+                }
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            lines.append("on disk \(((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).sorted())")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitNestedMoveTest <log>`: a file dragged out of an expanded folder
     /// onto a folder beside it, on one volume, is moved (a rename), not copied.
     /// `-BlitNestedMoveTestDest <folder>` makes the files there (another volume).

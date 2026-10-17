@@ -792,9 +792,21 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
     /// later, outside AppKit's focus change).
     func tableBecameFirstResponder() {
         guard let model else { return }
-        DispatchQueue.main.async { [weak model] in
-            if let model { BrowserModel.onInteraction?(model) }
+        DispatchQueue.main.async { [weak self, weak model] in
+            // Only while the keyboard is still here: run late (a context menu
+            // holds this turn back), after a rename began in the other list,
+            // it took the keyboard from that name field and closed it.
+            guard let self, let model, self.model === model, self.hasKeyboard else { return }
+            BrowserModel.onInteraction?(model)
         }
+    }
+
+    /// The keyboard is in this list, or in its name field.
+    private var hasKeyboard: Bool {
+        guard let responder = table.window?.firstResponder else { return false }
+        if responder === table { return true }
+        guard let field = renameField, let editor = responder as? NSText else { return false }
+        return editor.delegate === field
     }
 
     // MARK: Rows
@@ -869,7 +881,9 @@ extension FileListCoordinator {
 extension FileListCoordinator: ListKeyboardTarget {
     func takeKeyboardFocus() {
         if let editor = table.window?.firstResponder as? NSText, editor.delegate is NSTextField {
-            RenameLog.note("list asked for the keyboard while a field has it (\(editor.delegate === renameField && renameField != nil ? "this list's rename" : "another field"))", callers: true)
+            let whose = editor.delegate === renameField && renameField != nil ? "this list's rename"
+                : Self.isRenameField(editor.delegate) ? "another list's rename" : "another field"
+            RenameLog.note("list asked for the keyboard while a field has it (\(whose))", callers: true)
         }
         guard let window = table.window, !scrollView.isHidden else {
             // Taken once the list can: nothing else keeps it meanwhile.
@@ -878,8 +892,9 @@ extension FileListCoordinator: ListKeyboardTarget {
             return
         }
         guard window.firstResponder !== table else { return }
-        // Not from a name being edited here.
-        if let editor = window.firstResponder as? NSText, editor.delegate === renameField, renameField != nil { return }
+        // Never from a name being edited, here or in another list: a click
+        // elsewhere ends a rename by taking the keyboard itself.
+        if let editor = window.firstResponder as? NSText, Self.isRenameField(editor.delegate) { return }
         keyboardPending = false
         window.makeFirstResponder(table)
     }
