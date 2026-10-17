@@ -123,13 +123,13 @@ remote SFTP server ──(parallel SFTP, verified)──▶ external SSD ──(
 
 ### Visual language
 
-**Native macOS everywhere, with one instrument panel that has its own character.** Following Apple's Human Interface Guidelines matters more than a theme.
+**Native macOS controls, with a custom transfer panel.** Following Apple's Human Interface Guidelines matters more than a theme.
 
 - **Browser, sidebar, sheets and settings are standard macOS:** system controls, SF Pro and SF Symbols, standard row heights and native alternating row colors, as in the original layout.
 - **Follows the system appearance** (light or dark); nothing is forced.
 - **Selection and focus use the system accent color.** For an all-grey look, choose the *Graphite* accent in System Settings → Appearance and Blit follows it.
 - **Numbers use monospaced digits** (SF Pro, like Finder) so sizes and dates line up; SF Mono only for hashes and paths in the log.
-- **The transfer HUD is the one exception** (below): a bounded, always-dark, 1-bit pixel-terminal panel, like an instrument built into the window.
+- **The transfer HUD is the one exception** (below): a bounded, always-dark, 1-bit pixel-terminal panel integrated into the window.
 - **Muted red (#b35c5c) only for failures,** in both the native UI and the HUD. Status is never carried by color alone: every state also has a glyph or word.
   - #b35c5c is the one failure hue, used for fills, tags and glyphs. Text on the red fill is black (4.6:1).
   - Failure *text* on dark backgrounds (the HUD, dark mode) uses its lighter tint #C98080 (6.5:1 on the HUD). #b35c5c itself falls under WCAG AA's 4.5:1 there.
