@@ -180,19 +180,59 @@ struct RenamePreset: Codable, Identifiable, Hashable {
 @MainActor
 enum RenamePresets {
     private static let key = "renamePresets"
+    private static let versionKey = "renamePresetsVersion"
+    /// 2: words separated by spaces, underscores or hyphens too, not only dots.
+    private static let version = 2
+
+    /// The user's defaults; a test copy's own scratch suite, so tests never
+    /// write the user's presets.
+    private static var store: UserDefaults {
+        TransferManager.isIsolated ? UserDefaults(suiteName: "com.banastas.blit.test-presets") ?? .standard : .standard
+    }
 
     static func all() -> [RenamePreset] {
         seedIfNeeded()
-        guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
+        upgradeIfNeeded()
+        guard let data = store.data(forKey: key) else { return [] }
         return (try? JSONDecoder().decode([RenamePreset].self, from: data)) ?? []
     }
 
     /// The user's naming conventions, added once (they can be edited or deleted):
     /// Movies "The.Gentlemen.2019.UHD…mkv" → "The Gentlemen 2019.mkv";
-    /// TV "South.Park.S29E01.1080p…mkv" → "South-Park_S29E01.mkv".
+    /// TV "South.Park.S29E01.1080p…mkv" → "South-Park_S29E01.mkv". Words may be
+    /// separated by dots, spaces, underscores or hyphens ("Some Show S01E02
+    /// Title 1080p…mkv" → "Some-Show_S01E02.mkv"), and the episode is written
+    /// in capitals ("s01e03" → "S01E03").
     static var conventions: [RenamePreset] {
         var movieTitle = RenameRule()
-        movieTitle.find = #"^(.+)\.((?:19|20)\d{2})(?:\..*)?$"#   // the last year in the name
+        movieTitle.find = #"^(.+)[. _-]((?:19|20)\d{2})(?:[. _-].*)?$"#   // the last year in the name
+        movieTitle.replacement = "$1 $2"
+        movieTitle.regularExpression = true
+        var movieSpaces = RenameRule()
+        movieSpaces.find = "[._]+"
+        movieSpaces.replacement = " "
+        movieSpaces.regularExpression = true
+        var episode = RenameRule()
+        episode.find = #"^(.+?)[. _-]+(S\d{2,}E\d{2,}(?:-?E\d{2,})*)(?:[. _-].*)?$"#
+        episode.replacement = "$1_$2"
+        episode.regularExpression = true
+        var showHyphens = RenameRule()
+        showHyphens.find = #"[. _]+(?=.*_S\d{2,}E\d{2,})"#   // in the show's name, not the _ before the episode
+        showHyphens.replacement = "-"
+        showHyphens.regularExpression = true
+        var episodeCapitals = RenameRule()
+        episodeCapitals.find = #"_S(\d{2,})E(\d{2,})"#
+        episodeCapitals.replacement = "_S$1E$2"
+        episodeCapitals.regularExpression = true
+        episodeCapitals.onlyIfPreviousChanged = false   // also for a one-word name (Show_s01e01)
+        return [RenamePreset(name: "Movies (Title Year)", steps: [movieTitle, movieSpaces]),
+                RenamePreset(name: "TV Shows (Show-Name_S01E01)", steps: [episode, showHyphens, episodeCapitals])]
+    }
+
+    /// The conventions as shipped until 1.0.4: dots between words only.
+    static var conventionsV1: [RenamePreset] {
+        var movieTitle = RenameRule()
+        movieTitle.find = #"^(.+)\.((?:19|20)\d{2})(?:\..*)?$"#
         movieTitle.replacement = "$1 $2"
         movieTitle.regularExpression = true
         var movieSpaces = RenameRule()
@@ -210,18 +250,46 @@ enum RenamePresets {
     }
 
     private static func seedIfNeeded() {
-        guard !UserDefaults.standard.bool(forKey: "renamePresetsSeeded") else { return }
-        UserDefaults.standard.set(true, forKey: "renamePresetsSeeded")
+        let store = store
+        guard !store.bool(forKey: "renamePresetsSeeded") else { return }
+        store.set(true, forKey: "renamePresetsSeeded")
+        store.set(version, forKey: versionKey)
         var existing: [RenamePreset] = []
-        if let data = UserDefaults.standard.data(forKey: key) {
+        if let data = store.data(forKey: key) {
             existing = (try? JSONDecoder().decode([RenamePreset].self, from: data)) ?? []
         }
         save(existing + conventions.filter { preset in !existing.contains { $0.name == preset.name } })
     }
 
-    static func save(_ presets: [RenamePreset]) {
-        if let data = try? JSONEncoder().encode(presets) { UserDefaults.standard.set(data, forKey: key) }
+    /// A saved preset still exactly as an earlier Blit shipped it takes the
+    /// current steps, once; one the user changed is left as it is.
+    private static func upgradeIfNeeded() {
+        let store = store
+        guard store.integer(forKey: versionKey) < version else { return }
+        store.set(version, forKey: versionKey)
+        guard let data = store.data(forKey: key),
+              var saved = try? JSONDecoder().decode([RenamePreset].self, from: data) else { return }
+        var changed = false
+        for i in saved.indices {
+            guard let shipped = conventionsV1.first(where: { $0.name == saved[i].name }), shipped.steps == saved[i].steps,
+                  let current = conventions.first(where: { $0.name == saved[i].name }) else { continue }
+            saved[i].steps = current.steps
+            changed = true
+        }
+        if changed { save(saved) }
     }
+
+    static func save(_ presets: [RenamePreset]) {
+        if let data = try? JSONEncoder().encode(presets) { store.set(data, forKey: key) }
+    }
+
+    #if DEBUG
+    /// Test copies: forget the scratch suite's presets.
+    static func resetTestStore() {
+        guard TransferManager.isIsolated else { return }
+        store.removePersistentDomain(forName: "com.banastas.blit.test-presets")
+    }
+    #endif
 }
 
 /// One row of the preview: the item, its new name, and what's wrong (if anything).

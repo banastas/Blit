@@ -770,10 +770,37 @@ enum UITestHarness {
                          "President.Curtis.S01E09.1080p.WEB.h264-EDITH.mkv",
                          "South.Park.S29E01.1080p.WEB.h264-GRACE.mkv",
                          "Blade.Runner.2049.2017.1080p.BluRay.mkv", "Movie.2019.mkv", "Show.S01E01E02.720p.mkv",
-                         "Some.Show.S02.COMPLETE.1080p"] {
+                         "Some.Show.S02.COMPLETE.1080p",
+                         // Words apart by spaces, underscores or hyphens; a lower-case episode (version 2).
+                         "some.show.s01e03.1080p.web.h264-grp[TAG].mkv",
+                         "Some Show S01E02 Episode Title 1080p AMZN WEB-DL DD 5 1 H 264-GRP[TAG].mkv",
+                         "Some Show S01E04 1080p AMZN WEB-DL DDP5 1 H 264 DUAL-GRP[TAG].mkv",
+                         "Some_Show_S01E05_720p_WEB.mkv", "Spider-Man S01E01 1080p.mkv", "Show s01e01.mkv",
+                         "The Gentlemen 2019 1080p BluRay x264-GRP.mkv", "The_Gentlemen_2019_1080p.mkv",
+                         // Already in the convention: no change.
+                         "South-Park_S29E01.mkv", "The Gentlemen 2019.mkv"]
+                + (UserDefaults.standard.string(forKey: "BlitPresetNames")?.components(separatedBy: "|") ?? []) {
                 let results = conventions.map { "\($0.name.prefix(6)): \(RenameRule.apply($0.steps, to: name, index: 0, date: date))" }
                 lines.append("\(name)\n    \(results.joined(separator: "\n    "))")
             }
+            // Saved presets from before version 2: the untouched ones take the new steps, an edited one doesn't.
+            RenamePresets.resetTestStore()
+            var edited = RenamePresets.conventionsV1[1]
+            edited.steps[1].replacement = " "
+            edited.name = "TV Shows (spaces)"
+            let older = RenamePresets.conventionsV1 + [edited]
+            if let data = try? JSONEncoder().encode(older) {
+                let suite = UserDefaults(suiteName: "com.banastas.blit.test-presets")
+                suite?.set(data, forKey: "renamePresets")
+                suite?.set(true, forKey: "renamePresetsSeeded")
+            }
+            let upgraded = RenamePresets.all()
+            for preset in upgraded {
+                let now = RenamePresets.conventions.first { $0.name == preset.name }
+                lines.append("upgrade: \(preset.name) · current steps \(now?.steps == preset.steps) · kept as saved \(older.first { $0.name == preset.name }?.steps == preset.steps)")
+            }
+            lines.append("upgrade once: \(RenamePresets.all().map(\.steps) == upgraded.map(\.steps))")
+            RenamePresets.resetTestStore()
             // Previews
             let fm = FileManager.default
             let root = fm.temporaryDirectory.appendingPathComponent("blit-batch-rename-test")
