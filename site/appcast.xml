@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.3</title>
-      <pubDate>Sat, 17 Oct 2026 20:54:08 +0000</pubDate>
-      <sparkle:version>55</sparkle:version>
-      <sparkle:shortVersionString>1.0.3</sparkle:shortVersionString>
+      <title>Blit 1.0.4</title>
+      <pubDate>Sun, 18 Oct 2026 15:52:18 +0000</pubDate>
+      <sparkle:version>56</sparkle:version>
+      <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit 1.0.3. Renaming a file no longer closes the name field on its own before you type. It could happen when a rename started just after the other pane had taken the keyboard.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.3.zip" type="application/octet-stream" sparkle:edSignature="i9yHL207chr6uCbTC6Peph1qlozZrLK0xBx3rn2BUGk/Xo+GCJ74a/qZQ6c75OW2R9QOWkzlBm33mV8mirNUCw==" length="6382486" />
+      <description><![CDATA[<p>Blit 1.0.4. Space opens Quick Look again. It could stop working while File › Quick Look still did; Space now previews the file selected in the list you're typing in.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.4.zip" type="application/octet-stream" sparkle:edSignature="2iy99NlmvU3TmeXnu8lmHU9khUb7CD1KKDCiPr+iZA7XNuvsEOZFC0q32ySMeikd/E3WXF75kcGW2zTmwsq3Cw==" length="6383433" />
     </item>
   </channel>
 </rss>
