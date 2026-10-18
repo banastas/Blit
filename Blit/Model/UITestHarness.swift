@@ -2451,6 +2451,138 @@ enum UITestHarness {
     /// folder, never a folder being dragged; the list otherwise), a folder
     /// selected in the receiving pane taking a drag from the other, and where
     /// the dropped files land.
+    /// `-BlitActivePaneProbe <log>` (with `-BlitTabsStore <suite>` holding a tab
+    /// saved with its second pane active): the pane Space and Return go to
+    /// (BrowserModel.active) against the window's own, after launch.
+    static func runActivePaneProbeIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitActivePaneProbe") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            for seconds in [1, 3] {
+                try? await Task.sleep(for: .seconds(seconds == 1 ? 1 : 2))
+                let tab = PaneTabs.shared.current
+                let active = BrowserModel.active
+                let which = active == nil ? "nil" : active === tab?.first ? "first" : active === tab?.second ? "second" : "another"
+                lines.append("\(seconds) s: Space goes to \(which) · tab's second pane active \(tab?.secondActive ?? false) · second model \(tab?.second != nil)")
+            }
+            lines.append("done")
+        }
+    }
+
+    /// `-BlitSpaceTest <log>` (two panes): Space through the app's own key path
+    /// (NSApp.sendEvent, no real input) opens Quick Look on the selection: at
+    /// first, after a rename saved with Return, after one ended by a click in
+    /// the other list, and after the other list's late activation (1.0.3).
+    static func runSpaceTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitSpaceKeyTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-space-key")
+            try? fm.removeItem(at: root)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            for name in ["a.txt", "b.txt", "c.txt"] { fm.createFile(atPath: root.appendingPathComponent(name).path, contents: Data("hello".utf8)) }
+            defer { try? fm.removeItem(at: root) }
+            guard let first = PaneTabs.shared.current?.first, let window = BrowserModel.activeWindow else { return lines.append("no window") }
+            guard let second = BrowserModel.oppositePane?(first) else { return lines.append("no second pane") }
+            first.open(.local(root))
+            second.open(.local(root))
+            first.sort(by: .name)
+            second.sort(by: .name)
+            for _ in 0..<30 where first.rows.count < 3 || second.rows.count < 3 { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let here = FileListRegistry.coordinator(for: first), let there = FileListRegistry.coordinator(for: second) else {
+                return lines.append("no lists")
+            }
+            NSApp.activate()
+            window.makeKeyAndOrderFront(nil)
+            @MainActor func state() -> String {
+                let responder = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+                let pane = BrowserModel.active === first ? "left" : BrowserModel.active === second ? "right" : "none"
+                return "key \(NSApp.keyWindow === window) · active window \(BrowserModel.activeWindow === window) · active pane \(pane) · "
+                    + "responder \(responder) · renaming \(first.renaming != nil || second.renaming != nil) · sheet \(window.attachedSheet != nil)"
+            }
+            @MainActor func space(_ label: String, in model: BrowserModel) async {
+                model.previewURL = nil
+                try? await Task.sleep(for: .milliseconds(300))
+                let before = state()
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                    windowNumber: window.windowNumber, context: nil, characters: " ",
+                                                    charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49) {
+                        NSApp.sendEvent(event)
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+                lines.append("\(label): preview \(model.previewURL?.lastPathComponent ?? "none") · \(before)")
+                model.previewURL = nil
+                try? await Task.sleep(for: .milliseconds(400))
+            }
+            @MainActor func select(_ name: String, in model: BrowserModel, list: FileListCoordinator) {
+                guard let item = model.rows.first(where: { $0.name == name }) else { return }
+                BrowserModel.onInteraction?(model)
+                model.selection = [item.id]
+                window.makeFirstResponder(list.table)
+            }
+            // 1. At first.
+            select("a.txt", in: first, list: here)
+            await space("at first, left", in: first)
+            select("b.txt", in: second, list: there)
+            await space("at first, right", in: second)
+            // 2. After a rename saved with Return.
+            select("a.txt", in: first, list: here)
+            if let item = first.rows.first(where: { $0.name == "a.txt" }) {
+                first.beginRename(item)
+                for _ in 0..<20 where here.renameField == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                if let field = here.renameField {
+                    field.stringValue = "a2.txt"
+                    _ = here.control(field, textView: field.currentEditor() as? NSTextView ?? NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
+                }
+                for _ in 0..<30 where !first.rows.contains(where: { $0.name == "a2.txt" }) { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+            await space("after a rename saved with Return", in: first)
+            // 3. After a rename ended by a click in the other list.
+            if let item = first.rows.first(where: { $0.name == "a2.txt" }) {
+                first.beginRename(item)
+                for _ in 0..<20 where here.renameField == nil { try? await Task.sleep(for: .milliseconds(50)) }
+                here.renameField?.stringValue = "a3.txt"
+                BrowserModel.onInteraction?(second)
+                window.makeFirstResponder(there.table)
+                for _ in 0..<30 where !first.rows.contains(where: { $0.name == "a3.txt" }) { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+            if let item = second.rows.first(where: { $0.name == "b.txt" }) { second.selection = [item.id] }
+            await space("after a rename ended by a click in the other list (right)", in: second)
+            select("a3.txt", in: first, list: here)
+            await space("then back on the left", in: first)
+            // 4. The other list's late activation (1.0.3's case), then the rename saved.
+            if let item = first.rows.first(where: { $0.name == "a3.txt" }) {
+                window.makeFirstResponder(there.table)
+                first.beginRename(item)
+                here.showRenaming(item.location)
+                try? await Task.sleep(for: .milliseconds(400))
+                if let field = here.renameField {
+                    _ = here.control(field, textView: field.currentEditor() as? NSTextView ?? NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
+                }
+                try? await Task.sleep(for: .milliseconds(400))
+            }
+            await space("after the late-activation rename", in: first)
+            // 5. The remembered pane and window gone stale: the list with the keyboard still decides.
+            select("b.txt", in: first, list: here)
+            let savedActive = BrowserModel.active, savedWindow = BrowserModel.activeWindow
+            BrowserModel.active = second
+            BrowserModel.activeWindow = nil
+            await space("remembered pane and window stale, keyboard on the left list", in: first)
+            BrowserModel.active = savedActive
+            BrowserModel.activeWindow = savedWindow
+            lines.append("done")
+        }
+    }
+
     /// `-BlitRenameStealTest <log>` (two panes): the other pane's list takes the
     /// keyboard, and in the same turn a rename starts here, as a right-click ›
     /// Rename can order them. The activation the other list queued when it took

@@ -53,13 +53,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
                   key != space || !event.isARepeat else { return event }
             let handled = MainActor.assumeIsolated { () -> Bool in
-                guard let window = NSApp.keyWindow, let browser = BrowserModel.active, browser.current != nil else { return false }
+                guard let window = NSApp.keyWindow else { return false }
                 let panelIsKey = window is QLPreviewPanel
-                guard panelIsKey || (window === BrowserModel.activeWindow && window.attachedSheet == nil
-                                     && !(window.firstResponder is NSText)) else { return false }
+                // The pane whose list has the keyboard (that also makes this a
+                // browser window); else the window's active pane. With the panel
+                // key, the pane it previews. Space once went nowhere while the
+                // remembered pane or window had gone stale (2026-10-18).
+                let list = (window.firstResponder as? FileTableView)?.coordinator?.model
+                let target = panelIsKey ? PaneTabs.shared.allBrowsers.first { $0.previewURL != nil } ?? BrowserModel.active
+                    : list ?? BrowserModel.active
+                guard let browser = target else { return KeyLog.ignored(key, "no active pane") }
+                guard browser.current != nil else { return KeyLog.ignored(key, "the pane shows no folder") }
+                if !panelIsKey {
+                    guard list != nil || window === BrowserModel.activeWindow else { return KeyLog.ignored(key, "not a browser window") }
+                    guard window.attachedSheet == nil else { return KeyLog.ignored(key, "a sheet is up") }
+                    guard !(window.firstResponder is NSText) else { return false }   // typing
+                }
                 // Mid-rename (including the moment before the field takes the keyboard),
                 // Space and Return belong to the name being edited.
-                guard browser.renaming == nil else { return false }
+                guard browser.renaming == nil else { return KeyLog.ignored(key, "a rename is in progress") }
                 if key == escape {
                     // Escape closes what's open over the list: Quick Look, then the full HUD.
                     guard !panelIsKey else { return false }   // the panel closes itself

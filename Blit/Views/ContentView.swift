@@ -628,6 +628,8 @@ struct ContentView: View {
         UITestHarness.runNativeDropTestIfRequested(transfers: transfers)
         UITestHarness.runNestedMoveTestIfRequested(transfers: transfers)
         UITestHarness.runRenameStealTestIfRequested()
+        UITestHarness.runSpaceTestIfRequested()
+        UITestHarness.runActivePaneProbeIfRequested()
         UITestHarness.runNativeHardeningTestIfRequested(transfers: transfers)
         UITestHarness.runRenameScrollTestIfRequested()
         UITestHarness.runNewSinceTestIfRequested()
@@ -795,6 +797,8 @@ private struct PaneCoordination: ViewModifier {
             .onChange(of: secondActive) { BrowserModel.active = active }
             .onChange(of: tabID) { BrowserModel.active = active }
             .onChange(of: showSecondPane) { BrowserModel.active = active }
+            // A pane's model can come later (a tab's second pane is made when first shown).
+            .onChange(of: active.map(ObjectIdentifier.init)) { BrowserModel.active = active }
             .onChange(of: undoManager) { _, manager in operations.undoManager = manager }
             .onChange(of: browser?.previewURL) { _, url in if url != nil { secondBrowser?.previewURL = nil } }
             .onChange(of: secondBrowser?.previewURL) { _, url in if url != nil { browser?.previewURL = nil } }
