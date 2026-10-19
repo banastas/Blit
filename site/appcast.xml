@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.4</title>
-      <pubDate>Sun, 18 Oct 2026 15:52:18 +0000</pubDate>
-      <sparkle:version>56</sparkle:version>
-      <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
+      <title>Blit 1.0.5</title>
+      <pubDate>Mon, 19 Oct 2026 01:04:28 +0000</pubDate>
+      <sparkle:version>57</sparkle:version>
+      <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit 1.0.4. Space opens Quick Look again. It could stop working while File › Quick Look still did; Space now previews the file selected in the list you're typing in.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.4.zip" type="application/octet-stream" sparkle:edSignature="2iy99NlmvU3TmeXnu8lmHU9khUb7CD1KKDCiPr+iZA7XNuvsEOZFC0q32ySMeikd/E3WXF75kcGW2zTmwsq3Cw==" length="6383433" />
+      <description><![CDATA[<p>Blit 1.0.5. The rename presets now work on names with spaces, underscores or hyphens between words, not only dots: "Some Show S01E02 Episode Title 1080p….mkv" becomes "Some-Show_S01E02.mkv", and the episode is written in capitals. Presets you haven't edited are updated once; edited ones are left as they are.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.5.zip" type="application/octet-stream" sparkle:edSignature="98aJwpISr2kmFQvMbFw9Z6ap8OyZ6TcjgweMxpIir6Xx8D00wU3+ARlEZtYjd1za1JtmspsWfBc9ILGpWkczAA==" length="6386160" />
     </item>
   </channel>
 </rss>
