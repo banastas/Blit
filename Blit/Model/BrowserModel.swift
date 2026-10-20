@@ -114,6 +114,8 @@ final class BrowserModel {
     var cardImport: URL?
     /// Find in Archive is up (PRD R4.6).
     var findingInArchive = false
+    /// To File is up (PRD R2.27).
+    var showingToFile = false
     /// A server folder to set watch mode up for (PRD R5.10).
     var watchRequest: BrowseLocation?
     /// Go to Folder (⇧⌘G) is asking for a path.

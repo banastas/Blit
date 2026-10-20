@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard browser.current != nil else { return KeyLog.ignored(key, "the pane shows no folder") }
                 if !panelIsKey {
                     guard list != nil || window === BrowserModel.activeWindow else { return KeyLog.ignored(key, "not a browser window") }
-                    guard window.attachedSheet == nil else { return KeyLog.ignored(key, "a sheet is up") }
+                    guard window.attachedSheet == nil else { return false }   // the sheet's (To File previews with Space)
                     guard !(window.firstResponder is NSText) else { return false }   // typing
                 }
                 // Mid-rename (including the moment before the field takes the keyboard),
@@ -563,6 +563,10 @@ struct GoCommands: Commands {
                 .keyboardShortcut("k", modifiers: .command)
             Button("Go to Folder…") { browser?.showGoToFolder = true }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(browser == nil)
+            Divider()
+            // Downloads not filed yet (PRD R2.27).
+            ToFileMenuItem { browser?.showingToFile = true }
                 .disabled(browser == nil)
         }
         CommandGroup(after: .textEditing) {

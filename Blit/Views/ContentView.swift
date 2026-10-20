@@ -365,7 +365,7 @@ struct ContentView: View {
         for case let model? in models {
             if model.renaming != nil || model.showGoToFolder { return true }
             if model.batchRenameItems != nil || model.infoItem != nil || model.editBackupFolders != nil || model.cardImport != nil
-                || model.findingInArchive { return true }
+                || model.findingInArchive || model.showingToFile { return true }
             if model.trustRequest != nil || model.passwordRequest != nil { return true }
         }
         return false
@@ -634,6 +634,7 @@ struct ContentView: View {
         UITestHarness.runEditBackupTestIfRequested(transfers: transfers)
         UITestHarness.runCardImportTestIfRequested(transfers: transfers)
         UITestHarness.runArchiveTestIfRequested()
+        UITestHarness.runToFileTestIfRequested(transfers: transfers)
         UITestHarness.runNativeHardeningTestIfRequested(transfers: transfers)
         UITestHarness.runRenameScrollTestIfRequested()
         UITestHarness.runNewSinceTestIfRequested()

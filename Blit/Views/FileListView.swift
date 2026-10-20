@@ -68,6 +68,7 @@ struct FileListView: View {
             }
             .sheet(isPresented: $browser.showGoToFolder) { GoToFolderView(browser: browser) }
             .sheet(isPresented: $browser.findingInArchive) { ArchiveSearchView(browser: browser) }
+            .sheet(isPresented: $browser.showingToFile) { ToFileView(browser: browser) }
             .sheet(isPresented: cardImportShown) {
                 if let card = browser.cardImport { CardImportView(card: card, browser: browser) }
             }

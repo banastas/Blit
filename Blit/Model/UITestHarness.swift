@@ -2588,6 +2588,85 @@ enum UITestHarness {
         window.orderOut(nil)
     }
 
+    /// `-BlitToFileTest <log> -BlitToFileTestNAS <folder on another volume>` (PRD
+    /// R2.27): arrivals listed until filed; the rename preset and the suggested
+    /// folder each a key away; a rename and a move on this drive followed; a
+    /// verified move off it, or Mark as Filed, takes the item off the list.
+    static func runToFileTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitToFileTest"),
+              let nasPath = UserDefaults.standard.string(forKey: "BlitToFileTestNAS") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let fm = FileManager.default
+            let ssd = fm.temporaryDirectory.appendingPathComponent("blit-tofile")
+            let nas = URL(fileURLWithPath: nasPath).appendingPathComponent("blit-tofile-nas")
+            for root in [ssd, nas] { try? fm.removeItem(at: root); try? fm.createDirectory(at: root, withIntermediateDirectories: true) }
+            defer { for root in [ssd, nas] { try? fm.removeItem(at: root) }; ToFile.shared.resetForTest() }
+            ToFile.shared.resetForTest()
+            guard let browser = PaneTabs.shared.current?.first else { return lines.append("no pane") }
+            let season = nas.appendingPathComponent("TV Shows/Get Jiro/Season 1")
+            try? fm.createDirectory(at: season, withIntermediateDirectories: true)
+            // Where an earlier episode went.
+            DestinationMemory.shared.learn([.local(ssd.appendingPathComponent("Get Jiro S01E01 Pilot 1080p WEB.mkv"))], into: .local(season))
+            let jiro = ssd.appendingPathComponent("Get Jiro S01E02 Meat Is Murder 1080p WEB.mkv")
+            let show = ssd.appendingPathComponent("Other.Show.S01E03.1080p.WEB.mkv")
+            let movie = ssd.appendingPathComponent("Some.Movie.2019.1080p")
+            let nfo = ssd.appendingPathComponent("junk.nfo")
+            for (url, text) in [(jiro, "episode two"), (show, "other show"), (nfo, "nfo")] { fm.createFile(atPath: url.path, contents: Data(text.utf8)) }
+            try? fm.createDirectory(at: movie, withIntermediateDirectories: true)
+            fm.createFile(atPath: movie.appendingPathComponent("movie.mkv").path, contents: Data("movie".utf8))
+            ToFile.shared.arrived([nfo], at: Date().addingTimeInterval(-3_600))
+            ToFile.shared.arrived([movie, show], at: Date().addingTimeInterval(-600))
+            ToFile.shared.arrived([jiro, jiro])   // twice: listed once
+            browser.open(.local(ssd))
+            for _ in 0..<30 where browser.items.count < 4 { try? await Task.sleep(for: .milliseconds(200)) }
+            @MainActor func listing() async -> [ToFile.Row] { await ToFile.shared.rows() }
+            var rows = await listing()
+            lines.append("listed, newest first: \(rows.map(\.item.name))")
+            let siblings: (BrowseLocation) -> [String] = { folder in (try? fm.contentsOfDirectory(atPath: folder.localURL?.path ?? "")) ?? [] }
+            for row in rows {
+                let preset = ToFile.preset(for: row.item, siblings: siblings)
+                let suggestion = DestinationMemory.shared.suggestions(for: [row.item]).first
+                lines.append("  \(row.item.name): R → \(preset?.row.newName ?? "none") (\(preset?.preset.name ?? "")) · M → \(suggestion?.title ?? "none")")
+            }
+            // R: the preset's name; the entry follows.
+            if let row = rows.first(where: { $0.item.name == jiro.lastPathComponent }), let plan = ToFile.preset(for: row.item, siblings: siblings) {
+                browser.commitBatchRename([plan.row])
+                for _ in 0..<30 where fm.fileExists(atPath: jiro.path) { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+            rows = await listing()
+            lines.append("after R: \(rows.map(\.item.name))")
+            // M: a verified move off this drive; it leaves the list once it's there.
+            if let row = rows.first(where: { $0.item.name.hasPrefix("Get-Jiro") }), let suggestion = DestinationMemory.shared.suggestions(for: [row.item]).first {
+                browser.send([row.item], to: suggestion, move: true)
+                for _ in 0..<200 where fm.fileExists(atPath: row.entry.path) || transfers.transferJobs.contains(where: { $0.isActive || $0.status == .queued }) {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                await ToFile.shared.prune()
+            }
+            rows = await listing()
+            lines.append("after M: \(rows.map(\.item.name)) · Season 1 has \(((try? fm.contentsOfDirectory(atPath: season.path)) ?? []).sorted()) · jobs \(transfers.transferJobs.map { "\($0.status) \($0.deleteSources ? "move" : "copy")" })")
+            // A move on this drive: still to file, at its new place.
+            let sub = ssd.appendingPathComponent("Later")
+            try? fm.createDirectory(at: sub, withIntermediateDirectories: true)
+            _ = await browser.operations.place([.local(show)], into: .local(sub), destinationName: "Later", mode: .move)
+            rows = await listing()
+            lines.append("after a move on this drive: \(rows.map { ($0.entry.path as NSString).deletingLastPathComponent.hasSuffix("/Later") ? "Later/" + $0.item.name : $0.item.name })")
+            // F: filed, nothing else happens.
+            if let row = rows.first(where: { $0.item.name == "junk.nfo" }) { ToFile.shared.remove([row.entry.path]) }
+            rows = await listing()
+            lines.append("after F: \(rows.map(\.item.name)) · junk.nfo still on disk \(fm.fileExists(atPath: nfo.path))")
+            let saved = (try? Data(contentsOf: ToFile.url)).flatMap { try? JSONDecoder().decode([ToFile.Entry].self, from: $0) } ?? []
+            lines.append("saved: \(saved.map { ($0.path as NSString).lastPathComponent })")
+            await renderOffscreen(ToFileView(browser: browser).environment(transfers), to: logPath + "-sheet.png")
+            lines.append("sheet drawn")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitArchiveTest <log>` (with `-BlitTransferLogPath <temporary file>`):
     /// Find in Archive (PRD R4.6) follows a file through the log by hash and by
     /// path, and finds it by any name it had. `-BlitArchiveRealLog <path>` also

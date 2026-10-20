@@ -1175,6 +1175,8 @@ final class TransferManager {
             // What arrived: its notification (a still, a missing episode) and
             // the welcome-back ledger, without holding up the lane's next job.
             let complete = job.lane == .download && job.status == .finished && job.failures.isEmpty
+            // To File (PRD R2.27): what landed, until it's filed.
+            if job.lane == .download, job.status == .finished { ToFile.shared.arrived(ArrivalNotifications.landed(job)) }
             Task { [weak self] in
                 guard let self else { return }
                 let gap = complete ? await MissingEpisodes.note(for: job, transfers: self) : nil
