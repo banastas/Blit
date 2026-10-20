@@ -932,7 +932,7 @@ final class TransferManager {
     /// `tab`. Returns a message if it can't be done.
     func enqueue(_ sources: [BrowseLocation], to destination: BrowseLocation, destinationName: String,
                  includeHidden: Bool = false, move: Bool = false, existsRule: ExistsRule? = nil,
-                 tab: UUID? = nil) -> String? {
+                 tab: UUID? = nil, title: String? = nil) -> String? {
         // After the trial (or a revoked key), new transfers don't start; queued
         // and running ones still finish (PRD open question 12).
         let license = LicenseManager.shared
@@ -966,7 +966,7 @@ final class TransferManager {
         }
         if !local.isEmpty {
             let job = TransferJob(kind: .copy, sources: local.map { .local($0) }, destination: folder,
-                                  title: Self.title(local.map(\.lastPathComponent)), destinationName: destinationName)
+                                  title: title ?? Self.title(local.map(\.lastPathComponent)), destinationName: destinationName)
             job.deleteSources = move
             job.originTab = tab
             if let existsRule { job.existsRule = existsRule }   // the answer to Replace / Keep Both

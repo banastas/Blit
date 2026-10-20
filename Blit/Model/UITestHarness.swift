@@ -2478,6 +2478,92 @@ enum UITestHarness {
     /// folder, never a folder being dragged; the list otherwise), a folder
     /// selected in the receiving pane taking a drag from the other, and where
     /// the dropped files land.
+    /// `-BlitEditBackupTest <log> -BlitEditBackupTestNAS <folder on another volume>`
+    /// (PRD R2.26): a shoot's edit files go to the NAS next to their photos,
+    /// only where missing or older there; photos and the rest are left alone.
+    static func runEditBackupTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitEditBackupTest"),
+              let nasPath = UserDefaults.standard.string(forKey: "BlitEditBackupTestNAS") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let fm = FileManager.default
+            let ssd = fm.temporaryDirectory.appendingPathComponent("blit-edit-backup")
+            let nas = URL(fileURLWithPath: nasPath).appendingPathComponent("blit-edit-backup-nas")
+            for root in [ssd, nas] { try? fm.removeItem(at: root); try? fm.createDirectory(at: root, withIntermediateDirectories: true) }
+            defer { try? fm.removeItem(at: ssd); try? fm.removeItem(at: nas); PhotoSettings.resetTestStore() }
+            let earlier = Date().addingTimeInterval(-86_400), same = Date().addingTimeInterval(-3_600)
+            @MainActor func put(_ folder: URL, _ name: String, _ text: String, _ date: Date? = nil) {
+                try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                let url = folder.appendingPathComponent(name)
+                fm.createFile(atPath: url.path, contents: Data(text.utf8))
+                if let date { try? fm.setAttributes([.modificationDate: date], ofItemAtPath: url.path) }
+            }
+            let boston = ssd.appendingPathComponent("2026-10-13_Boston"), later = ssd.appendingPathComponent("2026-10-14")
+            for name in ["a.ARW", "b.ARW", "c.ARW", "d.ARW", "e.ARW"] { put(boston, name, "raw " + name, earlier) }
+            put(boston, "a.ARW.dop", "edited a")
+            put(boston, "b.ARW.dop", "same b", same)
+            put(boston, "c.ARW.dop", "photo not on the NAS")
+            put(boston, "d.ARW.dop", "new d")
+            put(boston, "e.xmp", "edited e")
+            put(later, "x.ARW", "raw x"); put(later, "x.ARW.dop", "x")
+            put(ssd.appendingPathComponent("Misc"), "notes.txt", "not a shoot")
+            let digital = nas.appendingPathComponent("Digital"), there = digital.appendingPathComponent("Sony_a7Riii/2026-10-13_Boston")
+            for name in ["a.ARW", "b.ARW", "d.ARW", "e.ARW"] { put(there, name, "raw " + name, earlier) }
+            put(there, "a.ARW.dop", "first a", earlier)
+            put(there, "b.ARW.dop", "same b", same)
+            put(there, "e.xmp", "first e", earlier)
+            try? fm.createDirectory(at: digital.appendingPathComponent("iPhone_17-Pro"), withIntermediateDirectories: true)
+            PhotoSettings.resetTestStore()
+            PhotoSettings.nasPhotos = digital
+            @MainActor func describe(_ shoots: [EditBackupShoot]) {
+                for shoot in shoots {
+                    let targets = shoot.targets.map { "\($0.camera): \($0.edits.map(\.lastPathComponent).sorted())" }
+                    lines.append("  \(shoot.name): back up \(shoot.toBackUp) \(targets) · up to date \(shoot.upToDate) · without photo \(shoot.withoutPhoto)\(shoot.problem.map { " · " + $0 } ?? "")")
+                }
+            }
+            let folders = [boston, later]
+            let first = await Task.detached { EditBackup.plan(folders, nas: digital) }.value
+            lines.append("first check:")
+            describe(first)
+            lines.append("start: \(EditBackup.start(first, transfers: transfers) ?? "queued") · jobs \(transfers.transferJobs.map(\.title))")
+            for _ in 0..<200 where transfers.transferJobs.contains(where: { $0.isActive || $0.status == .queued }) { try? await Task.sleep(for: .milliseconds(100)) }
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("jobs: \(transfers.transferJobs.map { "\($0.title) \($0.status) · \($0.outcomes.values.sorted())" })")
+            @MainActor func text(_ url: URL) -> String { (try? String(contentsOf: url, encoding: .utf8)) ?? "–" }
+            @MainActor func date(_ url: URL) -> Date? { (try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date }
+            let names = ((try? fm.contentsOfDirectory(atPath: there.path)) ?? []).sorted()
+            lines.append("NAS now: \(names)")
+            for name in ["a.ARW.dop", "b.ARW.dop", "d.ARW.dop", "e.xmp", "a.ARW"] {
+                let here = boston.appendingPathComponent(name), copy = there.appendingPathComponent(name)
+                let sameDate = date(here).flatMap { a in date(copy).map { abs(a.timeIntervalSince($0)) < 2 } } ?? false
+                lines.append("  \(name): “\(text(copy))” · same as here \(text(here) == text(copy)) · same date \(sameDate)")
+            }
+            let second = await Task.detached { EditBackup.plan(folders, nas: digital) }.value
+            lines.append("second check:")
+            describe(second)
+            // Which shoots a request covers, and the menus.
+            guard let browser = PaneTabs.shared.current?.first else { return lines.append("no pane") }
+            browser.open(.local(ssd))
+            for _ in 0..<30 where browser.items.count < 3 { try? await Task.sleep(for: .milliseconds(200)) }
+            lines.append("nothing selected in the shoots' folder: \(EditBackup.folders(selected: [], in: browser).map(\.lastPathComponent))")
+            if let item = browser.items.first(where: { $0.name == "2026-10-13_Boston" }) {
+                lines.append("one shoot selected: \(EditBackup.folders(selected: [item], in: browser).map(\.lastPathComponent))")
+                let titles = FileMenuBuilder.items(for: [item], in: browser).map(\.title).filter { $0.contains("Back Up") }
+                lines.append("its right-click menu: \(titles)")
+            }
+            if let misc = browser.items.first(where: { $0.name == "Misc" }) {
+                lines.append("Misc's right-click menu: \(FileMenuBuilder.items(for: [misc], in: browser).map(\.title).filter { $0.contains("Back Up") })")
+            }
+            browser.open(.local(boston))
+            for _ in 0..<30 where browser.current?.localURL?.lastPathComponent != "2026-10-13_Boston" || browser.items.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+            lines.append("inside the shoot: \(EditBackup.folders(selected: [], in: browser).map(\.lastPathComponent)) · empty-space menu \(FileMenuBuilder.folderItems(in: browser).map(\.title).filter { $0.contains("Back Up") })")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitActivePaneProbe <log>` (with `-BlitTabsStore <suite>` holding a tab
     /// saved with its second pane active): the pane Space and Return go to
     /// (BrowserModel.active) against the window's own, after launch.

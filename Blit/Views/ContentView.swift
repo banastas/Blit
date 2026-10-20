@@ -364,7 +364,7 @@ struct ContentView: View {
         let models: [BrowserModel?] = [browser, secondBrowser]
         for case let model? in models {
             if model.renaming != nil || model.showGoToFolder { return true }
-            if model.batchRenameItems != nil || model.infoItem != nil { return true }
+            if model.batchRenameItems != nil || model.infoItem != nil || model.editBackupFolders != nil { return true }
             if model.trustRequest != nil || model.passwordRequest != nil { return true }
         }
         return false
@@ -630,6 +630,7 @@ struct ContentView: View {
         UITestHarness.runRenameStealTestIfRequested()
         UITestHarness.runSpaceTestIfRequested()
         UITestHarness.runActivePaneProbeIfRequested()
+        UITestHarness.runEditBackupTestIfRequested(transfers: transfers)
         UITestHarness.runNativeHardeningTestIfRequested(transfers: transfers)
         UITestHarness.runRenameScrollTestIfRequested()
         UITestHarness.runNewSinceTestIfRequested()

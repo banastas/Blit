@@ -108,6 +108,8 @@ final class BrowserModel {
     var batchRenameItems: [FileItem]?
     /// The item shown in Get Info (⌘I).
     var infoItem: FileItem?
+    /// Shoot folders in the Back Up Edits sheet (PRD R2.26).
+    var editBackupFolders: [URL]?
     /// A server folder to set watch mode up for (PRD R5.10).
     var watchRequest: BrowseLocation?
     /// Go to Folder (⇧⌘G) is asking for a path.

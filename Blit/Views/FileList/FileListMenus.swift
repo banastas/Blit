@@ -17,6 +17,13 @@ enum FileMenuBuilder {
             menu.append(.separator())
             menu.append(watch)
         }
+        // In a shoot folder ("2026-10-13_Boston"): its edits to the NAS (PRD R2.26).
+        if let here = browser.current?.localURL, EditBackup.isShootName(here.lastPathComponent) {
+            menu.append(.separator())
+            menu.append(action("Back Up Edits to NAS…", help: "Copy this shoot's edit files (.dop, .xmp) to the NAS, next to its photos") {
+                browser.editBackupFolders = [here]
+            })
+        }
         menu.append(.separator())
         menu.append(action("Refresh") { browser.reload() })
         return menu
@@ -88,6 +95,14 @@ enum FileMenuBuilder {
             menu.append(item)
         }
         if urls.count == items.count { menu.append(action("Duplicate") { browser.duplicate(items) }) }
+        // Shoot folders ("2026-10-13_Boston"): their edits to the NAS (PRD R2.26).
+        let shoots = items.filter { $0.isDirectory && EditBackup.isShootName($0.name) }.compactMap(\.location.localURL)
+        if !shoots.isEmpty, urls.count == items.count {
+            menu.append(action(shoots.count == 1 ? "Back Up Edits to NAS…" : "Back Up Edits of \(shoots.count) Shoots to NAS…",
+                               help: "Copy the edit files (.dop, .xmp) to the NAS, next to their photos") {
+                browser.editBackupFolders = shoots
+            })
+        }
         if items.count == 1, items[0].isDirectory, let watch = watchItem(for: items[0].location, in: browser, folderWord: "Folder") {
             menu.append(watch)
         }

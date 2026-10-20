@@ -416,6 +416,20 @@ struct FileCommands: Commands {
             Button(suggestion.map { "Move to “\($0.name)”" } ?? "Move to Suggested Folder") { onFiles { $0.sendToSuggestion(move: true) } }
                 .keyboardShortcut(KeyEquivalent(Character(UnicodeScalar(NSF6FunctionKey)!)), modifiers: [.shift])
                 .disabled(suggestion == nil)
+            // Shoot folders' edit files to the NAS (PRD R2.26): the selected shoots,
+            // this shoot, or every shoot in this folder.
+            Button("Back Up Photo Edits…") {
+                onFiles { browser in
+                    let folders = EditBackup.folders(selected: browser.selectedItems, in: browser)
+                    if folders.isEmpty {
+                        browser.report("No shoot folders here: Back Up Photo Edits works on folders named by date, like 2026-10-13_Boston.",
+                                       action: "BACK UP EDITS")
+                    } else {
+                        browser.editBackupFolders = folders
+                    }
+                }
+            }
+            .disabled(browser?.current?.localURL == nil)
             Button("Open in Other Pane") { onFiles { $0.openSelectionInOtherPane() } }
                 .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
                 .disabled(!(browser.map { $0.selection.count == 1 && $0.selectedItems.first?.isDirectory == true } ?? false)
