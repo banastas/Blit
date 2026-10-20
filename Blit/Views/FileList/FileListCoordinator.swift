@@ -425,6 +425,11 @@ final class FileListCoordinator: NSObject, NSTableViewDataSource, NSTableViewDel
             scroll(to: nil)
         } else if snapshot.rows != rows {
             updateRows(snapshot.rows, sliding: expandedChanged)
+        } else if expandedChanged {
+            // A folder with nothing in it opened or closed: no rows come or go,
+            // but its triangle turns (it stayed down, and the next click opened
+            // the folder again).
+            refillVisibleRows()
         }
         let selectionChanged = IndexSet(snapshot.selection.compactMap { rowIndex[$0] }) != table.selectedRowIndexes
         showSelection(snapshot.selection)

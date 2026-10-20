@@ -635,6 +635,7 @@ struct ContentView: View {
         UITestHarness.runCardImportTestIfRequested(transfers: transfers)
         UITestHarness.runArchiveTestIfRequested()
         UITestHarness.runToFileTestIfRequested(transfers: transfers)
+        UITestHarness.runEmptyFolderTestIfRequested()
         UITestHarness.runNativeHardeningTestIfRequested(transfers: transfers)
         UITestHarness.runRenameScrollTestIfRequested()
         UITestHarness.runNewSinceTestIfRequested()

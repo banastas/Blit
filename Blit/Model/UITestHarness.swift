@@ -2588,6 +2588,48 @@ enum UITestHarness {
         window.orderOut(nil)
     }
 
+    /// `-BlitEmptyFolderTest <log>`: a folder with nothing in it opens and closes
+    /// from its disclosure triangle, and the triangle shows which (no rows come
+    /// or go, so the cell must be redrawn anyway).
+    static func runEmptyFolderTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitEmptyFolderTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("blit-empty-folder")
+            try? fm.removeItem(at: root)
+            for folder in ["Empty", "Full"] { try? fm.createDirectory(at: root.appendingPathComponent(folder), withIntermediateDirectories: true) }
+            fm.createFile(atPath: root.appendingPathComponent("Full/inside.txt").path, contents: Data("x".utf8))
+            defer { try? fm.removeItem(at: root) }
+            guard let model = PaneTabs.shared.current?.first else { return lines.append("no pane") }
+            model.open(.local(root))
+            model.sort(by: .name)
+            for _ in 0..<30 where model.rows.count < 2 { try? await Task.sleep(for: .milliseconds(200)) }
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let list = FileListRegistry.coordinator(for: model) else { return lines.append("no list") }
+            @MainActor func cell(_ name: String) -> String {
+                guard let row = model.rows.firstIndex(where: { $0.name == name }),
+                      let cell = list.table.view(atColumn: 0, row: row, makeIfNecessary: false) as? NameCellView else { return "no cell" }
+                return cell.testSummary
+            }
+            for name in ["Empty", "Full"] {
+                guard let item = model.rows.first(where: { $0.name == name }) else { continue }
+                var steps: [String] = ["before: \(cell(name))"]
+                for click in 1...3 {
+                    model.toggleExpanded(item)   // what a click on the triangle does
+                    for _ in 0..<20 where model.loadingChildren.contains(item.location) { try? await Task.sleep(for: .milliseconds(50)) }
+                    try? await Task.sleep(for: .milliseconds(400))
+                    steps.append("click \(click): model \(model.expanded.contains(item.location) ? "open" : "closed") · cell \(cell(name))")
+                }
+                lines.append("\(name): " + steps.joined(separator: " · "))
+            }
+            lines.append("done")
+        }
+    }
+
     /// `-BlitToFileTest <log> -BlitToFileTestNAS <folder on another volume>` (PRD
     /// R2.27): arrivals listed until filed; the rename preset and the suggested
     /// folder each a key away; a rename and a move on this drive followed; a
