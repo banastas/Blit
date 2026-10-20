@@ -110,6 +110,8 @@ final class BrowserModel {
     var infoItem: FileItem?
     /// Shoot folders in the Back Up Edits sheet (PRD R2.26).
     var editBackupFolders: [URL]?
+    /// A camera card in the import sheet (PRD R5.12).
+    var cardImport: URL?
     /// A server folder to set watch mode up for (PRD R5.10).
     var watchRequest: BrowseLocation?
     /// Go to Folder (⇧⌘G) is asking for a path.

@@ -2560,6 +2560,121 @@ enum UITestHarness {
             browser.open(.local(boston))
             for _ in 0..<30 where browser.current?.localURL?.lastPathComponent != "2026-10-13_Boston" || browser.items.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
             lines.append("inside the shoot: \(EditBackup.folders(selected: [], in: browser).map(\.lastPathComponent)) · empty-space menu \(FileMenuBuilder.folderItems(in: browser).map(\.title).filter { $0.contains("Back Up") })")
+            // The sheet itself, drawn offscreen with this test's shoots only (no window is captured).
+            put(boston, "a.ARW.dop", "edited again")
+            await renderOffscreen(EditBackupView(folders: folders, browser: browser).environment(transfers), to: logPath + "-sheet.png")
+            lines.append("sheet drawn")
+            lines.append("done")
+        }
+    }
+
+    /// Draws `view` in a window that's never on screen, once its work has had
+    /// time to finish, to a PNG (a test's own data only).
+    static func renderOffscreen(_ view: some View, to path: String, wait: Duration = .seconds(3)) async {
+        let host = NSHostingView(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
+        host.appearance = NSAppearance(named: .darkAqua)
+        let window = NSWindow(contentRect: NSRect(x: -10_000, y: -10_000, width: 700, height: 600), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderBack(nil)
+        try? await Task.sleep(for: wait)
+        let size = host.fittingSize
+        window.setContentSize(size)
+        host.layoutSubtreeIfNeeded()
+        if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        }
+        window.orderOut(nil)
+    }
+
+    /// `-BlitCardImportTest <log> -BlitCardImportTestNAS <folder on another volume>`
+    /// (PRD R5.12): a stand-in card's photos by day from their EXIF, a folder per
+    /// day on "this Mac" and its backup in the NAS camera folder, verified;
+    /// photos already there skipped; the card left as it was.
+    static func runCardImportTestIfRequested(transfers: TransferManager) {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitCardImportTest"),
+              let nasPath = UserDefaults.standard.string(forKey: "BlitCardImportTestNAS") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let fm = FileManager.default
+            let card = fm.temporaryDirectory.appendingPathComponent("blit-card"), ssd = fm.temporaryDirectory.appendingPathComponent("blit-card-ssd")
+            let nas = URL(fileURLWithPath: nasPath).appendingPathComponent("blit-card-nas")
+            for root in [card, ssd, nas] { try? fm.removeItem(at: root); try? fm.createDirectory(at: root, withIntermediateDirectories: true) }
+            defer { for root in [card, ssd, nas] { try? fm.removeItem(at: root) }; PhotoSettings.resetTestStore() }
+            let dcim = card.appendingPathComponent("DCIM/100MSDCF")
+            try? fm.createDirectory(at: dcim, withIntermediateDirectories: true)
+            /// A small JPEG with the EXIF a camera writes.
+            @MainActor func photo(_ name: String, taken: String, pixels: Int) {
+                let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+                                        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+                context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: CGFloat(pixels % 7) / 7, alpha: 1))
+                context.fill(CGRect(x: 0, y: 0, width: pixels, height: pixels))
+                let url = dcim.appendingPathComponent(name)
+                guard let image = context.makeImage(),
+                      let out = CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil) else { return }
+                let properties: [CFString: Any] = [
+                    kCGImagePropertyExifDictionary: [kCGImagePropertyExifDateTimeOriginal: taken, kCGImagePropertyExifBodySerialNumber: "4123456"],
+                    kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFMake: "SONY", kCGImagePropertyTIFFModel: "ILCE-7RM3"],
+                ]
+                CGImageDestinationAddImage(out, image, properties as CFDictionary)
+                CGImageDestinationFinalize(out)
+            }
+            photo("_DSC0001.JPG", taken: "2026:10:20 09:15:00", pixels: 40)
+            photo("_DSC0002.JPG", taken: "2026:10:20 17:40:12", pixels: 50)
+            photo("_DSC0003.JPG", taken: "2026:10:21 08:01:30", pixels: 60)
+            fm.createFile(atPath: dcim.appendingPathComponent("C0001.MP4").path, contents: Data("a video".utf8))
+            // Day two is on "this Mac" already, in a folder with a place.
+            let cape = ssd.appendingPathComponent("2026-10-21_Cape")
+            try? fm.createDirectory(at: cape, withIntermediateDirectories: true)
+            try? fm.copyItem(at: dcim.appendingPathComponent("_DSC0003.JPG"), to: cape.appendingPathComponent("_DSC0003.JPG"))
+            let sony = nas.appendingPathComponent("Digital/Sony_a7Riii")
+            try? fm.createDirectory(at: sony, withIntermediateDirectories: true)
+            lines.append("is a card: \(CardImport.isCard(card)) · a folder without DCIM: \(CardImport.isCard(ssd))")
+            let days = await Task.detached { CardImport.scan(card) }.value
+            lines.append("days: \(days.map { "\($0.day): \($0.photos.map(\.name)) · \($0.camera) · key \($0.cameraKey)" })")
+            lines.append("folder names: \(CardImport.folderName(day: "2026-10-20", place: "Boston")) · \(CardImport.folderName(day: "2026-10-20", place: " St Louis ")) · \(CardImport.folderName(day: "2026-10-20", place: ""))")
+            var plans: [CardImport.Plan] = []
+            for day in days {
+                let existing = CardImport.existingFolder(for: day.day, in: ssd)
+                let there = existing.map { CardImport.alreadyImported(day.photos, in: $0.url) } ?? []
+                lines.append("\(day.day): folder here \(existing?.url.lastPathComponent ?? "none") (place “\(existing?.place ?? "")”) · already imported \(there.sorted())")
+                let place = existing?.place ?? (day.day == "2026-10-20" ? "Boston" : "")
+                plans.append(CardImport.Plan(day: day.day, folderName: CardImport.folderName(day: day.day, place: place),
+                                             photos: day.photos.filter { !there.contains($0.name) }, nasCamera: sony))
+            }
+            PhotoSettings.setNASFolder(sony, forCamera: days.first?.cameraKey ?? "")
+            lines.append("remembered: \(PhotoSettings.nasFolder(forCamera: days.first?.cameraKey ?? "")?.lastPathComponent ?? "nothing")")
+            lines.append("start: \(CardImport.start(plans, to: ssd, transfers: transfers) ?? "queued") · jobs \(transfers.transferJobs.map(\.title))")
+            for _ in 0..<300 where transfers.transferJobs.contains(where: { $0.isActive || $0.status == .queued }) { try? await Task.sleep(for: .milliseconds(100)) }
+            try? await Task.sleep(for: .milliseconds(500))
+            lines.append("jobs: \(transfers.transferJobs.map { "\($0.title) \($0.status) · \($0.outcomes.values.sorted())" })")
+            @MainActor func tree(_ root: URL) -> String {
+                ((try? fm.subpathsOfDirectory(atPath: root.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted().joined(separator: ", ")
+            }
+            @MainActor func same(_ a: URL, _ b: URL) -> Bool { fm.contentsEqual(atPath: a.path, andPath: b.path) }
+            lines.append("this Mac: \(tree(ssd))")
+            lines.append("NAS: \(tree(nas))")
+            let boston = ssd.appendingPathComponent("2026-10-20_Boston"), backup = sony.appendingPathComponent("2026-10-20_Boston")
+            lines.append("copies identical: \(["_DSC0001.JPG", "_DSC0002.JPG"].map { same(dcim.appendingPathComponent($0), boston.appendingPathComponent($0)) && same(dcim.appendingPathComponent($0), backup.appendingPathComponent($0)) })")
+            lines.append("card now: \(tree(card))")
+            let again = await Task.detached { CardImport.scan(card) }.value
+            lines.append("again: \(again.map { day in "\(day.day) already imported \(CardImport.existingFolder(for: day.day, in: ssd).map { CardImport.alreadyImported(day.photos, in: $0.url).count } ?? 0) of \(day.photos.count)" })")
+            // Offered in the active pane when a card goes in.
+            CardWatcher.shared.offer(card)
+            lines.append("offered: the active pane's import sheet is for the card \(BrowserModel.active?.cardImport == card)")
+            BrowserModel.active?.cardImport = nil
+            // The sheet itself, drawn offscreen with this test's card only (no window is captured).
+            if let pane = BrowserModel.active {
+                PhotoSettings.importDestination = ssd
+                PhotoSettings.nasPhotos = sony.deletingLastPathComponent()
+                try? fm.removeItem(at: boston)
+                await renderOffscreen(CardImportView(card: card, browser: pane).environment(transfers), to: logPath + "-sheet.png")
+                lines.append("sheet drawn")
+            }
             lines.append("done")
         }
     }

@@ -67,6 +67,9 @@ struct FileListView: View {
                 if let items = browser.batchRenameItems { BatchRenameView(browser: browser, items: items) }
             }
             .sheet(isPresented: $browser.showGoToFolder) { GoToFolderView(browser: browser) }
+            .sheet(isPresented: cardImportShown) {
+                if let card = browser.cardImport { CardImportView(card: card, browser: browser) }
+            }
             .sheet(isPresented: editBackupShown) {
                 if let folders = browser.editBackupFolders { EditBackupView(folders: folders, browser: browser) }
             }
@@ -91,6 +94,10 @@ struct FileListView: View {
 
     private var batchRenameShown: Binding<Bool> {
         Binding(get: { browser.batchRenameItems != nil }, set: { if !$0 { browser.batchRenameItems = nil } })
+    }
+
+    private var cardImportShown: Binding<Bool> {
+        Binding(get: { browser.cardImport != nil }, set: { if !$0 { browser.cardImport = nil } })
     }
 
     private var editBackupShown: Binding<Bool> {

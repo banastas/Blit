@@ -181,6 +181,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
         let preview = info["preview"] as? String
         let gapShows = info["gapShows"] as? [String] ?? []
         let away = info["away"] != nil
+        let card = info["card"] as? String
         await MainActor.run {
             // Missing episodes in these shows aren't mentioned again (Blit stays where it is).
             if action == ArrivalNotifications.ignoreGapsAction {
@@ -196,6 +197,14 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
             NSApp.activate()
             if !NSApp.windows.contains(where: { $0.isVisible && $0.identifier?.rawValue.hasPrefix("main") == true }) {
                 openMainWindow?(id: "main")
+            }
+            // A camera card's import sheet, once a pane is up.
+            if let card {
+                Task { @MainActor in
+                    for _ in 0..<40 where BrowserModel.active == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                    BrowserModel.active?.cardImport = URL(fileURLWithPath: card)
+                }
+                return
             }
             // The welcome-back summary: its sheet.
             if away, WelcomeBack.shared.latest != nil { WelcomeBack.shared.showing = true }

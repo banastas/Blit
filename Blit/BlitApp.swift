@@ -159,6 +159,7 @@ struct BlitApp: App {
         SeedboxWatch.shared = watch
         TorrentLibrary.shared = TorrentLibrary(servers: servers, connections: connections)
         TorrentStatusBoard.shared.start()
+        CardWatcher.shared.start()
         WelcomeBack.shared.transfers = transfers
         WelcomeBack.shared.start()
         _watch = State(initialValue: watch)
@@ -430,6 +431,17 @@ struct FileCommands: Commands {
                 }
             }
             .disabled(browser?.current?.localURL == nil)
+            // A camera card's photos (PRD R5.12): also offered when one goes in.
+            Button("Import Card…") {
+                onFiles { browser in
+                    if let card = CardWatcher.shared.cards.first {
+                        browser.cardImport = card
+                    } else {
+                        browser.report("No camera card is in. Insert one (a card with a DCIM folder) and Blit offers to import it.", action: "IMPORT")
+                    }
+                }
+            }
+            .disabled(browser == nil)
             Button("Open in Other Pane") { onFiles { $0.openSelectionInOtherPane() } }
                 .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
                 .disabled(!(browser.map { $0.selection.count == 1 && $0.selectedItems.first?.isDirectory == true } ?? false)

@@ -67,15 +67,21 @@ struct EditBackupView: View {
         } else if let shoots {
             List(shoots) { shoot in
                 HStack(alignment: .firstTextBaseline) {
-                    Text(shoot.name).lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(shoot.name).lineLimit(1)
+                        Text(detail(shoot))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .help(shoot.problem ?? "")
+                    }
                     Spacer()
-                    Text(detail(shoot))
+                    Text(shoot.toBackUp > 0 ? "\(shoot.toBackUp.formatted()) to back up" : shoot.problem != nil ? "skipped" : "up to date")
                         .foregroundStyle(shoot.toBackUp > 0 ? .primary : .secondary)
-                        .lineLimit(1)
-                        .help(shoot.problem ?? "")
                 }
+                .padding(.vertical, 2)
             }
-            .frame(height: min(CGFloat(max(shoots.count, 1)) * 24 + 12, 300))
+            .frame(height: min(CGFloat(max(shoots.count, 1)) * 42 + 12, 320))
         } else {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
@@ -86,16 +92,15 @@ struct EditBackupView: View {
         }
     }
 
+    /// "→ Sony_a7Riii · 3 up to date · 1 without its photo on the NAS", or why it's skipped.
     private func detail(_ shoot: EditBackupShoot) -> String {
         if let problem = shoot.problem { return problem }
         var parts: [String] = []
-        if shoot.toBackUp > 0 {
-            let cameras = shoot.targets.map(\.camera).joined(separator: ", ")
-            parts.append("\(shoot.toBackUp.formatted()) to back up → \(cameras)")
-        } else {
-            parts.append("up to date")
+        if !shoot.targets.isEmpty { parts.append("→ " + shoot.targets.map(\.camera).joined(separator: ", ")) }
+        if shoot.upToDate > 0 { parts.append("\(shoot.upToDate.formatted()) up to date") }
+        if shoot.withoutPhoto > 0 {
+            parts.append(shoot.withoutPhoto == 1 ? "1 without its photo on the NAS" : "\(shoot.withoutPhoto) without their photos on the NAS")
         }
-        if shoot.withoutPhoto > 0 { parts.append("\(shoot.withoutPhoto) without their photo on the NAS") }
         return parts.joined(separator: " · ")
     }
 
