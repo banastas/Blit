@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.5</title>
-      <pubDate>Mon, 19 Oct 2026 01:04:28 +0000</pubDate>
-      <sparkle:version>57</sparkle:version>
-      <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
+      <title>Blit 1.0.6</title>
+      <pubDate>Tue, 20 Oct 2026 18:10:29 +0000</pubDate>
+      <sparkle:version>58</sparkle:version>
+      <sparkle:shortVersionString>1.0.6</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit 1.0.5. The rename presets now work on names with spaces, underscores or hyphens between words, not only dots: "Some Show S01E02 Episode Title 1080p….mkv" becomes "Some-Show_S01E02.mkv", and the episode is written in capitals. Presets you haven't edited are updated once; edited ones are left as they are.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.5.zip" type="application/octet-stream" sparkle:edSignature="98aJwpISr2kmFQvMbFw9Z6ap8OyZ6TcjgweMxpIir6Xx8D00wU3+ARlEZtYjd1za1JtmspsWfBc9ILGpWkczAA==" length="6386160" />
+      <description><![CDATA[<p>Blit 1.0.6. To File (Go › To File…, ⇧⌘J): every download that hasn't been filed, in one list; Space previews, R renames with your naming preset, M moves to the suggested folder. Find in Archive (File › Find in Archive…, ⇧⌘F): find anything Blit has moved, by any name it had, even while the NAS is asleep. Photos: when a camera card goes in, Blit offers to import it into a folder per day on this Mac and back it up to the NAS; right-click a shoot folder › Back Up Edits to NAS… copies its DxO (.dop) and XMP edits next to the photos there. Also: an empty folder's disclosure triangle turns back when it's closed.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.6.zip" type="application/octet-stream" sparkle:edSignature="X2F9mX5q+di4N1JcWKpLJeYg59tzualE0rGLRuy5AEhUjiN/JiKiFCMXofgxHhG8qa67l+ExeL6HIAXW7kYYCQ==" length="6579743" />
     </item>
   </channel>
 </rss>
