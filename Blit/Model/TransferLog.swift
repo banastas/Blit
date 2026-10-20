@@ -26,6 +26,8 @@ enum TransferLog {
     static var url: URL {
         #if DEBUG
         if let path = UserDefaults.standard.string(forKey: "BlitTransferLogPath") { return URL(fileURLWithPath: path) }
+        // A test copy's transfers are its own, never in the user's log.
+        if TransferManager.isIsolated { return FileManager.default.temporaryDirectory.appendingPathComponent("blit-test-transfers.jsonl") }
         #endif
         return URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Blit/transfers.jsonl")
     }

@@ -431,6 +431,10 @@ struct FileCommands: Commands {
                 }
             }
             .disabled(browser?.current?.localURL == nil)
+            // Everything Blit has moved, by any name it had (PRD R4.6).
+            Button("Find in Archive…") { onFiles { $0.findingInArchive = true } }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(browser == nil)
             // A camera card's photos (PRD R5.12): also offered when one goes in.
             Button("Import Card…") {
                 onFiles { browser in

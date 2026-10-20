@@ -2588,6 +2588,54 @@ enum UITestHarness {
         window.orderOut(nil)
     }
 
+    /// `-BlitArchiveTest <log>` (with `-BlitTransferLogPath <temporary file>`):
+    /// Find in Archive (PRD R4.6) follows a file through the log by hash and by
+    /// path, and finds it by any name it had. `-BlitArchiveRealLog <path>` also
+    /// reads a real log (read-only) and reports counts only.
+    static func runArchiveTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitArchiveTest"),
+              let transfers = UserDefaults.standard.string(forKey: "BlitTransferLogPath"),
+              transfers.hasPrefix(FileManager.default.temporaryDirectory.path) || transfers.hasPrefix("/tmp/") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            let records = [
+                #"{"time":"2026-10-17T10:00:00Z","source":"me@box:files/downloads/Get Jiro S01E02 Meat Is Murder 1080p AMZN WEB-DL.mkv","destination":"/Volumes/SSD/Incoming/Get Jiro S01E02 Meat Is Murder 1080p AMZN WEB-DL.mkv","size":1000,"sha256":"aaa","verification":"server-sha256","result":"ok"}"#,
+                #"{"time":"2026-10-18T10:00:00Z","source":"/Volumes/SSD/Incoming/Get-Jiro_S01E02.mkv","destination":"/Volumes/Files/TV Shows/Get Jiro/Season 1/Get-Jiro_S01E02.mkv","size":1000,"sha256":"aaa","verification":"nas-sha256","result":"ok"}"#,
+                #"{"time":"2026-10-12T09:00:00Z","source":"/Volumes/Card/DCIM/_DSC0001.ARW","destination":"/Volumes/SSD/2026-10-12/_DSC0001.ARW","size":20,"verification":"none","result":"ok"}"#,
+                #"{"time":"2026-10-13T09:00:00Z","source":"/Volumes/SSD/2026-10-12/_DSC0001.ARW","destination":"/Volumes/Files/Photographs/Digital/Sony_a7Riii/2026-10-12/_DSC0001.ARW","size":20,"verification":"none","result":"ok"}"#,
+                #"{"time":"2026-10-14T09:00:00Z","source":"/var/folders/xx/T/blit-test/a.bin","destination":"/var/folders/xx/T/blit-test-dest/a.bin","size":1,"verification":"cloned","result":"ok"}"#,
+                #"{"time":"2026-10-15T09:00:00Z","source":"/Volumes/SSD/broken.mkv","destination":"/Volumes/Files/broken.mkv","size":5,"verification":"none","result":"failed"}"#,
+            ]
+            try? (records.joined(separator: "\n") + "\n").write(toFile: transfers, atomically: true, encoding: .utf8)
+            let items = ArchiveIndex.load(URL(fileURLWithPath: transfers))
+            lines.append("items: \(items.count)")
+            for item in items {
+                lines.append("  \(item.location) · names \(item.names) · earlier \(item.earlier) · \(item.verification) · verified \(item.verified)")
+            }
+            for query in ["get jiro s01e02", "Get-Jiro_S01E02", "meat is murder", "season 1 jiro", "_DSC0001", "sony 2026-10-12", "s01e03", "broken", "a.bin"] {
+                lines.append("“\(query)”: \(ArchiveIndex.search(query, in: items).map(\.name))")
+            }
+            if let real = UserDefaults.standard.string(forKey: "BlitArchiveRealLog") {
+                let started = Date()
+                let all = await Task.detached { ArchiveIndex.load(URL(fileURLWithPath: real)) }.value
+                let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+                let volumes = Dictionary(all.map { (ArchiveIndex.volumeName($0.folder), 1) }, uniquingKeysWith: +).sorted { $0.value > $1.value }
+                let renamed = all.filter { $0.names.count > 1 }.count, moved = all.filter { !$0.earlier.isEmpty }.count
+                let searchStart = Date()
+                let jiro = ArchiveIndex.search("get jiro", in: all)
+                lines.append("real log: \(all.count) files in \(elapsed) ms · by volume \(volumes.prefix(6).map { "\($0.key) \($0.value)" }) · followed through a rename \(renamed) · moved on \(moved) · “get jiro” \(jiro.count) in \(Int(Date().timeIntervalSince(searchStart) * 1000)) ms")
+            }
+            if let pane = BrowserModel.active {
+                await renderOffscreen(ArchiveSearchView(browser: pane, initialQuery: "jiro").frame(width: 660, height: 500), to: logPath + "-sheet.png")
+                lines.append("sheet drawn")
+            }
+            lines.append("done")
+        }
+    }
+
     /// `-BlitCardImportTest <log> -BlitCardImportTestNAS <folder on another volume>`
     /// (PRD R5.12): a stand-in card's photos by day from their EXIF, a folder per
     /// day on "this Mac" and its backup in the NAS camera folder, verified;

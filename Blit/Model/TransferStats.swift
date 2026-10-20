@@ -24,6 +24,7 @@ enum JobLog {
     static var url: URL {
         #if DEBUG
         if let path = UserDefaults.standard.string(forKey: "BlitJobLogPath") { return URL(fileURLWithPath: path) }
+        if TransferManager.isIsolated { return FileManager.default.temporaryDirectory.appendingPathComponent("blit-test-jobs.jsonl") }
         #endif
         return URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/Blit/jobs.jsonl")
     }
