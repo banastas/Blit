@@ -20,28 +20,36 @@ struct InfoView: View {
                 Image(nsImage: icon)
                     .resizable()
                     .frame(width: 48, height: 48)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(item.name).font(.headline).textSelection(.enabled).lineLimit(3)
-                    Text(item.kind).foregroundStyle(.secondary)
+                    Text(item.kind.uppercased()).font(HUDFont.label()).foregroundStyle(.secondary)
                 }
             }
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
-                row("Size", sizeText)
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 8) {
                 GridRow {
-                    Text("Where").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                    key("Size")
+                    if item.isDirectory, folderSize == nil {
+                        HStack(spacing: 8) {
+                            PixelScanner().frame(height: 8)
+                            Text("CALCULATING").font(HUDFont.label()).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(sizeText).textSelection(.enabled)
+                    }
+                }
+                GridRow {
+                    key("Where")
                     HStack(alignment: .firstTextBaseline) {
                         Text(whereText).textSelection(.enabled).lineLimit(3).truncationMode(.middle)
-                        Button("Copy") {
+                        PixelButton("Copy", help: "Copy the path") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(whereText, forType: .string)
                         }
-                        .controlSize(.small)
                     }
                 }
                 row("Modified", item.modified == .distantPast ? "—" : item.modified.formatted(date: .abbreviated, time: .standard))
                 if let created { row("Created", created.formatted(date: .abbreviated, time: .standard)) }
             }
-            Divider()
             verification
             HStack {
                 Spacer()
@@ -53,41 +61,79 @@ struct InfoView: View {
         .task { await load() }
     }
 
+    /// A field name, as the HUD labels its rows: pixel uppercase, dim.
+    private func key(_ label: String) -> some View {
+        Text(label.uppercased())
+            .font(HUDFont.label())
+            .foregroundStyle(.secondary)
+            .gridColumnAlignment(.trailing)
+    }
+
     private func row(_ label: String, _ value: String) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            key(label)
             Text(value).textSelection(.enabled)
         }
     }
 
+    /// How Blit verified the file, in a boxed panel like the transfer HUD's:
+    /// always dark, pixel label, terminal text.
     @ViewBuilder private var verification: some View {
         if !item.isDirectory, let url = item.location.localURL,
            let entry = VerifiedIndex.shared.entry(for: url, size: item.size) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label {
-                    Text("Verified by Blit").fontWeight(.semibold)
-                } icon: {
-                    Image(nsImage: PixelGlyph.check.image(size: 11))
-                }
-                Text(entry.howAndWhen).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            readout("✓ Verified by Blit", bright: true) {
+                Text(entry.howAndWhen.uppercased())
+                    .foregroundStyle(HUDColor.dim)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let sha = entry.sha256 {
-                    Text("SHA-256 \(sha)")
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
+                    readoutRow("SHA256", sha)
                 }
                 if let source = entry.source {
-                    Text("From \(source)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    readoutRow("From", source)
                 }
             }
         } else if !item.isDirectory, item.location.localURL != nil {
-            Text("Not verified by Blit. Files show a ✓ once Blit has copied them and their SHA-256 matched the source.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            readout("· Not verified", bright: false) {
+                Text("Files show a ✓ once Blit has copied them and their SHA-256 matched the source.")
+                    .foregroundStyle(HUDColor.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         } else if item.location.serverID != nil {
-            Text("On a server. Blit verifies files with SHA-256 when it downloads them.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            readout("· On a server", bright: false) {
+                Text("Blit verifies files with SHA-256 when it downloads them.")
+                    .foregroundStyle(HUDColor.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func readout(_ title: String, bright: Bool, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                hudText(title.uppercased(), glyphSize: 9)
+                    .font(HUDFont.label())
+                    .foregroundStyle(bright ? HUDColor.bright : HUDColor.dim)
+                Spacer()
+                Text("BLIT://INFO").font(HUDFont.label()).foregroundStyle(HUDColor.dim)
+            }
+            .padding(.bottom, 2)
+            content()
+        }
+        .font(HUDFont.terminal(17))
+        .foregroundStyle(HUDColor.bright)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(HUDColor.background, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(HUDColor.border, lineWidth: 0.5))
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// Key on the left (dim), the value after it, wrapping and selectable.
+    private func readoutRow(_ key: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(key.uppercased()).foregroundStyle(HUDColor.dim).frame(width: 52, alignment: .leading)
+            Text(value).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -97,7 +143,7 @@ struct InfoView: View {
     }
 
     private var sizeText: String {
-        if item.isDirectory { return folderSize ?? "Calculating…" }
+        if item.isDirectory { return folderSize ?? "" }
         let bytes = item.size.formatted(.number)
         return "\(item.size.formatted(.byteCount(style: .file))) (\(bytes) bytes)"
     }
@@ -140,6 +186,63 @@ struct InfoView: View {
                 folderSize = "Couldn't calculate: \(error)"
             }
         }
+    }
+}
+
+/// The HUD's text button, in the sheet's own colours (Get Info follows the
+/// system appearance; the HUD is always dark).
+private struct PixelButton: View {
+    let title: String
+    let help: String
+    let action: () -> Void
+    @State private var hovered = false
+
+    init(_ title: String, help: String, action: @escaping () -> Void) {
+        self.title = title
+        self.help = help
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Text(title.uppercased())
+                .font(HUDFont.label(10))
+                .foregroundStyle(hovered ? .primary : .secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .overlay(Rectangle().strokeBorder(hovered ? Color.primary : Color.secondary.opacity(0.5), lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// Work with no known end (a folder being totalled): a short run of lit
+/// cells sweeping back and forth across the HUD's discrete cells. Still,
+/// with Reduce Motion on.
+private struct PixelScanner: View {
+    var count = 14
+    var lit = 3
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 15, paused: reduceMotion)) { timeline in
+            let span = count - lit
+            let step = Int(timeline.date.timeIntervalSinceReferenceDate * 15) % (2 * span)
+            let start = reduceMotion ? -lit : (step < span ? step : 2 * span - step)
+            HStack(spacing: 2) {
+                ForEach(0..<count, id: \.self) { i in
+                    Rectangle()
+                        .fill(i >= start && i < start + lit ? Color.primary : Color.primary.opacity(0.15))
+                        .frame(width: 4)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Calculating")
     }
 }
 
