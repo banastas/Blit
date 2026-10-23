@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.6</title>
-      <pubDate>Tue, 20 Oct 2026 18:10:29 +0000</pubDate>
-      <sparkle:version>58</sparkle:version>
-      <sparkle:shortVersionString>1.0.6</sparkle:shortVersionString>
+      <title>Blit 1.0.7</title>
+      <pubDate>Fri, 23 Oct 2026 04:15:43 +0000</pubDate>
+      <sparkle:version>59</sparkle:version>
+      <sparkle:shortVersionString>1.0.7</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit 1.0.6. To File (Go › To File…, ⇧⌘J): every download that hasn't been filed, in one list; Space previews, R renames with your naming preset, M moves to the suggested folder. Find in Archive (File › Find in Archive…, ⇧⌘F): find anything Blit has moved, by any name it had, even while the NAS is asleep. Photos: when a camera card goes in, Blit offers to import it into a folder per day on this Mac and back it up to the NAS; right-click a shoot folder › Back Up Edits to NAS… copies its DxO (.dop) and XMP edits next to the photos there. Also: an empty folder's disclosure triangle turns back when it's closed.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.6.zip" type="application/octet-stream" sparkle:edSignature="X2F9mX5q+di4N1JcWKpLJeYg59tzualE0rGLRuy5AEhUjiN/JiKiFCMXofgxHhG8qa67l+ExeL6HIAXW7kYYCQ==" length="6579743" />
+      <description><![CDATA[<p>Security fixes: copies and downloads never write through a symlink in the destination folder; Empty Trash on a drive only empties that drive's own Trash; downloaded files are quarantined, so macOS checks them when opened; a revoked host key is refused, and a server that offers a new kind of key gets a clear warning; Send to Blit lists every file it was given; and several crashes on malformed data from a server or a file are fixed.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.7.zip" type="application/octet-stream" sparkle:edSignature="jZAMrYl/KvkLdYNh5AMjxDBA//gnZ5AFsmgu/MkP7Ln034RCYGAf0NTlmAMUwIND+DtgTghUq3rXz+Qpy1o0Ag==" length="6596133" />
     </item>
   </channel>
 </rss>
