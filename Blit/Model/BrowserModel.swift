@@ -500,6 +500,8 @@ final class BrowserModel {
         switch error {
         case let ssh as SSHError where ssh.isChangedHostKey:
             self.error = "The server's host key has changed, so Blit won't connect. \(ssh)"
+        case SSHError.hostKeyRevoked:
+            self.error = "The server presented a host key that's marked @revoked in ~/.ssh/known_hosts, so Blit won't connect."
         case SSHError.hostKeyRejected(_, _, let presented, let known):
             if let server { trustRequest = TrustRequest(server: server, presented: presented, known: known) }
             self.error = "Waiting for you to verify the server's identity."
@@ -527,7 +529,7 @@ final class BrowserModel {
             return FileItem(location: .remote(server.id, base.appending(entry.filename)), name: name,
                             isDirectory: a.isDirectory,
                             modified: a.modificationTime.map { Date(timeIntervalSince1970: TimeInterval($0)) } ?? .distantPast,
-                            size: a.isDirectory ? -1 : Int64(a.size ?? 0),
+                            size: a.isDirectory ? -1 : Int64(clamping: a.size ?? 0),
                             kind: a.isDirectory ? "Folder" : (UTType(filenameExtension: ext)?.localizedDescription ?? "Document"))
         }
     }

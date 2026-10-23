@@ -82,8 +82,10 @@ func parseArguments() -> Arguments {
     return a
 }
 
-func readPassword(_ prompt: String) -> String {
-    if let p = ProcessInfo.processInfo.environment["BLIT_PASSWORD"] { return p }
+/// The password from `variable` if it's set, else asked for. Each login reads
+/// its own variable: a server's password must never reach the NAS, or the reverse.
+func readPassword(_ prompt: String, from variable: String) -> String {
+    if let p = ProcessInfo.processInfo.environment[variable] { return p }
     var buffer = [CChar](repeating: 0, count: 1024)
     guard let r = readpassphrase(prompt, &buffer, buffer.count, 0) else { exit(1) }
     return String(cString: r)
@@ -119,8 +121,9 @@ func connectAskingTrust(_ endpoint: SSHEndpoint, credential: SSHCredential, veri
         print("\(host):\(port) presented a host key Blit hasn't seen before:")
         print("  \(presented)")
         if !known.isEmpty {
-            print("Keys of other types are already trusted for this server:")
+            print("WARNING: a different key is already trusted for this server:")
             known.forEach { print("  \($0)") }
+            print("A server can add a new key type, but an interception would look exactly like this.")
         }
         print("Check the fingerprint with your provider if you can. Trust and remember it? [y/N] ", terminator: "")
         fflush(stdout)
@@ -192,7 +195,7 @@ if let keyPath = ProcessInfo.processInfo.environment["BLIT_KEY"] {
         exit(1)
     }
 } else {
-    credential = .password(readPassword("Password for \(a.endpoint.username)@\(a.endpoint.host): "))
+    credential = .password(readPassword("Password for \(a.endpoint.username)@\(a.endpoint.host): ", from: "BLIT_PASSWORD"))
 }
 
 do {
@@ -218,7 +221,7 @@ do {
         let clients = try await openClients(a, count: a.connections, credential: credential)
         let setup = Date().timeIntervalSince(t0)
         let files = try await remoteFiles(at: remote, using: clients[0])
-        let totalBytes = files.reduce(0) { $0 + $1.size }
+        let totalBytes = files.saturatingSum(\.size)
         let strategy = clients[0].strategy
         print(String(format: "%d connection%@ ready in %.1f s · reads %d KB × %d · %d file%@, %@",
                      clients.count, clients.count == 1 ? "" : "s", setup, strategy.readSize / 1024, strategy.maxInFlight,
@@ -243,7 +246,7 @@ do {
                 last = (now, bytes)
                 let shown = bytes + Int(progress.resumedBytes)
                 let verifying = progress.verifying
-                let status = shown >= Int(totalBytes) && verifying > 0
+                let status = shown >= Int(clamping: totalBytes) && verifying > 0
                     ? "verifying \(verifying) file\(verifying == 1 ? "" : "s")…"
                     : String(format: "%.1f MB/s", rate / 1e6)
                 if a.progressLines {
@@ -377,7 +380,7 @@ func copyCommand(_ raw: [String]) async -> Never {
 
     do {
         let files = try localFiles(at: source)
-        let total = files.reduce(UInt64(0)) { $0 + $1.size }
+        let total = files.saturatingSum(\.size)
         let mount = MountInfo.of(existingAncestor(destination))
 
         // Where the traffic goes (PRD R1.7).
@@ -410,8 +413,7 @@ func copyCommand(_ raw: [String]) async -> Never {
         var nas: NASVerifier?
         if let nasTarget, options.verify {
             guard let endpoint = parseEndpoint(nasTarget), let mount else { usage() }
-            let password = ProcessInfo.processInfo.environment["BLIT_NAS_PASSWORD"]
-                ?? readPassword("NAS password for \(endpoint.username)@\(endpoint.host): ")
+            let password = readPassword("NAS password for \(endpoint.username)@\(endpoint.host): ", from: "BLIT_NAS_PASSWORD")
             let verifier = BlitHostKeyVerifier(knownHosts: KnownHostsVerifier(pinnedFingerprints: trust))
             let connection = try await connectAskingTrust(endpoint, credential: .password(password), verifier: verifier)
             var root = nasRoot

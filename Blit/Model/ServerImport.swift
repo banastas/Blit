@@ -81,16 +81,24 @@ enum ServerImport {
     /// 'SFTP', as Transmit stores a connection's protocol.
     static let transmitSFTP = 0x5346_5450
 
+    /// Classes a Transmit store may decode into: the stand-ins and plain
+    /// Foundation values. Secure coding refuses anything else, so a store
+    /// another app wrote can't make Blit create arbitrary objects (and run
+    /// their init(coder:)) inside a process with Full Disk Access.
+    static let transmitClasses: [AnyClass] = [TransmitGroup.self, TransmitConnection.self, ArchivedIgnored.self,
+                                              NSArray.self, NSDictionary.self, NSSet.self, NSString.self, NSNumber.self,
+                                              NSData.self, NSDate.self, NSURL.self, NSUUID.self, NSNull.self]
+
     /// Transmit's Connections.transmitstore: the favorites in every group.
     static func transmitStore(_ data: Data) -> [ImportedServer] {
         guard let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data) else { return [] }
-        unarchiver.requiresSecureCoding = false
+        unarchiver.requiresSecureCoding = true
         unarchiver.decodingFailurePolicy = .setErrorAndReturn
         let standIns = StandIns()
         unarchiver.delegate = standIns
         unarchiver.setClass(TransmitConnection.self, forClassName: "TRConnectionItem")
         unarchiver.setClass(TransmitGroup.self, forClassName: "TRConnectionGroup")
-        let root = unarchiver.decodeObject(forKey: NSKeyedArchiveRootObjectKey)
+        let root = unarchiver.decodeObject(of: transmitClasses, forKey: NSKeyedArchiveRootObjectKey)
         unarchiver.finishDecoding()
         var servers: [ImportedServer] = []
         func walk(_ object: Any?) {
@@ -194,16 +202,18 @@ enum ServerImport {
 // MARK: Stand-ins for Transmit's archived classes
 
 /// TRConnectionItem: the fields an import uses (the rest, and its parent, aren't read).
-final class TransmitConnection: NSObject, NSCoding {
+final class TransmitConnection: NSObject, NSSecureCoding {
+    static var supportsSecureCoding: Bool { true }
     let name: String, address: String, username: String, remotePath: String
     let port: Int, protocolCode: Int
     let privateKey: String?
 
     init?(coder: NSCoder) {
-        func text(_ key: String) -> String { coder.decodeObject(forKey: key) as? String ?? "" }
+        // Typed decodes only (secure coding): a field of any other class reads as missing.
+        func text(_ key: String) -> String { coder.decodeObject(of: NSString.self, forKey: key) as String? ?? "" }
         // An NSNumber object, or a number written inline (decodeObject doesn't return those).
         func integer(_ key: String) -> Int {
-            if let number = coder.decodeObject(forKey: key) as? NSNumber { return number.intValue }
+            if let number = coder.decodeObject(of: NSNumber.self, forKey: key) { return number.intValue }
             return coder.containsValue(forKey: key) ? coder.decodeInteger(forKey: key) : 0
         }
         name = text("name")
@@ -213,25 +223,27 @@ final class TransmitConnection: NSObject, NSCoding {
         port = integer("port")
         protocolCode = integer("protocol")
         // A key file's path when it's one (other forms aren't brought over).
-        privateKey = (coder.decodeObject(forKey: "privateKey") as? String).flatMap { $0.isEmpty ? nil : $0 }
+        privateKey = (coder.decodeObject(of: NSString.self, forKey: "privateKey") as String?).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     func encode(with coder: NSCoder) {}
 }
 
 /// TRConnectionGroup: its connections and groups.
-final class TransmitGroup: NSObject, NSCoding {
+final class TransmitGroup: NSObject, NSSecureCoding {
+    static var supportsSecureCoding: Bool { true }
     let children: [Any]
 
     init?(coder: NSCoder) {
-        children = (coder.decodeObject(forKey: "connections") as? [Any]) ?? []
+        children = (coder.decodeObject(of: ServerImport.transmitClasses, forKey: "connections") as? [Any]) ?? []
     }
 
     func encode(with coder: NSCoder) {}
 }
 
 /// Whatever else Transmit archived (history, places): decoded as nothing.
-final class ArchivedIgnored: NSObject, NSCoding {
+final class ArchivedIgnored: NSObject, NSSecureCoding {
+    static var supportsSecureCoding: Bool { true }
     init?(coder: NSCoder) {}
     func encode(with coder: NSCoder) {}
 }

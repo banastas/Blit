@@ -82,11 +82,15 @@ public struct BlitHostKeyVerifier: HostKeyVerifier {
 
     public func verify(host: String, port: Int, key: NIOSSHPublicKey) -> HostKeyVerdict {
         let presented = HostKeyIdentity(key)
+        // A key revoked in known_hosts stays refused even if Blit pinned it earlier.
+        if knownHosts.isRevoked(host: host, port: port, key: key) { return .revoked(presented: presented) }
         let stored = store.entries(host: host, port: port)
         if stored.contains(where: { $0.fingerprint == presented.fingerprint }) { return .trusted }
         switch knownHosts.verify(host: host, port: port, key: key) {
         case .trusted:
             return .trusted
+        case .revoked:
+            return .revoked(presented: presented)
         case .rejected(_, let known):
             let fromStore = stored.map { HostKeyIdentity(type: $0.type, fingerprint: $0.fingerprint) }
             return .rejected(presented: presented, known: fromStore + known.filter { k in !fromStore.contains(k) })

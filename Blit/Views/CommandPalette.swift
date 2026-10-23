@@ -16,6 +16,9 @@ struct PaletteEntry: Identifiable, Hashable {
 struct CommandPalette: View {
     let entries: [PaletteEntry]
     var prompt = "Go to a favorite, server, drive or recent folder"
+    /// Files the choice will act on, listed in full above the field (Send to
+    /// Blit: another app named them, so you see exactly what you're sending).
+    var items: [URL] = []
     let onSelect: (BrowseLocation) -> Void
     @State private var query = ""
     @State private var highlighted: PaletteEntry.ID?
@@ -49,6 +52,24 @@ struct CommandPalette: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if !items.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(items, id: \.self) { url in
+                            Text(url.path)
+                                .font(.system(.caption, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                .frame(maxHeight: 110)
+                Divider()
+            }
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField(prompt, text: $query)

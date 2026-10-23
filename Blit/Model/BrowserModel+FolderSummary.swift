@@ -153,7 +153,7 @@ extension BrowserModel {
             // Paths inside the folder: the tree's start with the folder's own name.
             var byPath: [String: RemoteFile] = [:]
             for file in tree.files { byPath[String(file.relativePath.split(separator: "/", maxSplits: 1).dropFirst().first ?? "")] = file }
-            let files = byPath.map { (path: $0.key, size: Int64($0.value.size)) }
+            let files = byPath.map { (path: $0.key, size: Int64(clamping: $0.value.size)) }
             var summary = FolderSummary(name: item.name)
             summary.add(files)
             summary.folders = max(0, tree.directories.count - 1)

@@ -39,7 +39,9 @@ public struct SFTPAttributes: Equatable, Sendable {
     public static func read(from buffer: inout ByteBuffer) throws -> SFTPAttributes {
         var a = SFTPAttributes()
         let flags = try buffer.readSFTPInteger("attr flags", as: UInt32.self)
-        if flags & flagSize != 0 { a.size = try buffer.readSFTPInteger("size") }
+        // No file is larger than Int64.max bytes; a hostile server's bigger
+        // size would trap wherever it's converted to Int64 or off_t.
+        if flags & flagSize != 0 { a.size = min(try buffer.readSFTPInteger("size", as: UInt64.self), UInt64(Int64.max)) }
         if flags & flagUIDGID != 0 {
             a.uid = try buffer.readSFTPInteger("uid")
             a.gid = try buffer.readSFTPInteger("gid")

@@ -123,8 +123,11 @@ public enum Matroska {
         }
         // After the clusters (or past an element too large to step over): where the SeekHead says.
         func sought(_ id: UInt32) throws -> EBMLElement? {
-            guard let position = seeks[id], let element = try reader.element(at: segment.dataStart + position),
-                  element.id == id else { return nil }
+            // The position is the file's own claim: an offset past the end (or one
+            // that overflows) means the element isn't there.
+            guard let position = seeks[id] else { return nil }
+            let (offset, overflow) = segment.dataStart.addingReportingOverflow(position)
+            guard !overflow, offset < source.size, let element = try reader.element(at: offset), element.id == id else { return nil }
             return element
         }
         if tracksElement == nil { tracksElement = try sought(tracks) }

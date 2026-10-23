@@ -1,6 +1,8 @@
 // A set of byte ranges, kept sorted and merged. Records which parts of a
 // `.blitpart` file are already on disk (PRD R3.6).
 
+import BlitSFTP
+
 public struct ByteRangeSet: Codable, Equatable, Sendable {
     public private(set) var ranges: [Range<UInt64>] = []
 
@@ -8,7 +10,18 @@ public struct ByteRangeSet: Codable, Equatable, Sendable {
         for r in ranges { insert(r) }
     }
 
-    public var byteCount: UInt64 { ranges.reduce(0) { $0 + ($1.upperBound - $1.lowerBound) } }
+    /// Decoded ranges go through `insert` too: a `.blitpart.state` file can be
+    /// written by anyone who can write the folder, and unmerged, overlapping
+    /// ranges would overflow `byteCount` (and confuse `gaps`).
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(try container.decode([Range<UInt64>].self, forKey: .ranges))
+    }
+
+    private enum CodingKeys: String, CodingKey { case ranges }
+
+    /// Merged ranges never overlap, so their total fits; saturating anyway.
+    public var byteCount: UInt64 { ranges.saturatingSum { $0.upperBound - $0.lowerBound } }
 
     public mutating func insert(_ range: Range<UInt64>) {
         guard !range.isEmpty else { return }

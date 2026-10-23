@@ -35,9 +35,13 @@ enum StreamCopy {
         _ = fcntl(src, F_NOCACHE, 1)
         _ = fcntl(src, F_RDAHEAD, 1)
 
-        let dst = Darwin.open(destination, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0o644)
+        // O_NOFOLLOW: never write through a symlink planted at the part file's name.
+        let dst = Darwin.open(destination, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0o644)
         guard dst >= 0 else { throw POSIXFailure("create \(destination)") }
         defer { Darwin.close(dst) }
+        // Only the data is copied, so carry the quarantine mark over by hand: a
+        // copied or moved download must still be checked when it's opened.
+        Quarantine.copy(from: src, to: dst)
         _ = fcntl(dst, F_NOCACHE, 1)
         if size > 0 {
             // Reserve space up front on local volumes; SMB usually refuses, which is fine.

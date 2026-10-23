@@ -149,6 +149,7 @@ extension BrowserModel {
         let file = try PartFile.create(at: target.path, size: size)
         defer { file.close() }
         if size > 0 { _ = try await client.download(path, range: 0..<size, into: file) { _ in } }
+        Quarantine.markDownloaded(target.path)   // Quick Look's Open button hands it to an app
         return target
     }
 }

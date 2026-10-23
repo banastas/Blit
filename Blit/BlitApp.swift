@@ -104,7 +104,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Finder › Services › Send to Blit…: bring Blit forward and ask where to copy.
     @objc func sendToBlit(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
-        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        // Any app can call a Service, naming any files. Blit copies with Full Disk
+        // Access, so it won't take files from your Library's private data (Mail,
+        // Messages, app containers…) this way: drag those in from Finder instead.
+        let all = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        let urls = all.filter { !ExternalFiles.isPrivateData($0) }
+        if urls.count < all.count {
+            transfers?.notice("Send to Blit skipped \(all.count - urls.count) item\(all.count - urls.count == 1 ? "" : "s") from your Library's private data.",
+                              action: "NOT SENT")
+        }
         guard !urls.isEmpty else { return }
         transfers?.pendingExternalFiles = urls
         NSApp.activate()

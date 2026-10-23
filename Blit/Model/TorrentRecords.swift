@@ -58,7 +58,7 @@ indirect enum Bencode: Equatable {
             default:
                 guard let colon = bytes[index...].firstIndex(of: UInt8(ascii: ":")),
                       let length = Int(String(decoding: bytes[index..<colon], as: UTF8.self)), length >= 0,
-                      colon + 1 + length <= bytes.count else { return nil }
+                      length <= bytes.count - colon - 1 else { return nil }   // compared without adding: no overflow
                 index = colon + 1 + length
                 return .bytes(Data(bytes[(colon + 1)..<(colon + 1 + length)]))
             }
@@ -144,7 +144,8 @@ enum TorrentRecords {
     /// Its names and total size.
     static func metadata(torrent data: Data) -> TorrentMetadata? {
         guard let names = names(torrent: data), let info = Bencode.decode(data)?["info"] else { return nil }
-        let size = info["length"]?.int ?? (info["files"]?.array ?? []).reduce(0) { $0 + ($1["length"]?.int ?? 0) }
+        // Lengths come from the server's records: summed without trapping.
+        let size = info["length"]?.int ?? Int(clamping: (info["files"]?.array ?? []).saturatingSum { UInt64(max($0["length"]?.int ?? 0, 0)) })
         let name = (info["name.utf-8"] ?? info["name"])?.string ?? ""
         let roots = Set((info["files"]?.array ?? []).compactMap { ($0["path.utf-8"] ?? $0["path"])?.array?.first?.string })
         return TorrentMetadata(names: names, size: Int64(size), name: name, fileRoots: roots)

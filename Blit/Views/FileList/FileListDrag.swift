@@ -61,6 +61,11 @@ extension FileListCoordinator {
         UITestHarness.dropTrail.append("drag began \(dragged.map(\.name))")
         #endif
     }
+
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint,
+                   operation: NSDragOperation) {
+        DragContents.ended()
+    }
 }
 
 // MARK: Drops

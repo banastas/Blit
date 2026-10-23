@@ -47,6 +47,14 @@ struct TransferPayload: Codable, Transferable {
         // drop target (rows, sidebar, path bar) accepts it.
         ProxyRepresentation(importing: { (url: URL) in TransferPayload(locations: [.local(url)]) })
     }
+
+    /// The same payload as another app may send it: its local files only, as a
+    /// Finder file drag carries. Any app can write Blit's pasteboard type, so
+    /// server locations (which Blit opens with your saved logins) count only
+    /// from Blit's own drags and copies.
+    var fromAnotherApp: TransferPayload {
+        TransferPayload(locations: locations.filter { $0.localURL != nil }, folders: folders?.filter { $0.localURL != nil })
+    }
 }
 
 /// Source files whose copies were verified by SHA-256, so a move may remove
@@ -1349,10 +1357,9 @@ final class TransferManager {
     /// a part file (which reserves its full size when created), needs none.
     nonisolated static func bytesNeeded(_ files: [(relativePath: String, size: UInt64)], in destination: URL) -> UInt64 {
         let fm = FileManager.default
-        return files.reduce(UInt64(0)) { total, file in
+        return files.saturatingSum { file in
             let final = destination.appendingPathComponent(file.relativePath).path
-            if fm.fileExists(atPath: final) || fm.fileExists(atPath: final + ".blitpart") { return total }
-            return total + file.size
+            return fm.fileExists(atPath: final) || fm.fileExists(atPath: final + ".blitpart") ? 0 : file.size
         }
     }
 
@@ -1658,7 +1665,7 @@ final class TransferManager {
             }
         }
         job.fileCount = files.count
-        job.totalBytes = Int64(files.reduce(0) { $0 + $1.size })
+        job.totalBytes = Int64(clamping: files.saturatingSum(\.size))
         job.note("LISTED \(files.count) FILE\(files.count == 1 ? "" : "S") · \(TransferJob.bytes(job.totalBytes))")
         let destination = job.destination
         let needed = await Task.detached {
@@ -1669,8 +1676,7 @@ final class TransferManager {
         // Folders first, so empty ones exist at the destination too (PRD R3.1).
         await Task.detached {
             for relative in directories where TransferPlan.isContained(relative) {
-                try? FileManager.default.createDirectory(at: destination.appendingPathComponent(relative),
-                                                         withIntermediateDirectories: true)
+                try? SafePath.createDirectory(destination.appendingPathComponent(relative).path, under: destination.path)
             }
         }.value
 
@@ -1702,6 +1708,10 @@ final class TransferManager {
         var interrupted: [VerifiedSources.Remote] = []
         for source in job.verifiedSources.takeRemote() {
             let path = source.path
+            guard Self.isWithin(path.bytes, roots: roots.map(\.bytes)) else {
+                job.failures.append("source kept: \(path.description): not one of this move's sources")
+                continue
+            }
             guard client.connection.isActive else {
                 interrupted.append(source)
                 continue
@@ -1761,6 +1771,10 @@ final class TransferManager {
             var gone: [String] = []
             for source in sources {
                 let path = source.path
+                guard Self.isWithin(Array(LexicalPath.normalize(path).utf8), roots: roots.map { Array($0.utf8) }) else {
+                    failed.append("\(path): not one of this move's sources; kept")
+                    continue
+                }
                 guard fm.fileExists(atPath: path) else {
                     removed += 1   // already gone
                     continue
@@ -1819,6 +1833,14 @@ final class TransferManager {
 
     /// The folders between `path` and the source root it's under (the root
     /// included), deepest first. Empty when `path` is itself a root.
+    /// Whether `path` is one of `roots` or inside one. The move ledger can come
+    /// back from queue.json, which any app running as you can write: a source
+    /// is only ever deleted if it belongs to the job's own sources.
+    nonisolated static func isWithin(_ path: [UInt8], roots: [[UInt8]]) -> Bool {
+        let slash = UInt8(ascii: "/")
+        return roots.contains { root in !root.isEmpty && (path == root || path.starts(with: root.last == slash ? root : root + [slash])) }
+    }
+
     nonisolated static func folders(of path: [UInt8], under roots: [[UInt8]]) -> [[UInt8]] {
         let slash = UInt8(ascii: "/")
         guard let root = roots.first(where: { path.count > $0.count && path.starts(with: $0 + [slash]) }) else { return [] }
@@ -1852,7 +1874,7 @@ final class TransferManager {
             }
         }
         job.fileCount = files.count
-        job.totalBytes = Int64(files.reduce(0) { $0 + $1.size })
+        job.totalBytes = Int64(clamping: files.saturatingSum(\.size))
         job.note("LISTED \(files.count) FILE\(files.count == 1 ? "" : "S") · \(TransferJob.bytes(job.totalBytes))")
         let destination = job.destination
         let copyNeeded = await Task.detached { () -> UInt64 in

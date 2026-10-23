@@ -27,6 +27,24 @@ enum TrashService {
         return volume.appendingPathComponent(".Trashes").appendingPathComponent(String(getuid()))
     }
 
+    /// Whether `trash` is a real Trash on its drive: `.Trashes` and
+    /// `.Trashes/<uid>` are folders, not symlinks, on the same device as the
+    /// drive itself. A prepared drive or disk image could otherwise point the
+    /// Trash at another folder (your home), and emptying it would erase that.
+    /// A Trash that doesn't exist yet counts as real (it's just empty).
+    nonisolated static func isRealTrash(_ trash: URL) -> Bool {
+        let trashes = trash.deletingLastPathComponent()
+        let volume = trashes.deletingLastPathComponent()
+        var root = stat()
+        guard lstat(volume.path, &root) == 0 else { return false }
+        for folder in [trashes, trash] {
+            var info = stat()
+            guard lstat(folder.path, &info) == 0 else { return errno == ENOENT }
+            guard info.st_mode & S_IFMT == S_IFDIR, info.st_dev == root.st_dev else { return false }
+        }
+        return true
+    }
+
     /// The drive's name, for messages ("SSD").
     nonisolated static func volumeName(containing url: URL) -> String {
         (try? url.resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName ?? url.lastPathComponent
@@ -36,7 +54,7 @@ enum TrashService {
     nonisolated static func contents(of trash: URL) async -> Contents {
         await Task.detached {
             let fm = FileManager.default
-            guard let top = try? fm.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil) else {
+            guard isRealTrash(trash), let top = try? fm.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil) else {
                 return Contents(items: 0, bytes: 0)
             }
             var bytes: Int64 = 0
@@ -62,9 +80,15 @@ enum TrashService {
     nonisolated static func erase(_ trash: URL) async -> [String] {
         await Task.detached {
             let fm = FileManager.default
+            guard isRealTrash(trash) else { return ["the Trash isn't a real folder on the drive; nothing erased"] }
             guard let top = try? fm.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil) else { return [] }
             var problems: [String] = []
             for item in top {
+                // Again before each removal: the folder must not be swapped for a link meanwhile.
+                guard isRealTrash(trash) else {
+                    problems.append("the Trash changed while it was being emptied; stopped")
+                    break
+                }
                 do { try fm.removeItem(at: item) } catch { problems.append("\(item.lastPathComponent): \((error as NSError).localizedDescription)") }
             }
             return problems
@@ -153,6 +177,11 @@ extension TransferManager {
         guard let trash = TrashService.volumeTrash(containing: url) else {
             notice("“\(name)” has no Trash of its own. Use Blit › Empty Trash… instead.", action: "EMPTY TRASH")
             return "no trash"
+        }
+        guard TrashService.isRealTrash(trash) else {
+            notice("The Trash on “\(name)” isn't a real folder on the drive (it may link elsewhere), so Blit won't empty it.",
+                   action: "NOT EMPTIED")
+            return "not a real trash"
         }
         let contents = await TrashService.contents(of: trash)
         // Nothing to erase isn't a problem: a beep, as for any action with nothing to do.

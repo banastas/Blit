@@ -40,6 +40,10 @@ final class FileOperations {
     @ObservationIgnored var onChanged: (([BrowseLocation]) -> Void)?
     /// The pasteboard change count when Blit last put a Cut on it.
     @ObservationIgnored private var cutChangeCount: Int?
+    /// The pasteboard's change count when Blit last wrote it: a payload of
+    /// Blit's type is Blit's own only while it still matches (any app can
+    /// write that type, but a write by anyone changes the count).
+    @ObservationIgnored private var ownChangeCount: Int?
     /// The window's undo manager (Edit › Undo, ⌘Z).
     @ObservationIgnored weak var undoManager: UndoManager?
     /// True while an undo runs, so it doesn't register another undo.
@@ -120,6 +124,7 @@ final class FileOperations {
             return entry
         }
         pasteboard.writeObjects(entries)
+        ownChangeCount = pasteboard.changeCount
         cutChangeCount = cut ? pasteboard.changeCount : nil
     }
 
@@ -127,8 +132,13 @@ final class FileOperations {
     func pasteboardContents() -> (sources: [BrowseLocation], isCut: Bool)? {
         let pasteboard = NSPasteboard.general
         if let data = pasteboard.data(forType: Self.locationsType),
-           let payload = try? JSONDecoder().decode(TransferPayload.self, from: data), !payload.locations.isEmpty {
-            return (payload.locations, cutChangeCount == pasteboard.changeCount)
+           let payload = try? JSONDecoder().decode(TransferPayload.self, from: data) {
+            if ownChangeCount == pasteboard.changeCount, !payload.locations.isEmpty {
+                return (payload.locations, cutChangeCount == pasteboard.changeCount)
+            }
+            // Another app's: its local files only, and never a cut.
+            let local = payload.fromAnotherApp.locations
+            if !local.isEmpty { return (local, false) }
         }
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         return urls.isEmpty ? nil : (urls.map { .local($0) }, false)

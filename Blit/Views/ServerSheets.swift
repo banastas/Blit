@@ -150,6 +150,13 @@ struct TrustSheet: View {
                 .font(.headline)
             Text("“\(request.server.displayName)” (\(request.server.host):\(String(request.server.port))) presented a host key Blit hasn't seen before.")
                 .fixedSize(horizontal: false, vertical: true)
+            if addsKeyType {
+                Label("Blit already trusts a different key for this server. A server can add a new kind of key, "
+                      + "but an attacker intercepting the connection would look exactly like this. "
+                      + "Only trust it if you know the server added this key.", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             GroupBox {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(request.presented.type).font(.caption).foregroundStyle(.secondary)
@@ -176,18 +183,31 @@ struct TrustSheet: View {
                 .foregroundStyle(.secondary)
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Trust and Connect") {
-                    onTrust()
-                    dismiss()
+                if addsKeyType {
+                    // Return cancels: trusting a second key type takes a deliberate click.
+                    Button("Trust New Key Type") {
+                        onTrust()
+                        dismiss()
+                    }
+                    Button("Cancel", role: .cancel) { dismiss() }
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Cancel", role: .cancel) { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                    Button("Trust and Connect") {
+                        onTrust()
+                        dismiss()
+                    }
+                    .keyboardShortcut(.defaultAction)
                 }
-                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
         .frame(width: 480)
     }
+
+    /// The server already has a trusted key (of another type): it may be an interception.
+    private var addsKeyType: Bool { !request.known.isEmpty }
 }
 
 struct PasswordSheet: View {

@@ -11,9 +11,12 @@ public final class PartFile: Sendable {
     let fd: Int32
     let pool: NIOThreadPool
 
-    /// Creates (or truncates) `path` and sizes it to `size`.
+    /// Creates (or truncates) `path` and sizes it to `size`. Never follows a
+    /// symlink at `path` (O_NOFOLLOW): a planted `.blitpart` link would
+    /// otherwise truncate and overwrite its target.
     public static func create(at path: String, size: UInt64, pool: NIOThreadPool = .singleton) throws -> PartFile {
-        let fd = Darwin.open(path, O_CREAT | O_RDWR | O_TRUNC | O_CLOEXEC, 0o644)
+        guard size <= UInt64(Int64.max) else { throw POSIXFailure("create \(path): size \(size) is too large", code: EFBIG) }
+        let fd = Darwin.open(path, O_CREAT | O_RDWR | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0o644)
         guard fd >= 0 else { throw POSIXFailure("open \(path)") }
         if size > 0 {
             // Reserve the space up front (local volumes; unsupported over SMB, so failure is fine).
@@ -30,10 +33,10 @@ public final class PartFile: Sendable {
 
     /// Reopens an existing part file for resuming; its size must be `size`.
     public static func reopen(at path: String, size: UInt64, pool: NIOThreadPool = .singleton) throws -> PartFile {
-        let fd = Darwin.open(path, O_RDWR | O_CLOEXEC)
+        let fd = Darwin.open(path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
         guard fd >= 0 else { throw POSIXFailure("open \(path)") }
         var info = Darwin.stat()
-        guard fstat(fd, &info) == 0, UInt64(info.st_size) == size else {
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, UInt64(info.st_size) == size else {
             Darwin.close(fd)
             throw POSIXFailure("resume \(path): unexpected size")
         }

@@ -221,7 +221,11 @@ final class TorrentLibrary {
     }
 
     nonisolated private static func total(_ files: [(blocks: Int64, modified: Double)]) -> TorrentLiveBytes {
-        TorrentLiveBytes(bytes: files.reduce(0) { $0 + $1.blocks * 512 },
+        // Block counts come from the server's `find`: multiplied and summed without trapping.
+        TorrentLiveBytes(bytes: Int64(clamping: files.saturatingSum { file in
+                             let (bytes, overflow) = UInt64(max(file.blocks, 0)).multipliedReportingOverflow(by: 512)
+                             return overflow ? .max : bytes
+                         }),
                          newestWrite: files.map(\.modified).max().map { Date(timeIntervalSince1970: $0) })
     }
 

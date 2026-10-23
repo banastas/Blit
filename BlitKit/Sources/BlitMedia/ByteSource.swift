@@ -48,7 +48,8 @@ public final class FileSource: ByteSource {
     public func read(at offset: UInt64, count: Int) throws -> Data {
         var out = Data()
         var position = offset
-        let end = min(size, offset + UInt64(max(count, 0)))
+        guard offset < size else { return out }
+        let end = offset + min(UInt64(max(count, 0)), size - offset)
         while position < end {
             let index = position / UInt64(Self.chunkSize)
             let chunk = try self.chunk(index)

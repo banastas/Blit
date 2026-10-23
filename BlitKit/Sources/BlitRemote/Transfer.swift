@@ -17,6 +17,9 @@ import Synchronization
 public enum TransferPlan {
     /// Files at least this big are split across connections.
     public static let splitThreshold: UInt64 = 64 << 20
+    /// Larger than any real file (1 PiB): a server claiming more is refused, as
+    /// planning it would mean billions of ranges.
+    public static let maxFileSize: UInt64 = 1 << 50
     static let mb: UInt64 = 1 << 20
 
     /// Chunk size for a file: about four chunks per connection, 32–256 MB, whole
@@ -494,6 +497,8 @@ public struct PartialDownload: Hashable, Sendable {
 actor FileJob {
     let file: RemoteFile
     let finalPath: String
+    /// The download folder: nothing between it and the part file may be a symlink (SafePath).
+    let root: String
     private var state: PartState
     private let resuming: Bool
     private let rangeCount: Int
@@ -506,8 +511,9 @@ actor FileJob {
     /// Replace a file at the final path (ExistsRule.replace, or different content).
     let replace: Bool
 
-    init(file: RemoteFile, finalPath: String, state: PartState, resuming: Bool, ranges: Int, replace: Bool = false) {
+    init(file: RemoteFile, root: String, finalPath: String, state: PartState, resuming: Bool, ranges: Int, replace: Bool = false) {
         self.file = file
+        self.root = root
         self.finalPath = finalPath
         self.replace = replace
         self.state = state
@@ -525,6 +531,8 @@ actor FileJob {
     /// Opens the part file on first use; returns whether this is the first range.
     func begin() throws -> (PartFile, first: Bool) {
         if let part { return (part, false) }
+        // The folders were made at planning time, perhaps long ago: check them again.
+        try SafePath.check(partPath, under: root)
         let p = resuming ? try PartFile.reopen(at: partPath, size: file.size) : try PartFile.create(at: partPath, size: file.size)
         part = p
         if !resuming { try state.save(statePath) }
@@ -626,6 +634,12 @@ public func download(
             summary.withLock { $0.failed.append((file, reason)) }
             continue
         }
+        guard file.size <= TransferPlan.maxFileSize else {
+            let reason = "the server reports an impossible size (\(file.size) bytes); skipped"
+            events(.fileFailed(file, reason))
+            summary.withLock { $0.failed.append((file, reason)) }
+            continue
+        }
         var finalPath = directory + "/" + file.relativePath
         var replace = false
         if fm.fileExists(atPath: finalPath), !options.overwrite {
@@ -655,7 +669,8 @@ public func download(
             }
         }
         do {
-            try fm.createDirectory(atPath: (finalPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            // Not through a symlink in the destination tree (SafePath).
+            try SafePath.createParents(of: finalPath, under: directory)
         } catch {
             events(.fileFailed(file, "\(error)"))
             summary.withLock { $0.failed.append((file, "\(error)")) }
@@ -680,12 +695,12 @@ public func download(
         let gaps = state.done.gaps(in: 0..<file.size)
         if resuming, gaps.isEmpty, file.size > 0 {
             // All bytes are on disk; it only needs verifying.
-            alreadyComplete.append(FileJob(file: file, finalPath: finalPath, state: state, resuming: true, ranges: 0,
+            alreadyComplete.append(FileJob(file: file, root: directory, finalPath: finalPath, state: state, resuming: true, ranges: 0,
                                            replace: replace))
             continue
         }
         let ranges = TransferPlan.ranges(size: file.size, connections: clients.count, gaps: resuming ? gaps : nil)
-        let job = FileJob(file: file, finalPath: finalPath, state: state, resuming: resuming, ranges: ranges.count,
+        let job = FileJob(file: file, root: directory, finalPath: finalPath, state: state, resuming: resuming, ranges: ranges.count,
                           replace: replace)
         work += ranges.map { (job, $0) }
     }
@@ -720,7 +735,7 @@ public func download(
             let state = PartState(remotePath: Data(file.path.bytes), size: file.size, modificationTime: file.modificationTime,
                                   done: ByteRangeSet(), source: source)
             let ranges = TransferPlan.ranges(size: file.size, connections: clients.count, gaps: nil)
-            let job = FileJob(file: file, finalPath: finalPath, state: state, resuming: false, ranges: ranges.count, replace: true)
+            let job = FileJob(file: file, root: directory, finalPath: finalPath, state: state, resuming: false, ranges: ranges.count, replace: true)
             work += ranges.map { (job, $0) }
         }
     }
@@ -902,6 +917,9 @@ private func finalize(job: FileJob, part: PartFile, hasher: RemoteHasher?, overw
         try? FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: TimeInterval(mtime))],
                                                ofItemAtPath: partPath)
     }
+    // Server bytes are internet downloads: Gatekeeper checks them when opened.
+    Quarantine.markDownloaded(partPath)
+    try SafePath.check(partPath, under: job.root)
     try renameIntoPlace(partPath, finalPath, overwrite: overwrite)
     try? FileManager.default.removeItem(atPath: statePath)
     return verification

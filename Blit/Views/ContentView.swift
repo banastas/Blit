@@ -172,7 +172,8 @@ struct ContentView: View {
         .sheet(isPresented: externalFilesBinding) {
             let files = transfers.pendingExternalFiles
             CommandPalette(entries: paletteEntries.filter { $0.location.localURL != nil && $0.group != .recent },
-                           prompt: files.count == 1 ? "Send “\(files[0].lastPathComponent)” to…" : "Send \(files.count) items to…") { location in
+                           prompt: files.count == 1 ? "Send “\(files[0].lastPathComponent)” to…" : "Send \(files.count) items to…",
+                           items: files) { location in
                 let name = location.localURL?.lastPathComponent ?? "Folder"
                 startTransfer(files.map { .local($0) }, to: location, name: name)
             }

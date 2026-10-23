@@ -246,10 +246,12 @@ final class SidebarModel {
     /// Adds favorites from a drop onto the Favorites section: Finder folder URLs
     /// or Blit's own drag payload (local or server folders).
     func addDropped(_ providers: [NSItemProvider], at index: Int? = nil) {
+        let own = DragContents.ownDragActive   // another app's payload adds only local folders
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.blitLocations.identifier) {
                 _ = provider.loadDataRepresentation(for: .blitLocations) { data, _ in
-                    guard let data, let payload = try? JSONDecoder().decode(TransferPayload.self, from: data) else { return }
+                    guard let data, let decoded = try? JSONDecoder().decode(TransferPayload.self, from: data) else { return }
+                    let payload = own ? decoded : decoded.fromAnotherApp
                     Task { @MainActor in
                         for location in payload.folders ?? [] { self.addFavorite(location, at: index) }
                     }

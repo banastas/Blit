@@ -413,3 +413,32 @@ private struct BitWriter {
         #expect(info.forms == ["VC-1", "VC-1", "VC-1", "VC-1"])
     }
 }
+
+// MARK: Untrusted offsets (security audit)
+
+@Suite struct MatroskaOffsetTests {
+    /// EBML header, an unknown-size Segment, and a SeekHead pointing Tracks at
+    /// `position`: the audit's 36-byte file.
+    private func seekOnly(_ position: [UInt8]) -> Data {
+        Data([0x1A, 0x45, 0xDF, 0xA3, 0x80, 0x18, 0x53, 0x80, 0x67, 0xFF, 0x11, 0x4D, 0x9B, 0x74, 0x95,
+              0x4D, 0xBB, 0x92, 0x53, 0xAB, 0x84, 0x16, 0x54, 0xAE, 0x6B, 0x53, 0xAC, 0x88] + position)
+    }
+
+    @Test func seekPositionThatOverflowsIsIgnored() throws {
+        let data = seekOnly([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
+        #expect(try Matroska.read(DataSource(data)) == nil)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("blit-seek-\(UUID().uuidString).mkv")
+        try data.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        #expect(try Matroska.read(FileSource(url: file)) == nil)
+    }
+
+    @Test func seekPositionNearTheTopIsIgnored() throws {
+        let data = seekOnly([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF0])
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("blit-seek-\(UUID().uuidString).mkv")
+        try data.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        #expect(try Matroska.read(FileSource(url: file)) == nil)
+        #expect(try FileSource(url: file).read(at: UInt64.max - 4, count: 12).isEmpty)
+    }
+}

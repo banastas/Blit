@@ -11,11 +11,13 @@ enum DropReader {
     /// them never answer a read: waiting on them one by one hung the drop. So
     /// every read starts together, and whatever has arrived when they've all
     /// answered, or after 3 s, is used.
-    static func locations(from providers: [NSItemProvider]) async -> [BrowseLocation] {
+    /// `own`: the drop is Blit's own drag (`DragContents.ownDragActive`, read
+    /// when it landed); otherwise only its local files count.
+    static func locations(from providers: [NSItemProvider], own: Bool) async -> [BrowseLocation] {
         guard !providers.isEmpty else { return [] }
         let found = await withCheckedContinuation { (continuation: CheckedContinuation<[BrowseLocation], Never>) in
             let gather = DropGather(expected: providers.count, continuation: continuation)
-            for provider in providers { read(provider) { gather.add($0) } }
+            for provider in providers { read(provider, own: own) { gather.add($0) } }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { gather.finish() }
         }
         return found.uniqued()
@@ -26,9 +28,10 @@ enum DropReader {
     static func locations(on pasteboard: NSPasteboard) -> [BrowseLocation] {
         let blit = NSPasteboard.PasteboardType(UTType.blitLocations.identifier)
         var found: [BrowseLocation] = []
+        let own = DragContents.ownDragActive
         for item in pasteboard.pasteboardItems ?? [] {
             if let data = item.data(forType: blit), let payload = try? JSONDecoder().decode(TransferPayload.self, from: data) {
-                found += payload.locations
+                found += own ? payload.locations : payload.fromAnotherApp.locations
             } else if let string = item.string(forType: .fileURL), let url = URL(string: string) {
                 found.append(.local(url))
             }
@@ -37,11 +40,11 @@ enum DropReader {
     }
 
     /// Reads one dragged item: Blit's own payload, or a file URL from Finder.
-    private static func read(_ provider: NSItemProvider, _ done: @escaping @Sendable ([BrowseLocation]) -> Void) {
+    private static func read(_ provider: NSItemProvider, own: Bool, _ done: @escaping @Sendable ([BrowseLocation]) -> Void) {
         if provider.hasItemConformingToTypeIdentifier(UTType.blitLocations.identifier) {
             _ = provider.loadDataRepresentation(for: .blitLocations) { data, _ in
                 let payload = data.flatMap { try? JSONDecoder().decode(TransferPayload.self, from: $0) }
-                done(payload?.locations ?? [])
+                done((own ? payload : payload?.fromAnotherApp)?.locations ?? [])
             }
         } else if provider.canLoadObject(ofClass: URL.self) {
             _ = provider.loadObject(ofClass: URL.self) { url, _ in done(url.map { [.local($0)] } ?? []) }
@@ -90,8 +93,22 @@ private final class DropGather: @unchecked Sendable {
 enum DragContents {
     private static var fromList: TransferPayload?
 
+    /// Whether a drag from a Blit file list is in the air. macOS runs one drag
+    /// at a time, so a drop while it is can only be that drag; any other drop
+    /// came from another app, whatever type it claims.
+    private(set) static var ownDragActive = false
+
     /// A drag from a Blit file list began with `payload`.
-    static func started(_ payload: TransferPayload) { fromList = payload }
+    static func started(_ payload: TransferPayload) {
+        fromList = payload
+        ownDragActive = true
+    }
+
+    /// That drag ended (after its drop, if any, was handled).
+    static func ended() {
+        fromList = nil
+        ownDragActive = false
+    }
 
     /// Whether the drag in progress holds a folder: from a Blit list, what it
     /// began with; from Finder, the file URLs on the drag pasteboard.

@@ -147,7 +147,8 @@ private struct PathSegmentView: View {
         .help(segment.isFolder ? "Go to “\(segment.name)”" : segment.name)
         .dropDestination(for: TransferPayload.self) { payloads, _ in
             guard segment.isFolder else { return false }
-            let sources = payloads.flatMap(\.locations).uniqued().filter { $0 != segment.location }
+            let trusted = DragContents.ownDragActive ? payloads : payloads.map(\.fromAnotherApp)
+            let sources = trusted.flatMap(\.locations).uniqued().filter { $0 != segment.location }
             guard !sources.isEmpty else { return false }
             browser.drop(sources, into: segment.location, name: segment.name)
             return true

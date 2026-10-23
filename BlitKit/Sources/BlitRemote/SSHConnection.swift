@@ -46,6 +46,8 @@ public struct SSHTuning: Sendable {
 
 public enum SSHError: Error, CustomStringConvertible, Sendable {
     case hostKeyRejected(host: String, port: Int, presented: HostKeyIdentity, known: [HostKeyIdentity])
+    /// The key is marked @revoked in known_hosts. Never offered for trust.
+    case hostKeyRevoked(host: String, port: Int, presented: HostKeyIdentity)
     case authenticationFailed
     case handshakeTimedOut
     case channelRequestRefused(String)
@@ -56,6 +58,8 @@ public enum SSHError: Error, CustomStringConvertible, Sendable {
         case .hostKeyRejected(let host, let port, let presented, let known):
             let onFile = known.isEmpty ? "none" : known.map(\.description).joined(separator: ", ")
             return "host key for \(host):\(port) not trusted: server presented \(presented); on file: \(onFile)"
+        case .hostKeyRevoked(let host, let port, let presented):
+            return "host key for \(host):\(port) is revoked in known_hosts (\(presented)); Blit won't connect"
         case .authenticationFailed: return "authentication failed"
         case .handshakeTimedOut: return "timed out during SSH handshake or login"
         case .channelRequestRefused(let what): return "server refused \(what)"
@@ -275,6 +279,10 @@ final class VerifierDelegate: NIOSSHClientServerAuthenticationDelegate {
             validationCompletePromise.succeed(())
         case .rejected(let presented, let known):
             let error = SSHError.hostKeyRejected(host: endpoint.host, port: endpoint.port, presented: presented, known: known)
+            watcher.note(error)
+            validationCompletePromise.fail(error)
+        case .revoked(let presented):
+            let error = SSHError.hostKeyRevoked(host: endpoint.host, port: endpoint.port, presented: presented)
             watcher.note(error)
             validationCompletePromise.fail(error)
         }

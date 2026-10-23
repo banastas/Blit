@@ -108,7 +108,7 @@ final class TorrentStatusBoard {
         var totals: [String: TorrentLiveBytes] = [:]
         for ((id, _), bytes) in zip(paths, measured) {
             var total = totals[id] ?? TorrentLiveBytes(bytes: 0, newestWrite: nil)
-            total.bytes += bytes.bytes
+            total.bytes = total.bytes.addingReportingOverflow(bytes.bytes).overflow ? .max : total.bytes + bytes.bytes
             total.newestWrite = [total.newestWrite, bytes.newestWrite].compactMap { $0 }.max()
             totals[id] = total
         }

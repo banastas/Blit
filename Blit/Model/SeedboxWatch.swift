@@ -315,7 +315,7 @@ final class SeedboxWatch {
             let client = try await connections.browseClient(for: server)
             let tree = try await remoteTree(at: RemotePath(bytes: path), using: client, includeHidden: true)
             let newest = tree.files.compactMap(\.modificationTime).max().map { Date(timeIntervalSince1970: TimeInterval($0)) }
-            return WatchEntry(name: name, location: location, size: Int64(tree.files.reduce(UInt64(0)) { $0 + $1.size }), newest: newest,
+            return WatchEntry(name: name, location: location, size: Int64(clamping: tree.files.saturatingSum(\.size)), newest: newest,
                               incomplete: tree.files.contains { Self.isPartial($0.relativePath) })
         case .local(let url):
             return try await Task.detached { () -> WatchEntry in

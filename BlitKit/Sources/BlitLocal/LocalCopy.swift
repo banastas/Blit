@@ -87,15 +87,17 @@ public func localTree(at root: String) throws -> LocalTree {
 }
 
 /// Creates a tree's folders and symlinks under `directory` (its files are
-/// copied by `copy`). Returns problems, one line each.
+/// copied by `copy`). Returns problems, one line each. Links are recreated as
+/// they are at the source (like `cp -R`); nothing Blit writes later follows
+/// them (SafePath), so a link pointing out of the folder stays only a link.
 public func recreateStructure(directories: [String], symlinks: [LocalTree.Symlink], into directory: String) -> [String] {
     let fm = FileManager.default
     var problems: [String] = []
     for relative in directories {
         do {
-            try fm.createDirectory(atPath: directory + "/" + relative, withIntermediateDirectories: true)
+            try SafePath.createDirectory(directory + "/" + relative, under: directory)
         } catch {
-            problems.append("\(relative): \(error.localizedDescription)")
+            problems.append("\(relative): \(error)")
         }
     }
     for link in symlinks {
@@ -109,7 +111,7 @@ public func recreateStructure(directories: [String], symlinks: [LocalTree.Symlin
             continue
         }
         do {
-            try fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try SafePath.createParents(of: path, under: directory)
             try fm.createSymbolicLink(atPath: path, withDestinationPath: link.target)
         } catch {
             problems.append("\(link.relativePath): \(error.localizedDescription)")
@@ -389,7 +391,9 @@ public func copy(
                     let final = item.final
                     let part = final + ".blitpart"
                     do {
-                        try FileManager.default.createDirectory(atPath: (final as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                        // Not through a symlink in the destination tree (one recreated
+                        // from the source earlier, or planted by a shared volume).
+                        try SafePath.createParents(of: final, under: directory)
                         events(.fileStarted(file))
                         var verification: CopyVerification?
                         // Not a file that's only in the cloud (iCloud Drive, Proton Drive…):
@@ -423,6 +427,8 @@ public func copy(
                         if let mtime = file.modificationTime {
                             try? FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: part)
                         }
+                        // The copy can take hours: check the folders again just before the rename.
+                        try SafePath.check(part, under: directory)
                         try renameIntoPlace(part, final, overwrite: item.replace)
                         events(.fileFinished(file, verification: verification))
                         summary.withLock {

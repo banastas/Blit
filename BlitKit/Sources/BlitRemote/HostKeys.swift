@@ -29,6 +29,8 @@ public struct HostKeyIdentity: Hashable, Sendable, CustomStringConvertible {
 public enum HostKeyVerdict: Sendable, Equatable {
     case trusted
     case rejected(presented: HostKeyIdentity, known: [HostKeyIdentity])
+    /// Listed with @revoked in known_hosts: refused outright, never offered for trust.
+    case revoked(presented: HostKeyIdentity)
 }
 
 public protocol HostKeyVerifier: Sendable {
@@ -57,15 +59,40 @@ public struct KnownHostsVerifier: HostKeyVerifier {
 
     public func verify(host: String, port: Int, key: NIOSSHPublicKey) -> HostKeyVerdict {
         let presented = HostKeyIdentity(key)
-        if pinnedFingerprints.contains(presented.fingerprint) { return .trusted }
         let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        // Revocation comes before every way of trusting a key, as in OpenSSH.
+        if Self.revokedKeys(in: text, host: host, port: port).contains(key) { return .revoked(presented: presented) }
+        if pinnedFingerprints.contains(presented.fingerprint) { return .trusted }
         let known = Self.keys(in: text, host: host, port: port)
         if known.contains(key) { return .trusted }
         return .rejected(presented: presented, known: known.map(HostKeyIdentity.init))
     }
 
+    /// Whether known_hosts revokes `key` for `host:port` (or for every host, `*`).
+    public func isRevoked(host: String, port: Int, key: NIOSSHPublicKey) -> Bool {
+        let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        return Self.revokedKeys(in: text, host: host, port: port).contains(key)
+    }
+
+    /// Keys marked `@revoked` for `host:port`: exact, comma-listed, hashed, or `*` (any host).
+    static func revokedKeys(in text: String, host: String, port: Int) -> [NIOSSHPublicKey] {
+        let pattern = port == 22 ? host : "[\(host)]:\(port)"
+        var result: [NIOSSHPublicKey] = []
+        for line in text.split(whereSeparator: \.isNewline) {
+            let fields = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard fields.count >= 4, fields[0] == "@revoked" else { continue }
+            let matches = fields[1] == "*" || (fields[1].hasPrefix("|")
+                ? hashedEntry(String(fields[1]), matches: pattern)
+                : fields[1].split(separator: ",").contains(where: { $0 == pattern }))
+            guard matches else { continue }
+            if let key = try? NIOSSHPublicKey(openSSHPublicKey: "\(fields[2]) \(fields[3])") { result.append(key) }
+        }
+        return result
+    }
+
     /// Keys recorded for `host:port`, including hashed (`|1|salt|hash`,
-    /// HashKnownHosts) entries. Marker lines (@revoked, @cert-authority) are skipped.
+    /// HashKnownHosts) entries. Marker lines (@revoked, @cert-authority) are
+    /// skipped here; revocations are read by `revokedKeys`.
     static func keys(in text: String, host: String, port: Int) -> [NIOSSHPublicKey] {
         let pattern = port == 22 ? host : "[\(host)]:\(port)"
         var result: [NIOSSHPublicKey] = []

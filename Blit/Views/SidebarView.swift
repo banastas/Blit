@@ -274,8 +274,9 @@ private struct TransferTarget: ViewModifier {
                 onDrop: { providers, zone in
                     switch zone {
                     case .into:
+                        let own = DragContents.ownDragActive   // now, as the drop lands
                         Task {
-                            let sources = await DropReader.locations(from: providers)
+                            let sources = await DropReader.locations(from: providers, own: own)
                             #if DEBUG
                             UITestHarness.dropTrail.append("received \(providers.count) items: \(sources.map(\.lastComponent))")
                             #endif

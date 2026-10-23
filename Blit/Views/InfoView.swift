@@ -134,8 +134,8 @@ struct InfoView: View {
             do {
                 let client = try await browser.connections.browseClient(for: server)
                 let tree = try await remoteTree(at: RemotePath(bytes: bytes), using: client, includeHidden: browser.showHidden)
-                let total = tree.files.reduce(UInt64(0)) { $0 + $1.size }
-                folderSize = "\(Int64(total).formatted(.byteCount(style: .file))) · \(tree.files.count) file\(tree.files.count == 1 ? "" : "s")"
+                let total = tree.files.saturatingSum(\.size)
+                folderSize = "\(Int64(clamping: total).formatted(.byteCount(style: .file))) · \(tree.files.count) file\(tree.files.count == 1 ? "" : "s")"
             } catch {
                 folderSize = "Couldn't calculate: \(error)"
             }

@@ -84,7 +84,7 @@ final class DragSize {
                 group.addTask {
                     guard let client = try? await connections.browseClient(for: server),
                           let tree = try? await remoteTree(at: RemotePath(bytes: path), using: client, includeHidden: includeHidden) else { return nil }
-                    return Int64(tree.files.reduce(UInt64(0)) { $0 + $1.size })
+                    return Int64(clamping: tree.files.saturatingSum(\.size))
                 }
                 group.addTask {
                     try? await Task.sleep(for: .seconds(15))
