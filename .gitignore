@@ -66,3 +66,6 @@ fastlane/test_output
 
 # Release builds (scripts/release.sh)
 /build/
+
+# Local security audit reports (not part of the app)
+security-audit-reports/
