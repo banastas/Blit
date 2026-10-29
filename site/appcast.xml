@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.9</title>
-      <pubDate>Thu, 29 Oct 2026 16:46:30 +0000</pubDate>
-      <sparkle:version>61</sparkle:version>
-      <sparkle:shortVersionString>1.0.9</sparkle:shortVersionString>
+      <title>Blit 1.0.10</title>
+      <pubDate>Thu, 29 Oct 2026 17:40:17 +0000</pubDate>
+      <sparkle:version>62</sparkle:version>
+      <sparkle:shortVersionString>1.0.10</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit 1.0.9. The naming presets now put a name that's all in lower case into title case: "south.park.s29e04…" becomes "South-Park_S29E04.mkv", and "the.lord.of.the.rings.2001…" becomes "The Lord of the Rings 2001.mkv". Names that already have capitals are left as they are. Title Case is also a step of its own in Rename N Items.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.9.zip" type="application/octet-stream" sparkle:edSignature="yr4vH+hUtmhYvRNKo0kI4DOXyNxfDUtCR7zkls2Pmjy3yOh2n10aaNhY3V6XVuv02XTO4UU0BuEVgFfi8HppAw==" length="6613046" />
+      <description><![CDATA[<p>Blit 1.0.10. Clicking a Blit notification, or Open Blit in the menu bar, now brings back the window you have (from the Dock, a hidden Blit, or another stage or desktop) instead of opening a second one. A new window opens only when you've closed the last.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.10.zip" type="application/octet-stream" sparkle:edSignature="+4I2dMI80bU5qifCVa586neWv7qrhbO1yd5AOjOm/ciHX6uBfqYMAHsdsTmILL9BvA3zQfjGrCLwT+5KVWzKCA==" length="6617594" />
     </item>
   </channel>
 </rss>
