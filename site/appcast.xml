@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.8</title>
-      <pubDate>Fri, 23 Oct 2026 06:36:31 +0000</pubDate>
-      <sparkle:version>60</sparkle:version>
-      <sparkle:shortVersionString>1.0.8</sparkle:shortVersionString>
+      <title>Blit 1.0.9</title>
+      <pubDate>Thu, 29 Oct 2026 16:46:30 +0000</pubDate>
+      <sparkle:version>61</sparkle:version>
+      <sparkle:shortVersionString>1.0.9</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Get Info now matches the transfer HUD: pixel labels, a pixel Copy button, a scanner while a folder's size is counted, and the verification details in a dark HUD-style panel.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.8.zip" type="application/octet-stream" sparkle:edSignature="sz0nzplxAjHE+UYa/41U8viGm317+jdNwNS2+1QQhpoeiwaPAQlKU/2xSh3U+rC7EG/b0fPtQ2Lcp7XCls7DDA==" length="6607414" />
+      <description><![CDATA[<p>Blit 1.0.9. The naming presets now put a name that's all in lower case into title case: "south.park.s29e04…" becomes "South-Park_S29E04.mkv", and "the.lord.of.the.rings.2001…" becomes "The Lord of the Rings 2001.mkv". Names that already have capitals are left as they are. Title Case is also a step of its own in Rename N Items.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.9.zip" type="application/octet-stream" sparkle:edSignature="yr4vH+hUtmhYvRNKo0kI4DOXyNxfDUtCR7zkls2Pmjy3yOh2n10aaNhY3V6XVuv02XTO4UU0BuEVgFfi8HppAw==" length="6613046" />
     </item>
   </channel>
 </rss>
