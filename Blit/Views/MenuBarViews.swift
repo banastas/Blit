@@ -108,10 +108,7 @@ struct MenuBarPanel: View {
                         transfers.queuePaused ? transfers.resumeAll() : transfers.pauseAll()
                     }
                 }
-                Button("Open Blit") {
-                    openWindow(id: "main")
-                    NSApp.activate()
-                }
+                Button("Open Blit") { BrowserWindow.show(open: openWindow) }
                 Spacer()
                 Button("Quit Blit") { NSApp.terminate(nil) }
             }
@@ -192,8 +189,7 @@ struct MenuBarTransfer: View {
             if !job.failures.isEmpty {
                 // Opens the window with the full HUD, where the WARNING panel is.
                 Button {
-                    openWindow(id: "main")
-                    NSApp.activate()
+                    BrowserWindow.show(open: openWindow)
                     transfers.isExpanded = true
                 } label: {
                     hudText("✕ \(job.failures.count) WARNING\(job.failures.count == 1 ? "" : "S")", glyphSize: 9)

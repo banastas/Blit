@@ -145,6 +145,7 @@ struct ContentView: View {
         .background(alignment: .topLeading) {
             WindowReader { window in
                 BrowserModel.activeWindow = window
+                BrowserWindow.watchCloses()
                 // A debug test copy never saves its windows: it shares the
                 // installed Blit's saved window state (a test that closed its
                 // window left every later copy, and could leave Blit, with none).
@@ -637,6 +638,8 @@ struct ContentView: View {
         UITestHarness.runArchiveTestIfRequested()
         UITestHarness.runToFileTestIfRequested(transfers: transfers)
         UITestHarness.runEmptyFolderTestIfRequested()
+        UITestHarness.runWindowProbeIfRequested()
+        UITestHarness.runWindowShowTestIfRequested()
         UITestHarness.runNativeHardeningTestIfRequested(transfers: transfers)
         UITestHarness.runRenameScrollTestIfRequested()
         UITestHarness.runNewSinceTestIfRequested()

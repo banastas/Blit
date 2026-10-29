@@ -2594,6 +2594,59 @@ enum UITestHarness {
         window.orderOut(nil)
     }
 
+    /// `-BlitWindowProbe <log>`: the app's windows as AppKit sees them (identifier,
+    /// class, visible), to tell the browser window from the others.
+    static func runWindowProbeIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitWindowProbe") else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let lines = NSApp.windows.map { window in
+                "id \(window.identifier?.rawValue ?? "nil") · \(type(of: window)) · visible \(window.isVisible) · title “\(window.title)” · browser \(window === BrowserModel.activeWindow)"
+            }
+            try? (lines + ["done"]).joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// `-BlitWindowShowTest <log>`: what a click on a notification (or the menu
+    /// bar's Open Blit) does to the browser window in the background, in the
+    /// Dock, with Blit hidden, and closed: brings it back, opening a new one only
+    /// when there's none. Also says what the check before 1.0.10 would have done.
+    static func runWindowShowTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitWindowShowTest") else { return }
+        var lines: [String] = [] {
+            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            @MainActor func browsers() -> [NSWindow] { NSApp.windows.filter(BrowserWindow.isBrowser) }
+            @MainActor func state() -> String {
+                let windows = browsers()
+                return "\(windows.filter(\.isVisible).count) shown, \(windows.filter(\.isMiniaturized).count) in the Dock, hidden \(NSApp.isHidden)"
+            }
+            @MainActor func step(_ label: String) async {
+                try? await Task.sleep(for: .milliseconds(800))
+                let old = !NSApp.windows.contains { $0.isVisible && BrowserWindow.isBrowser($0) }
+                let before = state()
+                let count = browsers().count
+                BrowserWindow.show(open: NotificationRouter.shared.openMainWindow)
+                try? await Task.sleep(for: .milliseconds(1500))
+                let opened = browsers().filter { $0.isVisible }.count > 0 && browsers().count > count
+                lines.append("\(label): before \(before) · the old check would open a new window \(old) · now opened one \(opened) · after \(state())")
+            }
+            guard let window = BrowserModel.activeWindow else { return lines.append("no window") }
+            await step("in the background")
+            window.orderOut(nil)
+            await step("open but not shown (another stage or desktop)")
+            window.miniaturize(nil)
+            await step("in the Dock")
+            NSApp.hide(nil)
+            await step("Blit hidden")
+            browsers().first?.performClose(nil)
+            await step("closed")
+            lines.append("done")
+        }
+    }
+
     /// `-BlitEmptyFolderTest <log>`: a folder with nothing in it opens and closes
     /// from its disclosure triangle, and the triangle shows which (no rows come
     /// or go, so the cell must be redrawn anyway).

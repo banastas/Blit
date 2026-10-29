@@ -194,10 +194,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                 return
             }
             // Show Details, or a click on the notification: Blit, with that job in the HUD.
-            NSApp.activate()
-            if !NSApp.windows.contains(where: { $0.isVisible && $0.identifier?.rawValue.hasPrefix("main") == true }) {
-                openMainWindow?(id: "main")
-            }
+            BrowserWindow.show(open: openMainWindow)
             // A camera card's import sheet, once a pane is up.
             if let card {
                 Task { @MainActor in
@@ -218,5 +215,58 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate {
                 Task { await ArrivalNotifications.act(action, items: arrived, preview: preview) }
             }
         }
+    }
+}
+
+/// Blit's browser window, brought forward: a hidden Blit is shown, a window in
+/// the Dock comes back, and a new one opens only when there's none. (A click on
+/// a notification opened a second window when the first was in the Dock or
+/// Blit was hidden: neither counts as visible.)
+@MainActor
+enum BrowserWindow {
+    static func isBrowser(_ window: NSWindow) -> Bool { window.identifier?.rawValue.hasPrefix("main") == true }
+
+    /// Browser windows the user closed (AppKit can keep the object): a window
+    /// that's open but not counted as visible (another Stage Manager stage or
+    /// desktop) is still brought forward, never replaced.
+    private static let closed = NSHashTable<NSWindow>.weakObjects()
+    private static var watching: (any NSObjectProtocol)?
+
+    /// Starts noting closed browser windows (once, when the first one shows).
+    static func watchCloses() {
+        guard watching == nil else { return }
+        watching = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
+            let window = note.object as? NSWindow
+            MainActor.assumeIsolated {
+                if let window, isBrowser(window) { closed.add(window) }
+            }
+        }
+    }
+
+    static func show(open: OpenWindowAction?) {
+        guard NSApp.isHidden || !NSApp.isActive else { return bringForward(open: open) }
+        NSApp.unhide(nil)
+        NSApp.activate()
+        // A window comes back a moment after Blit is shown again: wait for it
+        // before deciding there's none.
+        Task {
+            for _ in 0..<10 where !NSApp.windows.contains(where: { isBrowser($0) && ($0.isVisible || $0.isMiniaturized) }) {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            bringForward(open: open)
+        }
+    }
+
+    private static func bringForward(open: OpenWindowAction?) {
+        NSApp.activate()
+        let windows = NSApp.windows.filter { isBrowser($0) && !closed.contains($0) }
+        let shown = windows.first { $0 === BrowserModel.activeWindow && ($0.isVisible || $0.isMiniaturized) }
+            ?? windows.first(where: \.isVisible) ?? windows.first(where: \.isMiniaturized) ?? windows.first
+        guard let window = shown else {
+            open?(id: "main")
+            return
+        }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
     }
 }
