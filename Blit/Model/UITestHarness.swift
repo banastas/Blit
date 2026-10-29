@@ -778,7 +778,10 @@ enum UITestHarness {
                          "Some_Show_S01E05_720p_WEB.mkv", "Spider-Man S01E01 1080p.mkv", "Show s01e01.mkv",
                          "The Gentlemen 2019 1080p BluRay x264-GRP.mkv", "The_Gentlemen_2019_1080p.mkv",
                          // Already in the convention: no change.
-                         "South-Park_S29E01.mkv", "The Gentlemen 2019.mkv"]
+                         "South-Park_S29E01.mkv", "The Gentlemen 2019.mkv",
+                         // All in lower case: title case (version 3); a cased name keeps its case.
+                         "south.park.s29e04.1080p.web.h264-grp[TAG].mkv", "the.lord.of.the.rings.2001.1080p.bluray.mkv",
+                         "The.Lord.of.the.Rings.2001.1080p.BluRay.mkv", "show_s01e01_720p.mkv", "bobs.burgers.s14e05e06.1080p.mkv"]
                 + (UserDefaults.standard.string(forKey: "BlitPresetNames")?.components(separatedBy: "|") ?? []) {
                 let results = conventions.map { "\($0.name.prefix(6)): \(RenameRule.apply($0.steps, to: name, index: 0, date: date))" }
                 lines.append("\(name)\n    \(results.joined(separator: "\n    "))")
@@ -788,7 +791,7 @@ enum UITestHarness {
             var edited = RenamePresets.conventionsV1[1]
             edited.steps[1].replacement = " "
             edited.name = "TV Shows (spaces)"
-            let older = RenamePresets.conventionsV1 + [edited]
+            let older = [RenamePresets.conventionsV1[0], RenamePresets.conventionsV2[1], edited]   // a version 1 and a version 2
             if let data = try? JSONEncoder().encode(older) {
                 let suite = UserDefaults(suiteName: "com.banastas.blit.test-presets")
                 suite?.set(data, forKey: "renamePresets")
@@ -800,6 +803,9 @@ enum UITestHarness {
                 lines.append("upgrade: \(preset.name) · current steps \(now?.steps == preset.steps) · kept as saved \(older.first { $0.name == preset.name }?.steps == preset.steps)")
             }
             lines.append("upgrade once: \(RenamePresets.all().map(\.steps) == upgraded.map(\.steps))")
+            for name in ["south park s29e04", "the lord of the rings", "The lord of the rings", "a tale of two cities_s01e01", "e02", "2001", ""] {
+                lines.append("title case “\(name)” → “\(RenameRule.titleCased(name))”")
+            }
             RenamePresets.resetTestStore()
             // Previews
             let fm = FileManager.default

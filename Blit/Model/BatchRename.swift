@@ -7,7 +7,7 @@ import Foundation
 import UniformTypeIdentifiers
 
 struct RenameRule: Codable, Equatable, Hashable {
-    enum Mode: String, Codable, CaseIterable { case replace, add, format }
+    enum Mode: String, Codable, CaseIterable { case replace, add, format, titleCase }
     enum Format: String, Codable, CaseIterable { case index, counter, date }
 
     var mode: Mode = .replace
@@ -83,6 +83,8 @@ struct RenameRule: Codable, Equatable, Hashable {
             }
         case .add:
             renamed = addBefore ? addText + base : base + addText
+        case .titleCase:
+            renamed = Self.titleCased(base)
         case .format:
             let number: String
             switch format {
@@ -124,8 +126,43 @@ struct RenameRule: Codable, Equatable, Hashable {
         switch mode {
         case .replace: !find.isEmpty
         case .add: !addText.isEmpty
-        case .format: true
+        case .format, .titleCase: true
         }
+    }
+
+    /// Words a title keeps in lower case (but for the first).
+    static let smallWords: Set<String> = ["a", "an", "and", "as", "at", "but", "by", "for", "in", "nor", "of", "on", "or", "the", "to", "vs"]
+
+    /// A name in lower case, in title case: "south-park_s29e04" → "South-Park_S29E04",
+    /// "the lord of the rings 2001" → "The Lord of the Rings 2001". Words are
+    /// separated by spaces, dots, underscores and hyphens; an episode code
+    /// ("s01e02", "e03") is written in capitals. A name with any capital
+    /// letter outside its episode codes is left as it is: it's been cased already.
+    static func titleCased(_ name: String) -> String {
+        let separators: Set<Character> = [" ", ".", "_", "-"]
+        func isCode(_ word: Substring) -> Bool {
+            word.wholeMatch(of: /[sS]\d{1,3}[eE]\d{1,4}([eE]\d{1,4})*/) != nil || word.wholeMatch(of: /[eE]\d{1,4}/) != nil
+        }
+        // Words and the separators between them, in order.
+        var parts: [(word: Substring, separator: Bool)] = []
+        var start = name.startIndex
+        for index in name.indices where separators.contains(name[index]) {
+            if start < index { parts.append((name[start..<index], false)) }
+            parts.append((name[index...index], true))
+            start = name.index(after: index)
+        }
+        if start < name.endIndex { parts.append((name[start...], false)) }
+        let words = parts.filter { !$0.separator }.map(\.word)
+        let letters = words.filter { !isCode($0) }.joined()
+        guard letters.contains(where: \.isLetter), !letters.contains(where: \.isUppercase) else { return name }
+        var first = true
+        return parts.map { part -> String in
+            guard !part.separator else { return String(part.word) }
+            defer { first = false }
+            if isCode(part.word) { return part.word.uppercased() }
+            if !first, smallWords.contains(String(part.word)) { return String(part.word) }
+            return part.word.prefix(1).uppercased() + part.word.dropFirst()
+        }.joined()
     }
 
     /// "name.tar.gz" keeps only the last extension, and only a plausible one
@@ -182,7 +219,8 @@ enum RenamePresets {
     private static let key = "renamePresets"
     private static let versionKey = "renamePresetsVersion"
     /// 2: words separated by spaces, underscores or hyphens too, not only dots.
-    private static let version = 2
+    /// 3: a name in lower case comes out in title case ("South-Park_S29E04").
+    private static let version = 3
 
     /// The user's defaults; a test copy's own scratch suite, so tests never
     /// write the user's presets.
@@ -225,8 +263,21 @@ enum RenamePresets {
         episodeCapitals.replacement = "_S$1E$2"
         episodeCapitals.regularExpression = true
         episodeCapitals.onlyIfPreviousChanged = false   // also for a one-word name (Show_s01e01)
-        return [RenamePreset(name: "Movies (Title Year)", steps: [movieTitle, movieSpaces]),
-                RenamePreset(name: "TV Shows (Show-Name_S01E01)", steps: [episode, showHyphens, episodeCapitals])]
+        // A name in lower case ("south.park.s29e04…", "the.gentlemen.2019…") in title case.
+        var titleCase = RenameRule()
+        titleCase.mode = .titleCase
+        titleCase.onlyIfPreviousChanged = false   // after a step that may change nothing (a one-word name)
+        return [RenamePreset(name: "Movies (Title Year)", steps: [movieTitle, movieSpaces, titleCase]),
+                RenamePreset(name: "TV Shows (Show-Name_S01E01)", steps: [episode, showHyphens, titleCase, episodeCapitals])]
+    }
+
+    /// The conventions as shipped in 1.0.5 to 1.0.8: any separator, no title case.
+    static var conventionsV2: [RenamePreset] {
+        conventions.map { preset in
+            var shipped = preset
+            shipped.steps.removeAll { $0.mode == .titleCase }
+            return shipped
+        }
     }
 
     /// The conventions as shipped until 1.0.4: dots between words only.
@@ -271,7 +322,8 @@ enum RenamePresets {
               var saved = try? JSONDecoder().decode([RenamePreset].self, from: data) else { return }
         var changed = false
         for i in saved.indices {
-            guard let shipped = conventionsV1.first(where: { $0.name == saved[i].name }), shipped.steps == saved[i].steps,
+            let shipped = (conventionsV1 + conventionsV2).filter { $0.name == saved[i].name }
+            guard shipped.contains(where: { $0.steps == saved[i].steps }),
                   let current = conventions.first(where: { $0.name == saved[i].name }) else { continue }
             saved[i].steps = current.steps
             changed = true

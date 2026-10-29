@@ -43,6 +43,7 @@ struct BatchRenameView: View {
                         Text("Replace Text").tag(RenameRule.Mode.replace)
                         Text("Add Text").tag(RenameRule.Mode.add)
                         Text("Format").tag(RenameRule.Mode.format)
+                        Text("Title Case").tag(RenameRule.Mode.titleCase)
                     }
                     .pickerStyle(.segmented)
                     fields
@@ -178,6 +179,11 @@ struct BatchRenameView: View {
                 Text("after name").tag(false)
                 Text("before name").tag(true)
             }
+        case .titleCase:
+            Text("A name all in lower case gets a capital for each word: “south park s29e04” becomes “South Park S29E04”. Short words like “of” and “the” stay lower case after the first. A name with any capital letter is left as it is.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         case .format:
             Picker("Name format", selection: rule.format) {
                 Text("Name and Index").tag(RenameRule.Format.index)
