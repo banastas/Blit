@@ -559,9 +559,12 @@ private struct QueueRow: View {
                 .lineLimit(1)
                 .fixedSize()
             Spacer(minLength: 8)
-            Text(state)
-                .foregroundStyle(stateIsFailure ? HUDColor.failureText : HUDColor.dim)
-                .fixedSize()
+            // Once a second, as the strip does: a transfer's byte count isn't observed.
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                Text(state)
+                    .foregroundStyle(stateIsFailure ? HUDColor.failureText : HUDColor.dim)
+                    .fixedSize()
+            }
             controls
                 #if DEBUG
                 .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { _, frame in
