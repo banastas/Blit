@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.10</title>
-      <pubDate>Thu, 29 Oct 2026 17:40:17 +0000</pubDate>
-      <sparkle:version>62</sparkle:version>
-      <sparkle:shortVersionString>1.0.10</sparkle:shortVersionString>
+      <title>Blit 1.0.11</title>
+      <pubDate>Sun, 01 Nov 2026 16:27:39 +0000</pubDate>
+      <sparkle:version>63</sparkle:version>
+      <sparkle:shortVersionString>1.0.11</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit 1.0.10. Clicking a Blit notification, or Open Blit in the menu bar, now brings back the window you have (from the Dock, a hidden Blit, or another stage or desktop) instead of opening a second one. A new window opens only when you've closed the last.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.10.zip" type="application/octet-stream" sparkle:edSignature="+4I2dMI80bU5qifCVa586neWv7qrhbO1yd5AOjOm/ciHX6uBfqYMAHsdsTmILL9BvA3zQfjGrCLwT+5KVWzKCA==" length="6617594" />
+      <description><![CDATA[<p>Blit 1.0.11. The queue list in the transfer HUD now updates a running transfer's percentage once a second, keeping pace with the strip and the tab's progress badge instead of lagging behind them.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.11.zip" type="application/octet-stream" sparkle:edSignature="XPFvj8dKpSlErWaYUjgJKmcyAsUVOx5Idz63UKL9rHz10OQ6coGuMmMXpvBQLjLgRGQ8UvR+VLZS0bu0cW1DAg==" length="6608389" />
     </item>
   </channel>
 </rss>
