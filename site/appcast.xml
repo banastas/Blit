@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.11</title>
-      <pubDate>Sun, 01 Nov 2026 16:27:39 +0000</pubDate>
-      <sparkle:version>63</sparkle:version>
-      <sparkle:shortVersionString>1.0.11</sparkle:shortVersionString>
+      <title>Blit 1.0.12</title>
+      <pubDate>Tue, 03 Nov 2026 15:50:22 +0000</pubDate>
+      <sparkle:version>64</sparkle:version>
+      <sparkle:shortVersionString>1.0.12</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit 1.0.11. The queue list in the transfer HUD now updates a running transfer's percentage once a second, keeping pace with the strip and the tab's progress badge instead of lagging behind them.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.11.zip" type="application/octet-stream" sparkle:edSignature="XPFvj8dKpSlErWaYUjgJKmcyAsUVOx5Idz63UKL9rHz10OQ6coGuMmMXpvBQLjLgRGQ8UvR+VLZS0bu0cW1DAg==" length="6608389" />
+      <description><![CDATA[<p>The Movies naming preset now finds a year in brackets or parentheses: “A Few Good Men [1992] 2160p…” becomes “A Few Good Men 1992.mkv”.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.12.zip" type="application/octet-stream" sparkle:edSignature="zWL6FxUbKfQSbcPYYyq6ZY8gWD8x1YAkHF5ne+4edJvwnOCVVoNqS9dpnIw0Tffa+qpkNQNhzNOPj6xN2oTgAA==" length="6608365" />
     </item>
   </channel>
 </rss>
