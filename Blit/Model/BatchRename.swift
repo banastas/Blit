@@ -220,7 +220,8 @@ enum RenamePresets {
     private static let versionKey = "renamePresetsVersion"
     /// 2: words separated by spaces, underscores or hyphens too, not only dots.
     /// 3: a name in lower case comes out in title case ("South-Park_S29E04").
-    private static let version = 3
+    /// 4: a movie's year may be in brackets or parentheses ("Title [1992] 2160p…").
+    private static let version = 4
 
     /// The user's defaults; a test copy's own scratch suite, so tests never
     /// write the user's presets.
@@ -240,10 +241,20 @@ enum RenamePresets {
     /// TV "South.Park.S29E01.1080p…mkv" → "South-Park_S29E01.mkv". Words may be
     /// separated by dots, spaces, underscores or hyphens ("Some Show S01E02
     /// Title 1080p…mkv" → "Some-Show_S01E02.mkv"), and the episode is written
-    /// in capitals ("s01e03" → "S01E03").
+    /// in capitals ("s01e03" → "S01E03"). A movie's year may be in brackets or
+    /// parentheses ("A Few Good Men [1992] 2160p…mkv" → "A Few Good Men 1992.mkv").
     static var conventions: [RenamePreset] {
+        conventions(movieYear: #"^(.+)[. _-][(\[]?((?:19|20)\d{2})[)\]]?(?:[. _-].*)?$"#)   // the last year in the name
+    }
+
+    /// The conventions as shipped in 1.0.9 to 1.0.11: a year in brackets isn't found.
+    static var conventionsV3: [RenamePreset] {
+        conventions(movieYear: #"^(.+)[. _-]((?:19|20)\d{2})(?:[. _-].*)?$"#)
+    }
+
+    private static func conventions(movieYear: String) -> [RenamePreset] {
         var movieTitle = RenameRule()
-        movieTitle.find = #"^(.+)[. _-]((?:19|20)\d{2})(?:[. _-].*)?$"#   // the last year in the name
+        movieTitle.find = movieYear
         movieTitle.replacement = "$1 $2"
         movieTitle.regularExpression = true
         var movieSpaces = RenameRule()
@@ -273,7 +284,7 @@ enum RenamePresets {
 
     /// The conventions as shipped in 1.0.5 to 1.0.8: any separator, no title case.
     static var conventionsV2: [RenamePreset] {
-        conventions.map { preset in
+        conventionsV3.map { preset in
             var shipped = preset
             shipped.steps.removeAll { $0.mode == .titleCase }
             return shipped
@@ -322,7 +333,7 @@ enum RenamePresets {
               var saved = try? JSONDecoder().decode([RenamePreset].self, from: data) else { return }
         var changed = false
         for i in saved.indices {
-            let shipped = (conventionsV1 + conventionsV2).filter { $0.name == saved[i].name }
+            let shipped = (conventionsV1 + conventionsV2 + conventionsV3).filter { $0.name == saved[i].name }
             guard shipped.contains(where: { $0.steps == saved[i].steps }),
                   let current = conventions.first(where: { $0.name == saved[i].name }) else { continue }
             saved[i].steps = current.steps

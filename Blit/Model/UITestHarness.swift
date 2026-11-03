@@ -781,7 +781,13 @@ enum UITestHarness {
                          "South-Park_S29E01.mkv", "The Gentlemen 2019.mkv",
                          // All in lower case: title case (version 3); a cased name keeps its case.
                          "south.park.s29e04.1080p.web.h264-grp[TAG].mkv", "the.lord.of.the.rings.2001.1080p.bluray.mkv",
-                         "The.Lord.of.the.Rings.2001.1080p.BluRay.mkv", "show_s01e01_720p.mkv", "bobs.burgers.s14e05e06.1080p.mkv"]
+                         "The.Lord.of.the.Rings.2001.1080p.BluRay.mkv", "show_s01e01_720p.mkv", "bobs.burgers.s14e05e06.1080p.mkv",
+                         // A year in brackets or parentheses (version 4).
+                         "A Few Good Men [1992] 2160p Hybrid UHD BDRip DV HDR10 x265 TrueHD Atmos 7.1 Kira [SEV].mkv",
+                         "A Christmas Story (1983) (2160p UHD BluRay x265 DV HDR DDP 2.0 English - DiscoD HONE).mkv",
+                         "12 Angry Men [1957] 2160p UHD BDRip DV HDR10 x265 FLAC 2.0 Kira [SEV].mkv",
+                         "Army.of.Darkness.1992.Theatrical.Cut.2160p.UHD.Bluray.REMUX.DV.HDR10.HEVC.DTS-HD.MA.5.1-GHD.mkv",
+                         "Movie (2019).mkv"]
                 + (UserDefaults.standard.string(forKey: "BlitPresetNames")?.components(separatedBy: "|") ?? []) {
                 let results = conventions.map { "\($0.name.prefix(6)): \(RenameRule.apply($0.steps, to: name, index: 0, date: date))" }
                 lines.append("\(name)\n    \(results.joined(separator: "\n    "))")
@@ -791,7 +797,7 @@ enum UITestHarness {
             var edited = RenamePresets.conventionsV1[1]
             edited.steps[1].replacement = " "
             edited.name = "TV Shows (spaces)"
-            let older = [RenamePresets.conventionsV1[0], RenamePresets.conventionsV2[1], edited]   // a version 1 and a version 2
+            let older = [RenamePresets.conventionsV3[0], RenamePresets.conventionsV2[1], edited]   // a version 3 and a version 2
             if let data = try? JSONEncoder().encode(older) {
                 let suite = UserDefaults(suiteName: "com.banastas.blit.test-presets")
                 suite?.set(data, forKey: "renamePresets")
