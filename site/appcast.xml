@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.0.12</title>
-      <pubDate>Tue, 03 Nov 2026 15:50:22 +0000</pubDate>
-      <sparkle:version>64</sparkle:version>
-      <sparkle:shortVersionString>1.0.12</sparkle:shortVersionString>
+      <title>Blit 1.1</title>
+      <pubDate>Wed, 04 Nov 2026 15:39:42 +0000</pubDate>
+      <sparkle:version>65</sparkle:version>
+      <sparkle:shortVersionString>1.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>The Movies naming preset now finds a year in brackets or parentheses: “A Few Good Men [1992] 2160p…” becomes “A Few Good Men 1992.mkv”.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.0.12.zip" type="application/octet-stream" sparkle:edSignature="zWL6FxUbKfQSbcPYYyq6ZY8gWD8x1YAkHF5ne+4edJvwnOCVVoNqS9dpnIw0Tffa+qpkNQNhzNOPj6xN2oTgAA==" length="6608365" />
+      <description><![CDATA[<p>Blit is now free and open source under the MIT license. No trial and no license key: every feature works on every Mac. If you'd like to support it, Blit › Support Blit… lets you pay what you want.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.1.zip" type="application/octet-stream" sparkle:edSignature="h5O3ARyyXWZJATipgVkQ+Q3V35jOxkcRpioGPFviznNjGC9WLvDn3e3+rjHDup/v/YLNzWv4lbUcQ6R3PueJDg==" length="6576181" />
     </item>
   </channel>
 </rss>
