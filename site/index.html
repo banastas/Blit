@@ -567,7 +567,7 @@ body.checkout-open { overflow: hidden; }
         <tr><td>Updates</td><td>Sparkle, with EdDSA-signed releases, checked daily (or off in Settings).</td></tr>
         <tr><td>Trust</td><td>Host keys pinned, known_hosts honoured (hashed entries too), and a changed key refused.</td></tr>
         <tr><td>Privacy</td><td>No accounts, analytics or telemetry. Blit talks only to your servers, NAS and drives, plus a daily update check.</td></tr>
-        <tr><td>Distribution</td><td>Developer ID, notarized by Apple. The signed build is pay-what-you-want.</td></tr>
+        <tr><td>Distribution</td><td>Developer ID, notarized by Apple. Free to download; support is optional.</td></tr>
         <tr><td>Source</td><td><a href="https://github.com/banastas/Blit">github.com/banastas/Blit</a>, MIT license. Swift 6; builds with Xcode 27, and the engine and the <span class="k">blit</span> CLI with <span class="k">swift build</span>.</td></tr>
       </table>
     </div>
@@ -579,15 +579,15 @@ body.checkout-open { overflow: hidden; }
       <div class="section-head"><span class="label">07</span><h2>Free and open source</h2></div>
       <div class="price">
         <div class="price-main">
-          <div class="label dim">Pay what you want</div>
+          <div class="label dim">MIT license</div>
           <div class="price-v">FREE</div>
-          <div class="dim">Open source under the MIT license.</div>
+          <div class="dim">Paying is optional. If Blit saves you time, you can support it.</div>
         </div>
         <ul class="price-list">
           <li><span data-glyph="check"></span> Every feature on every Mac: no trial, no account, no license key</li>
           <li><span data-glyph="check"></span> The source is on GitHub: read how it verifies, build it, fork it</li>
           <li><span data-glyph="check"></span> The download is signed and notarized by Apple, with signed automatic updates</li>
-          <li><span data-glyph="check"></span> Paying is optional and keeps Blit maintained, with 30-day refunds</li>
+          <li><span data-glyph="check"></span> Support pays for upkeep: you choose the amount, and it's refundable for 30 days</li>
           <li><span data-glyph="check"></span> <span>Bugs and ideas go to <a href="https://github.com/banastas/Blit/issues">GitHub issues</a></span></li>
         </ul>
         <div class="price-cta">
@@ -595,9 +595,9 @@ body.checkout-open { overflow: hidden; }
           <!-- Blit's Lemon Squeezy checkout (product 1423615, priced pay-what-you-want), as an
                overlay (?embed=1&desc=0, as Rune's). Blit › Support Blit… in the app links here. -->
           <a class="btn btn-quiet" id="buy-button" href="https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46?desc=0"
-             data-checkout="https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46?embed=1&desc=0">Pay what you want</a>
+             data-checkout="https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46?embed=1&desc=0">Support Blit</a>
           <a class="btn btn-quiet" href="https://github.com/banastas/Blit">Source on GitHub</a>
-          <span class="label dim" id="buy-note">Optional · secure payment by Lemon Squeezy · 30-day refunds</span>
+          <span class="label dim" id="buy-note">Optional · any amount · secure payment by Lemon Squeezy</span>
         </div>
       </div>
     </div>
@@ -770,7 +770,7 @@ body.checkout-open { overflow: hidden; }
 
   // ---------- download and checkout ----------
   // The Download buttons fetch the current release (the release script publishes
-  // downloads/Blit.zip), and Pay what you want opens Lemon Squeezy's checkout overlay. The
+  // downloads/Blit.zip), and Support Blit opens Lemon Squeezy's checkout overlay. The
   // overlay is drawn here, as lemon.js draws it and as Rune's site does, not by lemon.js: a
   // content blocker that stopped the script would have left the button doing nothing. Nothing
   // loads from Lemon Squeezy until it's clicked, so a plain visit makes no third-party requests.
