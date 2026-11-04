@@ -11,14 +11,14 @@
 <meta property="og:url" content="https://blit.banast.as/">
 <meta property="og:site_name" content="Blit">
 <meta property="og:title" content="Blit — big files, moved fast, proven intact">
-<meta property="og:description" content="A native Mac app that moves big files fast between SFTP servers, external drives and NAS shares, and checks every file by SHA-256 at its destination.">
+<meta property="og:description" content="A free, open-source Mac app that moves big files fast between SFTP servers, external drives and NAS shares, and checks every file by SHA-256 at its destination.">
 <meta property="og:image" content="https://blit.banast.as/brand/blit-card-1200x630.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="Blit's pixel-terminal transfer HUD: a 61 GB camera shoot downloading at 74 MB/s over 3 connections, 17 of 26 files verified by SHA-256.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Blit — big files, moved fast, proven intact">
-<meta name="twitter:description" content="A native Mac app that moves big files fast between SFTP servers, external drives and NAS shares, and checks every file by SHA-256 at its destination.">
+<meta name="twitter:description" content="A free, open-source Mac app that moves big files fast between SFTP servers, external drives and NAS shares, and checks every file by SHA-256 at its destination.">
 <meta name="twitter:image" content="https://blit.banast.as/brand/blit-card-1200x630.png">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <style>
@@ -217,6 +217,12 @@ h2 { font-family: var(--label); font-weight: normal; font-size: clamp(22px, 3.4v
 .card p:last-child { margin-bottom: 0; }
 .card .k { color: var(--bright); }
 
+.also { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px 28px; margin: 22px 0 0; }
+.also div { border-top: 1px dashed var(--off); padding-top: 10px; }
+.also dt { font-family: var(--label); font-size: 13px; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 4px; }
+.also dd { margin: 0; color: #c4c4c4; }
+.also .k { color: var(--bright); }
+
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .metric { border: 1px solid var(--border); padding: 12px 14px; }
 .metric .v { font-size: 56px; line-height: 0.9; margin-top: 2px; }
@@ -252,11 +258,6 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: 
 .price-cta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; border-top: 1px dashed var(--off); padding-top: 16px; }
 .btn { font-family: var(--label); font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--bright); color: var(--bright); padding: 10px 16px 9px; display: inline-block; }
 .btn:hover { background: var(--bright); color: var(--bg); }
-.ph { margin: 18px 0 0; }
-.ph a { color: var(--dim); }
-.ph a:hover { color: var(--bright); }
-.btn.is-soon { border-color: var(--border); color: var(--dim); cursor: default; }
-.btn.is-soon:hover { background: none; color: var(--dim); }
 @media (max-width: 820px) { .price { grid-template-columns: 1fr; } }
 
 /* ---------- small screens: the HUD stacks like the menu bar panel ---------- */
@@ -311,6 +312,7 @@ body.checkout-open { overflow: hidden; }
       <a href="#mac">Mac</a>
       <a href="#spec">Spec</a>
       <a href="#support">Support</a>
+      <a href="https://github.com/banastas/Blit">GitHub ↗</a>
     </nav>
   </div>
 </header>
@@ -322,7 +324,7 @@ body.checkout-open { overflow: hidden; }
       <div>
         <h1>BLIT</h1>
         <p class="tagline">Big files, moved fast, proven intact.<span class="cursor" aria-hidden="true"></span></p>
-        <p class="sub">A native Mac app for moving large files between SFTP servers, external drives and NAS shares. Every file is checked by SHA-256 at its destination before it gets its real name, and Blit can fetch new downloads from your server as they finish.</p>
+        <p class="sub">A native Mac app for moving large files between SFTP servers, external drives and NAS shares. Every file is checked by SHA-256 where it lands before it gets its real name. Free and open source.</p>
         <div class="chips label">
           <span class="chip">macOS <b>27</b></span>
           <span class="chip">Apple silicon</span>
@@ -330,11 +332,10 @@ body.checkout-open { overflow: hidden; }
           <span class="chip">Free · MIT</span>
         </div>
         <div class="cta">
-          <a class="btn is-soon" id="download-button" aria-disabled="true" data-href="downloads/Blit.zip">Download</a>
+          <a class="btn" id="download-button" href="downloads/Blit.zip" download>Download</a>
           <a class="btn btn-quiet" id="source-top" href="https://github.com/banastas/Blit">Source on GitHub</a>
-          <span class="label dim" id="download-note">Coming soon · macOS 27 · Apple silicon</span>
+          <span class="label dim" id="download-note">Notarized by Apple</span>
         </div>
-        <p class="label ph" id="ph-line" hidden><a id="ph-link" href="#">Blit is on Product Hunt today →</a></p>
       </div>
     </div>
   </section>
@@ -399,7 +400,7 @@ body.checkout-open { overflow: hidden; }
           <h3><span data-glyph="check"></span> Hashed on the server</h3>
           <p>Blit asks the server for each file's <span class="k">SHA-256</span> while the file is still in its cache, and hashes its own copy as the bytes arrive. The two have to match before the file gets its real name.</p>
           <p class="dim">Until then it's a <span class="k">.blitpart</span>. A partly written file never has its final name.</p>
-          <p class="dim">The check runs alongside the download and shows its own progress and time left, whether it runs on the server, on the NAS or as a read-back, so a 70 GB file never shows "verifying" with no progress. For more speed, switch to size checks in Settings; moves still verify by SHA-256.</p>
+          <p class="dim">The check runs alongside the download with its own progress and time left, so a 70 GB file never sits at "verifying".</p>
         </div>
         <div class="card">
           <h3><span data-glyph="check"></span> Hashed on the NAS</h3>
@@ -408,7 +409,7 @@ body.checkout-open { overflow: hidden; }
         </div>
         <div class="card">
           <h3><span data-glyph="cross"></span> No silent size-only checks</h3>
-          <p>If a hash is interrupted, Blit doesn't accept a matching size instead. Size-only checks are labelled everywhere they appear, and a move deletes a source only after its copy's hash has matched.</p>
+          <p>If a hash is interrupted, Blit doesn't settle for a matching size. Size-only checks, which you can choose in Settings for more speed, are labelled everywhere they appear, and a move deletes a source only after its copy's hash has matched.</p>
         </div>
         <div class="card">
           <h3><span data-glyph="arrow"></span> A record of every file</h3>
@@ -423,12 +424,12 @@ body.checkout-open { overflow: hidden; }
       <div class="section-head"><span class="label">02</span><h2>Fast across an ocean</h2></div>
       <p class="sub" style="margin-bottom:22px">Tuned for a server 148 ms away, where one standard SFTP connection manages about 10 MB/s. Parallel connections, pipelined reads, and a receive buffer bigger than macOS allows by default: 22.5 TB a month in about 4.7 days instead of 24.5.</p>
       <div class="metrics">
-        <div class="metric"><div class="label dim">Up to</div><div class="v">769%<small> FASTER</small></div><div class="d">for one big file than stock <span class="k">sftp</span> <span class="dim">(93.0 vs 10.7 MB/s)</span></div></div>
-        <div class="metric"><div class="label dim">Up to</div><div class="v">300%<small> FASTER</small></div><div class="d">per connection than stock <span class="k">sftp</span> <span class="dim">(42.9 vs 10.7 MB/s)</span></div></div>
-        <div class="metric"><div class="label dim">Up to</div><div class="v">278%<small> FASTER</small></div><div class="d">than the fastest single-connection Mac client we measured <span class="dim">(93.0 vs 24.6 MB/s)</span></div></div>
-        <div class="metric"><div class="label dim">SSD → NAS</div><div class="v">94%<small> OF LINE RATE</small></div><div class="d">on 1 GbE, with every file verified on the NAS <span class="dim">(106.3 of ~113 MB/s)</span></div></div>
+        <div class="metric"><div class="label dim">One big file</div><div class="v">93.0<small> MB/S</small></div><div class="d">8.7× stock <span class="k">sftp</span> <span class="dim">(10.7 MB/s)</span></div></div>
+        <div class="metric"><div class="label dim">One connection</div><div class="v">42.9<small> MB/S</small></div><div class="d">4× stock <span class="k">sftp</span>, from a bigger receive buffer and pipelined reads</div></div>
+        <div class="metric"><div class="label dim">Other Mac clients</div><div class="v">3.8×</div><div class="d">the fastest single-connection client we measured <span class="dim">(24.6 MB/s)</span></div></div>
+        <div class="metric"><div class="label dim">SSD → NAS</div><div class="v">94%<small> OF LINE</small></div><div class="d">on 1 GbE, every file verified on the NAS <span class="dim">(106.3 of ~113 MB/s)</span></div></div>
       </div>
-      <p class="label dim" style="margin:10px 2px 0">Measured from the Mac to a server 148 ms away, same server and network for every method. Verification runs alongside the transfer, or can be switched to size checks for more speed.</p>
+      <p class="label dim" style="margin:10px 2px 0">Measured from the Mac to a server 148 ms away, same server and network for every method. The scripts are in the repo: <a href="https://github.com/banastas/Blit/tree/main/scripts">scripts/sftp-compare.sh</a>.</p>
       <div class="grid" style="margin-top:14px">
         <div class="card">
           <h3><span data-glyph="up"></span> Resumes anything</h3>
@@ -482,7 +483,7 @@ body.checkout-open { overflow: hidden; }
   <section class="block" id="hud">
     <div class="wrap">
       <div class="section-head"><span class="label">04</span><h2>The HUD</h2></div>
-      <p class="sub">The rest of Blit is a standard Mac app. Transfer status is shown in a 1-bit pixel-terminal display, styled after 1-bit pixel art and the Nostromo's screens in Alien: black and grey, with muted red only for failures. Every state has a glyph or a word, never color alone.</p>
+      <p class="sub">The rest of Blit is a standard Mac app. Transfers get a 1-bit pixel-terminal display, after the Nostromo's screens in Alien: black and grey, with muted red only for failures. Every state has a glyph or a word, never color alone.</p>
       <div class="legend">
         <div><span class="g" data-glyph="down"></span> coming in: downloads, drive to drive</div>
         <div><span class="g" data-glyph="up"></span> going out to a NAS share</div>
@@ -531,34 +532,16 @@ body.checkout-open { overflow: hidden; }
           <h3>Compare Panes</h3>
           <p><span class="k">⌃⌘C</span> marks every file against the other pane: only here, the same, verified there, or different. Useful as a check before a move.</p>
         </div>
-        <div class="card">
-          <h3>Import your servers</h3>
-          <p>Import your servers from Transmit or ForkLift in one step. Measure… finds the number of connections that is fastest for each server.</p>
-        </div>
-        <div class="card">
-          <h3>In the menu bar</h3>
-          <p>Time left, at a fixed width so other menu bar items don't shift, while the arrow's tray fills. A download and a NAS copy at once show as two lines, one per lane.</p>
-          <p class="dim">A failure leaves a red <span data-glyph="cross"></span> until you've seen it. The Mac stays awake while Blit works.</p>
-        </div>
-        <div class="card">
-          <h3>Detailed notifications</h3>
-          <p><span class="k">Copied to Movies</span> · 71.6 GB · verified on the NAS · 11 min at 108 MB/s.</p>
-          <p class="dim">Show in Finder when it's done, Show Details when something went wrong.</p>
-        </div>
-        <div class="card">
-          <h3>Empty a drive's Trash</h3>
-          <p>Deleted files keep their space until the Trash is emptied. Empty one drive's Trash from the sidebar, or from a transfer waiting for space.</p>
-        </div>
-        <div class="card">
-          <h3>The HUD opens and closes itself</h3>
-          <p>The full HUD opens when a transfer starts, if the window has room for it, and collapses to the strip once everything has verified. It stays open while something needs your attention.</p>
-        </div>
-        <div class="card">
-          <h3>Automatic updates</h3>
-          <p>Signed updates, checked once a day and installed in a click from Blit › Check for Updates.</p>
-        </div>
       </div>
-      <div style="margin-top:14px">
+      <dl class="also">
+        <div><dt>Import your servers</dt><dd>From Transmit or ForkLift in one step. Measure… finds each server's fastest number of connections.</dd></div>
+        <div><dt>In the menu bar</dt><dd>Time left at a fixed width, one line per lane. A failure leaves a red <span data-glyph="cross"></span> until you've seen it.</dd></div>
+        <div><dt>Detailed notifications</dt><dd><span class="k">Copied to Movies</span> · 71.6 GB · verified on the NAS · 11 min at 108 MB/s.</dd></div>
+        <div><dt>Empty a drive's Trash</dt><dd>From the sidebar, or from a transfer waiting for space.</dd></div>
+        <div><dt>A HUD that tidies itself</dt><dd>Opens when a transfer starts, collapses once everything has verified, stays while something needs you.</dd></div>
+        <div><dt>Keeps the Mac awake</dt><dd>While Blit works, and signed updates install from Blit › Check for Updates.</dd></div>
+      </dl>
+      <div style="margin-top:22px">
         <div class="caption label dim"><span>A command-line tool, too</span></div>
         <div class="term"><span class="p">$</span> blit get me@server downloads/SHOOT_2026-09 /Volumes/SSD/Incoming
 <span class="p">CONNECT · 3 CONNECTIONS · 255K×32 · EN7</span>
@@ -584,7 +567,8 @@ body.checkout-open { overflow: hidden; }
         <tr><td>Updates</td><td>Sparkle, with EdDSA-signed releases, checked daily (or off in Settings).</td></tr>
         <tr><td>Trust</td><td>Host keys pinned, known_hosts honoured (hashed entries too), and a changed key refused.</td></tr>
         <tr><td>Privacy</td><td>No accounts, analytics or telemetry. Blit talks only to your servers, NAS and drives, plus a daily update check.</td></tr>
-        <tr><td>Distribution</td><td>Developer ID, notarized by Apple. MIT-licensed source on GitHub; the signed build is pay-what-you-want.</td></tr>
+        <tr><td>Distribution</td><td>Developer ID, notarized by Apple. The signed build is pay-what-you-want.</td></tr>
+        <tr><td>Source</td><td><a href="https://github.com/banastas/Blit">github.com/banastas/Blit</a>, MIT license. Swift 6; builds with Xcode 27, and the engine and the <span class="k">blit</span> CLI with <span class="k">swift build</span>.</td></tr>
       </table>
     </div>
   </section>
@@ -592,7 +576,7 @@ body.checkout-open { overflow: hidden; }
   <section class="block" id="support">
     <a id="buy" aria-hidden="true"></a>
     <div class="wrap">
-      <div class="section-head"><span class="label">07</span><h2>Support</h2></div>
+      <div class="section-head"><span class="label">07</span><h2>Free and open source</h2></div>
       <div class="price">
         <div class="price-main">
           <div class="label dim">Pay what you want</div>
@@ -601,18 +585,19 @@ body.checkout-open { overflow: hidden; }
         </div>
         <ul class="price-list">
           <li><span data-glyph="check"></span> Every feature on every Mac: no trial, no account, no license key</li>
-          <li><span data-glyph="check"></span> The source is on GitHub: read it, build it, fork it</li>
+          <li><span data-glyph="check"></span> The source is on GitHub: read how it verifies, build it, fork it</li>
           <li><span data-glyph="check"></span> The download is signed and notarized by Apple, with signed automatic updates</li>
-          <li><span data-glyph="check"></span> Paying is optional and keeps Blit maintained; 30-day refunds if you change your mind</li>
+          <li><span data-glyph="check"></span> Paying is optional and keeps Blit maintained, with 30-day refunds</li>
+          <li><span data-glyph="check"></span> <span>Bugs and ideas go to <a href="https://github.com/banastas/Blit/issues">GitHub issues</a></span></li>
         </ul>
         <div class="price-cta">
-          <a class="btn is-soon" id="trial-button" aria-disabled="true" data-href="downloads/Blit.zip">Download</a>
+          <a class="btn" id="download-bottom" href="downloads/Blit.zip" download>Download</a>
           <!-- Blit's Lemon Squeezy checkout (product 1423615, priced pay-what-you-want), as an
                overlay (?embed=1&desc=0, as Rune's). Blit › Support Blit… in the app links here. -->
           <a class="btn btn-quiet" id="buy-button" href="https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46?desc=0"
              data-checkout="https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46?embed=1&desc=0">Pay what you want</a>
           <a class="btn btn-quiet" href="https://github.com/banastas/Blit">Source on GitHub</a>
-          <span class="label dim" id="buy-note">Optional · secure payment by Lemon Squeezy</span>
+          <span class="label dim" id="buy-note">Optional · secure payment by Lemon Squeezy · 30-day refunds</span>
         </div>
       </div>
     </div>
@@ -622,7 +607,7 @@ body.checkout-open { overflow: hidden; }
 <footer>
   <div class="wrap label">
     <span>BLIT · © 2026 banast.as · From the maker of <a href="https://rune.banast.as/">Rune</a></span>
-    <span class="footer-links"><a href="legal.html#terms">Terms</a><a href="legal.html#privacy">Privacy</a><a href="legal.html#refunds">Refunds</a><a href="mailto:me@banast.as">Contact</a></span>
+    <span class="footer-links"><a href="https://github.com/banastas/Blit">GitHub</a><a href="legal.html#terms">Terms</a><a href="legal.html#privacy">Privacy</a><a href="legal.html#refunds">Refunds</a><a href="mailto:me@banast.as">Contact</a></span>
   </div>
 </footer>
 
@@ -789,42 +774,19 @@ body.checkout-open { overflow: hidden; }
   // overlay is drawn here, as lemon.js draws it and as Rune's site does, not by lemon.js: a
   // content blocker that stopped the script would have left the button doing nothing. Nothing
   // loads from Lemon Squeezy until it's clicked, so a plain visit makes no third-party requests.
-  const LIVE = true;   // since 1.0 (2026-10-08); free and open source since 2026-11-04
-  const CHECKOUT_LIVE = LIVE;
-  if (LIVE) {
-    for (const id of ["download-button", "trial-button"]) {
-      const b = $(id);
-      b.href = b.dataset.href;
-      b.setAttribute("download", "");
-      b.classList.remove("is-soon");
-      b.removeAttribute("aria-disabled");
-    }
-    $("download-note").textContent = "Free and open source · macOS 27 · Apple silicon";
-  }
-  // ---------- Product Hunt (launch week) ----------
-  // A plain link, not Product Hunt's badge: the badge is an image from their server, and a plain
-  // visit makes no third-party requests (legal.html). Shown from midnight Pacific on launch day
-  // for a week, so the site can be pushed before then; "today" on the day itself. As Rune's.
-  {
-    const PH_URL = "https://www.producthunt.com/products/blit-2";   // Blit's page on Product Hunt
-    const start = Date.parse("2026-10-09T00:00:00-07:00"), today = Date.now();
-    if (today >= start && today < start + 7 * 86400e3) {
-      const link = $("ph-link");
-      link.href = PH_URL;
-      if (today >= start + 86400e3) link.textContent = "Blit on Product Hunt →";
-      $("ph-line").hidden = false;
-    }
-  }
+  // The download note names the current release, from the update feed (same site, no
+  // third party); without it the note stays "Notarized by Apple".
+  fetch("appcast.xml").then((r) => r.ok ? r.text() : "").then((xml) => {
+    const v = /<sparkle:shortVersionString>([^<]+)</.exec(xml);
+    if (v) $("download-note").textContent = `Blit ${v[1]} · notarized by Apple`;
+  }).catch(() => {});
   const buy = $("buy-button");
   const checkout = buy && buy.dataset.checkout;
-  if (checkout && (CHECKOUT_LIVE || new URLSearchParams(location.search).has("checkout"))) {
+  if (checkout) {
     // The same checkout as a plain page (without embed=1), for ⌘-clicks and the fallback.
     const page = new URL(checkout);
     page.searchParams.delete("embed");
     buy.href = page.href;
-    buy.classList.remove("is-soon");
-    buy.removeAttribute("aria-disabled");
-    $("buy-note").textContent = (CHECKOUT_LIVE ? "" : "PREVIEW · ") + "Optional · secure payment by Lemon Squeezy · 30-day refunds";
     const origin = new URL(checkout).origin;
     let backdrop = null, frame = null, fallback = 0;
     const close = () => {
