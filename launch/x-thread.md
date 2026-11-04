@@ -71,7 +71,9 @@ It's also a proper file browser: two panes (F5 copy, F6 move), a tab for each pa
 
 Native Swift and SwiftUI on SwiftNIO SSH. macOS 27, Apple Silicon.
 
-$19 once, 7-day free trial, no account.
+Free and open source (MIT), no account. The signed build is pay-what-you-want.
+
+https://github.com/banastas/Blit
 
 https://blit.banast.as
 

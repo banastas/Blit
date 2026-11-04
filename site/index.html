@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Blit — verified transfers for macOS</title>
-<meta name="description" content="Blit is a native macOS app for fast, verified transfers of big files: SFTP servers, external drives and NAS shares, every file checked by SHA-256 at its destination.">
+<meta name="description" content="Blit is a free, open-source macOS app for fast, verified transfers of big files: SFTP servers, external drives and NAS shares, every file checked by SHA-256 at its destination.">
 <meta name="theme-color" content="#0a0a0a">
 <!-- The link preview on X, Hacker News, Slack, Messages and the rest. -->
 <meta property="og:type" content="website">
@@ -310,7 +310,7 @@ body.checkout-open { overflow: hidden; }
       <a href="#hud">HUD</a>
       <a href="#mac">Mac</a>
       <a href="#spec">Spec</a>
-      <a href="#buy">Price</a>
+      <a href="#support">Support</a>
     </nav>
   </div>
 </header>
@@ -327,11 +327,11 @@ body.checkout-open { overflow: hidden; }
           <span class="chip">macOS <b>27</b></span>
           <span class="chip">Apple silicon</span>
           <span class="chip">SFTP · SMB · local</span>
-          <span class="chip">7-day free trial</span>
+          <span class="chip">Free · MIT</span>
         </div>
         <div class="cta">
-          <a class="btn is-soon" id="download-button" aria-disabled="true" data-href="downloads/Blit.zip">Download free trial</a>
-          <a class="btn btn-quiet" id="buy-top" href="#buy">Buy · $19</a>
+          <a class="btn is-soon" id="download-button" aria-disabled="true" data-href="downloads/Blit.zip">Download</a>
+          <a class="btn btn-quiet" id="source-top" href="https://github.com/banastas/Blit">Source on GitHub</a>
           <span class="label dim" id="download-note">Coming soon · macOS 27 · Apple silicon</span>
         </div>
         <p class="label ph" id="ph-line" hidden><a id="ph-link" href="#">Blit is on Product Hunt today →</a></p>
@@ -584,34 +584,35 @@ body.checkout-open { overflow: hidden; }
         <tr><td>Updates</td><td>Sparkle, with EdDSA-signed releases, checked daily (or off in Settings).</td></tr>
         <tr><td>Trust</td><td>Host keys pinned, known_hosts honoured (hashed entries too), and a changed key refused.</td></tr>
         <tr><td>Privacy</td><td>No accounts, analytics or telemetry. Blit talks only to your servers, NAS and drives, plus a daily update check.</td></tr>
-        <tr><td>Distribution</td><td>Developer ID, notarized by Apple. Sold directly, one-time, through Lemon Squeezy.</td></tr>
+        <tr><td>Distribution</td><td>Developer ID, notarized by Apple. MIT-licensed source on GitHub; the signed build is pay-what-you-want.</td></tr>
       </table>
     </div>
   </section>
 
-  <section class="block" id="buy">
+  <section class="block" id="support">
+    <a id="buy" aria-hidden="true"></a>
     <div class="wrap">
-      <div class="section-head"><span class="label">07</span><h2>Price</h2></div>
+      <div class="section-head"><span class="label">07</span><h2>Support</h2></div>
       <div class="price">
         <div class="price-main">
-          <div class="label dim">One-time</div>
-          <div class="price-v">$19</div>
-          <div class="dim">A license for 3 Macs. No subscription.</div>
+          <div class="label dim">Pay what you want</div>
+          <div class="price-v">FREE</div>
+          <div class="dim">Open source under the MIT license.</div>
         </div>
         <ul class="price-list">
-          <li><span data-glyph="check"></span> 7-day free trial on each Mac, everything included</li>
-          <li><span data-glyph="check"></span> After it, transfers already queued still finish, and browsing and file management keep working</li>
-          <li><span data-glyph="check"></span> 30-day refunds, no questions asked</li>
-          <li><span data-glyph="check"></span> Updates to Blit 1.x included</li>
+          <li><span data-glyph="check"></span> Every feature on every Mac: no trial, no account, no license key</li>
+          <li><span data-glyph="check"></span> The source is on GitHub: read it, build it, fork it</li>
+          <li><span data-glyph="check"></span> The download is signed and notarized by Apple, with signed automatic updates</li>
+          <li><span data-glyph="check"></span> Paying is optional and keeps Blit maintained; 30-day refunds if you change your mind</li>
         </ul>
         <div class="price-cta">
-          <a class="btn is-soon" id="trial-button" aria-disabled="true" data-href="downloads/Blit.zip">Download free trial</a>
-          <!-- Blit's live Lemon Squeezy checkout (product 1423615), as an overlay (?embed=1&desc=0, as
-               Rune's; the hero's Buy opens it too). Off for visitors until LIVE = true below;
-               ?checkout=test turns it on to try (a real purchase: the product is live). -->
-          <a class="btn is-soon" id="buy-button" aria-disabled="true"
-             data-checkout="https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46?embed=1&desc=0">Buy Blit · $19</a>
-          <span class="label dim" id="buy-note">Checkout opens soon · secure payment by Lemon Squeezy</span>
+          <a class="btn is-soon" id="trial-button" aria-disabled="true" data-href="downloads/Blit.zip">Download</a>
+          <!-- Blit's Lemon Squeezy checkout (product 1423615, priced pay-what-you-want), as an
+               overlay (?embed=1&desc=0, as Rune's). Blit › Support Blit… in the app links here. -->
+          <a class="btn btn-quiet" id="buy-button" href="https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46?desc=0"
+             data-checkout="https://banastas.lemonsqueezy.com/checkout/buy/44cc9246-4b89-4cc6-87ac-a009cea40b46?embed=1&desc=0">Pay what you want</a>
+          <a class="btn btn-quiet" href="https://github.com/banastas/Blit">Source on GitHub</a>
+          <span class="label dim" id="buy-note">Optional · secure payment by Lemon Squeezy</span>
         </div>
       </div>
     </div>
@@ -783,14 +784,12 @@ body.checkout-open { overflow: hidden; }
   }
 
   // ---------- download and checkout ----------
-  // Off for visitors until launch (LIVE). Then the Download buttons fetch the current release
-  // (the release script publishes downloads/Blit.zip) and Buy opens Lemon Squeezy's checkout
-  // overlay (both Buy buttons). ?checkout=test turns Buy on before then, to try the checkout:
-  // it's the live product, so a purchase is real. The overlay is drawn here, as lemon.js draws
-  // it and as Rune's site does, not by lemon.js: a content blocker that stopped the script would
-  // have left Buy doing nothing. Nothing loads from Lemon Squeezy until Buy is clicked, so a
-  // plain visit makes no third-party requests.
-  const LIVE = true;   // since 1.0 (2026-10-08): Download and Buy on
+  // The Download buttons fetch the current release (the release script publishes
+  // downloads/Blit.zip), and Pay what you want opens Lemon Squeezy's checkout overlay. The
+  // overlay is drawn here, as lemon.js draws it and as Rune's site does, not by lemon.js: a
+  // content blocker that stopped the script would have left the button doing nothing. Nothing
+  // loads from Lemon Squeezy until it's clicked, so a plain visit makes no third-party requests.
+  const LIVE = true;   // since 1.0 (2026-10-08); free and open source since 2026-11-04
   const CHECKOUT_LIVE = LIVE;
   if (LIVE) {
     for (const id of ["download-button", "trial-button"]) {
@@ -800,7 +799,7 @@ body.checkout-open { overflow: hidden; }
       b.classList.remove("is-soon");
       b.removeAttribute("aria-disabled");
     }
-    $("download-note").textContent = "Free for 7 days · macOS 27 · Apple silicon";
+    $("download-note").textContent = "Free and open source · macOS 27 · Apple silicon";
   }
   // ---------- Product Hunt (launch week) ----------
   // A plain link, not Product Hunt's badge: the badge is an image from their server, and a plain
@@ -825,7 +824,7 @@ body.checkout-open { overflow: hidden; }
     buy.href = page.href;
     buy.classList.remove("is-soon");
     buy.removeAttribute("aria-disabled");
-    $("buy-note").textContent = (CHECKOUT_LIVE ? "" : "PREVIEW · ") + "Secure payment by Lemon Squeezy · 30-day refunds";
+    $("buy-note").textContent = (CHECKOUT_LIVE ? "" : "PREVIEW · ") + "Optional · secure payment by Lemon Squeezy · 30-day refunds";
     const origin = new URL(checkout).origin;
     let backdrop = null, frame = null, fallback = 0;
     const close = () => {
@@ -843,7 +842,7 @@ body.checkout-open { overflow: hidden; }
       backdrop.addEventListener("click", close);
       frame = document.createElement("iframe");
       frame.className = "checkout-frame";
-      frame.title = "Buy Blit";
+      frame.title = "Support Blit";
       frame.allow = "payment";
       frame.src = checkout;
       document.body.append(backdrop, frame);
@@ -858,7 +857,7 @@ body.checkout-open { overflow: hidden; }
       if (event.data === "close") close();
     });
     addEventListener("keydown", (event) => { if (event.key === "Escape" && frame) close(); });
-    for (const b of [buy, $("buy-top")]) {
+    for (const b of [buy]) {
       b.href = page.href;
       b.addEventListener("click", (event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;   // a new tab or window: the plain page

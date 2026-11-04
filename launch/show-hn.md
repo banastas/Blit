@@ -1,6 +1,6 @@
 # Show HN draft
 
-Draft for Hacker News. Post it once the app is buyable (see *Before posting*). HN readers want specifics and distrust marketing, so this names the tools it was measured against (the website doesn't) and leads with what was learned, not with adjectives.
+Draft for Hacker News, revised 2026-11-04 for the open-source release (see *Before posting*). HN readers want specifics and distrust marketing, so this names the tools it was measured against (the website doesn't) and leads with what was learned, not with adjectives.
 
 ## Title
 
@@ -9,8 +9,9 @@ Pick one (80 characters at most; no "fastest" or "best", which HN dislikes):
 1. `Show HN: Blit – a Mac app for moving big files over SFTP that checks every byte` (79)
 2. `Show HN: Blit – verified SFTP-to-NAS transfers for the Mac` (58)
 3. `Show HN: Blit – I rebuilt my 30 TB/month file workflow as a native Mac app` (74)
+4. `Show HN: Blit – open-source Mac app for verified SFTP transfers at 75 MB/s` (75)
 
-**URL:** https://blit.banast.as
+**URL:** https://github.com/banastas/Blit (HN prefers the source for open-source projects; the site is linked from the README)
 
 ## Text
 
@@ -32,7 +33,7 @@ Pick one (80 characters at most; no "fastest" or "best", which HN dislikes):
 >
 > Same 2.38 GB file, same server, warm cache, whole-file downloads including login: Blit on 3 connections [75.4] MB/s ([65.8] with the SHA-256 check), lftp on 8 connections [71.3], rclone at its best setting (8 streams) [54.8] and at its defaults [39.3]. SSD to NAS over wired gigabit: 106 MB/s, verified on the NAS.
 >
-> It's Swift 6 with SwiftUI and AppKit on SwiftNIO SSH, for macOS 27 on Apple Silicon only. $19 once, with a 7-day free trial and no account. There's also a `blit` command-line tool on the same engine.
+> It's Swift 6 with SwiftUI and AppKit on SwiftNIO SSH, for macOS 27 on Apple Silicon only. It's free and MIT-licensed, with no account; the signed, notarized build at blit.banast.as is pay-what-you-want. There's also a `blit` command-line tool on the same engine, and the benchmark scripts are in the repo.
 >
 > I'd especially like to hear from people with other long-distance setups: does 3–4 connections hold up for you, and which servers break it?
 
@@ -40,19 +41,22 @@ The bracketed numbers are from one run on 2026-09-29. Replace them with the `ROU
 
 ## Before posting
 
-- [x] Lemon Squeezy live, and 1.0 released with licensing on (2026-10-08). HN readers will try it right away.
+- [x] Lemon Squeezy live, and 1.0 released with licensing on (2026-10-08).
+- [ ] Repository public, and a release without the trial or license check published (the site's Download must not ask for a key).
+- [ ] Lemon Squeezy product switched to pay-what-you-want.
 - [ ] Benchmarks rerun with `ROUNDS=3 PORT=… scripts/sftp-compare.sh …` on two different days; update the numbers here, in the X thread, and on the site.
-- [ ] Decide whether to link the benchmark script. It's in the private repo; publishing it (a gist, or the engine going open source) makes the numbers checkable, which HN rewards.
-- [ ] The site loads fast, the download works without the checkout, and the trial starts without an account.
+- [x] Benchmark scripts are checkable: `scripts/sftp-compare.sh` is in the public repo.
+- [ ] The site loads fast and the download works without the checkout or an account.
 - [ ] Post on a weekday morning US Eastern time. Stay around for the first 2–3 hours to answer comments.
 - [ ] Don't ask anyone to upvote. HN detects and penalizes vote rings.
 
 ## Answers to have ready
 
 - **Why not rsync / rclone / lftp in a script?** rsync over SSH is one stream, and the 2 MiB window limits it the same way. lftp is as fast but checks nothing. rclone was slower on this server, and its hash checks depend on which hash commands the server runs. Blit's reason to exist is speed *and* verification *and* recovery, with a UI for reviewing before the NAS step.
-- **Why closed source?** It's a one-person product. The engine may be open-sourced later. (If the Swift SFTP library is published first, say so and link it.)
+- **Why open source, and why pay?** It was $19 at launch; a tool that claims to verify every byte is easier to trust when you can read it. The code is MIT. Paying for the signed build is optional and funds maintenance.
+- **Can I build it myself?** Yes: Xcode 27, `xcodebuild -scheme Blit`. The engine and CLI build with `swift build` in `BlitKit/`.
 - **Why macOS 27 and Apple Silicon only?** One person testing; it uses current SwiftUI and system APIs, and the target users are on current Macs.
 - **Does server-side hashing need shell access?** Yes: SSH exec on the server (or a separate shell port, which Blit supports). Without it, Blit falls back to size checks and labels them as such.
 - **Is this for seedboxes?** It works with any SFTP server; a seedbox is one common case. Keep the answer about the transfer problem.
-- **Why not the Mac App Store?** The sandbox and review don't fit an app that opens raw SSH connections and runs commands on your NAS. Sold directly, with Sparkle updates.
+- **Why not the Mac App Store?** The sandbox and review don't fit an app that opens raw SSH connections and runs commands on your NAS. Distributed directly, notarized, with Sparkle updates.
 - **How does it compare with Transmit / ForkLift / Cyberduck?** Those are broad, general tools (cloud storage, sync, editing). Blit does one narrow job and verifies it. Be generous about them.

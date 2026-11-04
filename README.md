@@ -10,7 +10,7 @@ Blit moves data between three places, and does nothing else:
 
 The name comes from *bit block transfer*: copy a block of memory as fast as the hardware allows.
 
-> **Status:** 1.0.12, launched 2026-10-08, M0–M6 complete. Blit is a notarized native Mac app, sold from blit.banast.as ($19 for 3 Macs, after a 7-day trial): parallel, resumable seedbox downloads verified against the server's SHA-256, SSD → NAS copies at wire speed verified on the NAS, a Finder-style browser with favorites and drag-to-transfer, the pixel-terminal transfer HUD, a durable queue that survives quits and network drops, a menu bar extra, ⌘K and Finder integration. The `blit` command-line tool exposes the same engine. This README is the living product requirements document (PRD).
+> **Status:** 1.0.12, launched 2026-10-08, M0–M6 complete. Blit is a native Mac app, free and open source under the [MIT license](LICENSE). The signed, notarized build is pay-what-you-want at [blit.banast.as](https://blit.banast.as): parallel, resumable seedbox downloads verified against the server's SHA-256, SSD → NAS copies at wire speed verified on the NAS, a Finder-style browser with favorites and drag-to-transfer, the pixel-terminal transfer HUD, a durable queue that survives quits and network drops, a menu bar extra, ⌘K and Finder integration. The `blit` command-line tool exposes the same engine. This README is the living product requirements document (PRD).
 
 ---
 
@@ -553,23 +553,16 @@ The setup Blit is tuned against:
 8. **Connection ramp:** does the seedbox's sshd drop near-simultaneous logins above `MaxStartups`? Opening 3–4 connections 250 ms apart worked every time in M1. 8–16 at once wasn't tested, and isn't needed at 3–4 connections.
 9. ~~**Cold-file throughput**~~ **Answered (M2):** 22–36 MB/s, set by the seedbox's shared disk and its load; more connections and server-side prefetch don't raise it ([results](#cold-file-results-m2)).
 10. ~~**Fetch new downloads automatically?**~~ **Built (R5.10):** watch mode fetches new finished downloads from a server folder to this Mac while they're still in the seedbox's cache.
-12. ~~**Distribution?**~~ **Decided (2026-09-26): sold directly from the website, not the Mac App Store.** Price $15–20, one-time, with a 7-day trial. Closed source for now; when v2.0 ships, v1.0 may be open-sourced (the license is still to be chosen).
-    - Reasons: Blit isn't sandboxed and relies on things the sandbox makes hard (`~/.ssh` keys and `known_hosts`, any mounted volume, Finder Services), same-day notarized releases, and better margins.
-    - Still to build: merchant-of-record checkout (it handles sales tax and VAT), license keys with the trial, automatic updates (Sparkle), a first-run flow (done: R2.24), a privacy policy, a EULA and a support address. Also a trademark check on the name, and possibly a lower minimum macOS to widen the audience.
-    - When the trial ends, starting new transfers is locked. Transfers already queued or running still finish, and browsing, the log and files stay available.
+12. ~~**Distribution?**~~ **Decided (2026-09-26): directly from the website, not the Mac App Store. Revised (2026-11-04): open source under MIT, with the signed, notarized build pay-what-you-want.**
+    - Reasons for the website: Blit isn't sandboxed and relies on things the sandbox makes hard (`~/.ssh` keys and `known_hosts`, any mounted volume, Finder Services), and releases can ship the same day they're notarized.
+    - Reasons for open source: the audience is small and technical, a tool that promises verified transfers is easier to trust when the code can be read, and the 1.0 launch at $19 (2026-10-08) made no sales in its first four weeks.
+    - From 1.0 to 1.0.12 Blit had a 7-day trial and Lemon Squeezy license keys. Both are gone: there's no trial, no key and no license check, and Blit never contacts Lemon Squeezy. Blit › Support Blit… opens `https://blit.banast.as/#support`, where payment is optional.
     - **Automatic updates (Sparkle 2.10):**
       - Release builds check `https://blit.banast.as/appcast.xml` daily and install updates signed with the EdDSA key. The public key is in `Support/Info.plist`; the private key is in the release Mac's login Keychain, so back it up with Sparkle's `generate_keys -x`.
       - Blit › Check for Updates… checks now; Settings › Updates turns the daily check off. Debug builds don't run the updater.
       - `PUBLISH=1 scripts/release.sh` signs the zip, puts it in `site/downloads/`, writes the appcast and pushes; Cloudflare Pages serves it.
       - The site's Download buttons fetch `downloads/Blit.zip` once the site is `LIVE`.
       - **Verified end to end (2026-09-26):** the installed 0.2.5 found 0.2.6 in the feed via Check for Updates, showed the release note, downloaded it, checked the signature and relaunched as 0.2.6 (notarized, Gatekeeper-accepted).
-    - **On since 1.0 (2026-10-08).** From 0.2.5 to 0.2.48 `LicenseConfig.enforced` was false: no trial clock, no Keychain writes, no License UI, and transfers were never locked. With 1.0 each Mac's trial starts at its first launch of 1.0. Isolated test copies always enforce, so the license tests run in any build.
-    - **Built (app side):**
-      - The trial runs 7 days from first launch; its start is kept in the Keychain, so a reinstall doesn't restart it.
-      - Settings › License shows the trial or license status, takes a key (Activate), frees this Mac (Deactivate This Mac), and links to Buy. The Blit menu has Buy Blit… and Enter License….
-      - Keys are activated per Mac with Lemon Squeezy's public license API (`/v1/licenses/activate`, `validate`, `deactivate`), with no Blit server. Each key is re-checked weekly. A Mac that can't reach the API stays licensed for 30 days past the weekly check, then asks to reconnect (the key is kept). Only an answer from the store revokes a key.
-      - Only keys for Blit's store (484060) and live product (1423615) are accepted; the store also sells Rune, whose keys are refused. Debug builds also accept the test-mode product's keys (1390732); test-mode keys never unlock a release build.
-      - Verified end to end with a test-mode purchase: checkout overlay → receipt with the key → activate ("Licensed to …") → weekly check → deactivate (activation freed).
     - Marketing stays on big-file work (photo and video, archiving, NAS backups).
 11. ~~**Chained transfers (seedbox → SSD → NAS in one go)?**~~ **Decided: deprioritized.** The user is the review step between SSD and NAS: everything downloaded gets reviewed on the SSD, renamed to the naming conventions where needed, and only then archived to whichever NAS location fits (or not at all). Automating SSD → NAS would skip that step. Work on the middle of the workflow should make review faster, not bypass it.
 
@@ -657,9 +650,15 @@ PORT=3232 scripts/sftp-compare.sh user@host "path/to/folder/"
 
 **Known limitation:** `sftp-probe.sh` starts timing before login, so higher connection counts pay more login time within the 20-second window. That understates their speed; fixing it to time from first byte is part of M1.
 
+## Contributing
+
+Issues and pull requests are welcome. Blit's scope is deliberately narrow (see [Goals and non-goals](#goals-and-non-goals)), so open an issue before starting on a feature, especially one on the non-goals list. Bug reports are most useful with the server software involved (OpenSSH, SFTPGo, …), the round-trip time, and the transfer log (File › Export Transfer Log…).
+
 ## License
 
-TBD.
+Blit is released under the [MIT license](LICENSE). The signed, notarized build from [blit.banast.as](https://blit.banast.as) is the same code; paying for it is optional.
+
+Third-party Swift packages keep their own licenses; their notices ship in the app (About Blit › Acknowledgements) and are generated by `scripts/acknowledgements.py`.
 
 ### Third-party fonts
 

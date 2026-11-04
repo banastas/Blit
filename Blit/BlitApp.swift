@@ -529,35 +529,17 @@ struct AboutCommands: Commands {
             Button("About Blit") { openWindow(id: "about") }
             Button("Check for Updates…") { Updates.shared.checkNow() }
                 .disabled(!Updates.shared.isAvailable)
-            if LicenseManager.shared.isEnforced {
-                Divider()
-                LicenseMenuItems()
-            }
+            Divider()
+            Button("Support Blit…") { NSWorkspace.shared.open(Support.url) }
+                .help("Blit is free and open source. Pay what you want for the signed build.")
         }
     }
 }
 
-/// Blit › Buy Blit… and Enter License…, or License… once a key is in (nothing to buy or enter
-/// then; Settings › License shows whose it is and Deactivate This Mac). A view of its own: SwiftUI
-/// follows what a view's body reads, and in the commands' body a change of license left the menu
-/// as it was (as Rune found, 2026-10-11).
-struct LicenseMenuItems: View {
-    @Environment(\.openSettings) private var openSettings
-
-    var body: some View {
-        if LicenseManager.shared.isLicensed {
-            Button("License…") { openLicense() }
-        } else {
-            Button("Buy Blit…") { LicenseManager.shared.openBuyPage() }
-            // Straight to the key field (the receipt and the checkout say so).
-            Button("Enter License…") { openLicense() }
-        }
-    }
-
-    private func openLicense() {
-        SettingsView.tabStore.set("license", forKey: SettingsView.tabKey)
-        openSettings()
-    }
+/// Blit is free (MIT) and pay-what-you-want: Blit › Support Blit… opens the
+/// site's support section, so where the money goes can change without a release.
+enum Support {
+    static let url = URL(string: "https://blit.banast.as/#support")!
 }
 
 /// Go › Go to Folder (⇧⌘G), as in Finder.

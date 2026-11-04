@@ -661,7 +661,7 @@ struct ContentView: View {
         UITestHarness.runArrivalTestIfRequested(servers: servers)
         UITestHarness.runMissingEpisodesTestIfRequested(transfers: transfers)
         UITestHarness.runWelcomeBackTestIfRequested(transfers: transfers)
-        UITestHarness.runEnterLicenseTestIfRequested()
+        UITestHarness.runSupportMenuTestIfRequested()
         UITestHarness.runSeedboxProbeIfRequested(servers: servers, connections: connections)
         UITestHarness.runVerifyTestIfRequested(transfers: transfers)
         UITestHarness.runHashProgressTestIfRequested(transfers: transfers)
@@ -697,7 +697,6 @@ struct ContentView: View {
         UITestHarness.renderCardIfRequested(transfers: transfers)
         UITestHarness.runDemoShotIfRequested(sidebar: sidebar, transfers: transfers)
         UITestHarness.runDemoVideoIfRequested(sidebar: sidebar, transfers: transfers)
-        UITestHarness.runLicenseTestIfRequested(transfers: transfers)
         UITestHarness.runHUDHeightTestIfRequested(transfers: transfers)
         UITestHarness.runRetryNowTestIfRequested(transfers: transfers)
         UITestHarness.runBatchRenameTestIfRequested(transfers: transfers)
@@ -708,7 +707,6 @@ struct ContentView: View {
         UITestHarness.runLaneTestIfRequested(transfers: transfers)
         #endif
         connections.warmUp(servers.browsable)
-        Task { await LicenseManager.shared.revalidateIfDue() }
         #if DEBUG
         UITestHarness.runLinkTestIfRequested(connections: connections, servers: servers)
         UITestHarness.runShareTestIfRequested(sidebar: sidebar)

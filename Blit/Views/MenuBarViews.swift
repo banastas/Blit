@@ -261,16 +261,16 @@ struct SettingsView: View {
     @AppStorage("notifyEachTransfer") private var notifyEachTransfer = true
     @AppStorage("verifyFiles") private var verifyFiles = "sha256"
     @AppStorage("menuBarShows") private var menuBarShows = "timeLeft"
-    /// The tab showing; Blit › Enter License… sets it to the License tab.
+    /// The tab showing, kept between openings.
     @AppStorage(SettingsView.tabKey, store: SettingsView.tabStore) private var savedTab = "general"
     static let tabKey = "settingsTab"
     /// Test copies keep their own (they share the installed Blit's settings).
     static let tabStore: UserDefaults = TransferManager.isIsolated ? (UserDefaults(suiteName: "com.banastas.blit.test-copies") ?? .standard) : .standard
 
-    /// The saved tab, or General when it isn't there (License, with licensing off).
+    /// The saved tab, or General when it isn't there (License, from when Blit had a trial).
     private var tab: Binding<String> {
         Binding(get: {
-            let shown = ["general", "transfers", "watch", "updates"] + (LicenseManager.shared.isEnforced ? ["license"] : [])
+            let shown = ["general", "transfers", "watch", "updates"]
             return shown.contains(savedTab) ? savedTab : "general"
         }, set: { savedTab = $0 })
     }
@@ -328,12 +328,6 @@ struct SettingsView: View {
             pane { UpdatesSection() }
                 .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
                 .tag("updates")
-
-            if LicenseManager.shared.isEnforced {
-                pane { LicenseSection() }
-                    .tabItem { Label("License", systemImage: "key") }
-                    .tag("license")
-            }
         }
         .frame(width: 480)
     }
@@ -376,60 +370,4 @@ private struct UpdatesSection: View {
 
 extension Bundle {
     var shortVersion: String { object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?" }
-}
-
-/// Settings › License: trial or license status, enter a key, deactivate, buy.
-private struct LicenseSection: View {
-    @State private var license = LicenseManager.shared
-    @State private var key = ""
-    @State private var problem: String?
-
-    var body: some View {
-        Section("License") {
-            LabeledContent("Status") {
-                Text(license.summary)
-                    .foregroundStyle(license.canStartTransfers ? .primary : Color.failureText)
-            }
-            if let stored = license.license {
-                LabeledContent("Key", value: "…" + stored.key.suffix(8))
-                HStack {
-                    Spacer()
-                    Button("Deactivate This Mac") {
-                        Task { problem = await license.deactivate() }
-                    }
-                    .disabled(license.isWorking)
-                    .help("Frees this Mac's activation so the license can be used on another Mac")
-                }
-            } else {
-                HStack {
-                    TextField("License key", text: $key, prompt: Text("From your receipt email"))
-                        .onSubmit(activate)
-                    Button("Activate", action: activate)
-                        .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty || license.isWorking)
-                }
-                HStack {
-                    Text(trialNote).font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Buy Blit…") { license.openBuyPage() }
-                }
-            }
-            if license.isWorking { ProgressView().controlSize(.small) }
-            if let problem {
-                Text(problem).font(.caption).foregroundStyle(Color.failureText).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var trialNote: String {
-        license.canStartTransfers
-            ? "Everything works during the \(LicenseConfig.trialDays)-day trial."
-            : "New transfers need a license. Queued ones still finish, and browsing and the log keep working."
-    }
-
-    private func activate() {
-        Task {
-            problem = await license.activate(key)
-            if problem == nil { key = "" }
-        }
-    }
 }

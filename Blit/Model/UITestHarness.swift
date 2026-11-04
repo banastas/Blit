@@ -952,75 +952,6 @@ enum UITestHarness {
         }
     }
 
-    /// `-BlitLicenseTest <log>` (with -BlitIsolatedQueue YES, so the trial and
-    /// license live in memory): trial days, the transfer gate, offline grace,
-    /// and one real call to Lemon Squeezy with a made-up key.
-    static func runLicenseTestIfRequested(transfers: TransferManager) {
-        guard let logPath = UserDefaults.standard.string(forKey: "BlitLicenseTest") else { return }
-        Task { @MainActor in
-            var lines: [String] = []
-            guard TransferManager.isIsolated, let memory = LicenseManager.shared.storage as? MemoryLicenseStorage else {
-                try? "refusing: not isolated\n".write(toFile: logPath, atomically: true, encoding: .utf8); return
-            }
-            let license = LicenseManager.shared
-            let now = Date()
-            for days in [0.0, 3, 6.9, 7, 30] {
-                lines.append("trial started \(days) days ago: \(LicenseManager.trialState(start: now.addingTimeInterval(-days * 86_400), now: now))")
-            }
-            @MainActor func setTrial(daysAgo: Double) {
-                memory.items["trial-start"] = Data(String(now.addingTimeInterval(-daysAgo * 86_400).timeIntervalSince1970).utf8)
-                memory.items["license"] = nil
-            }
-            // The gate: a server destination gets past the license check to the
-            // "uploading isn't supported" message, so nothing is queued either way.
-            let probe = BrowseLocation.remote(server: UUID(), path: Array("x".utf8))
-            setTrial(daysAgo: 2)
-            lines.append("day 2, enqueue: \(transfers.enqueue([.local(URL(fileURLWithPath: "/tmp"))], to: probe, destinationName: "x") ?? "queued")")
-            setTrial(daysAgo: 8)
-            lines.append("day 8, enqueue: \(transfers.enqueue([.local(URL(fileURLWithPath: "/tmp"))], to: probe, destinationName: "x") ?? "queued")")
-            lines.append("day 8, can start: \(license.canStartTransfers) · \(license.summary)")
-            // Offline grace
-            for daysAgo in [3.0, 40] {
-                let stored = StoredLicense(key: "ABCD-1234-EFGH-5678", instanceID: "i", email: "buyer@example.com", name: nil,
-                                           lastValidated: now.addingTimeInterval(-daysAgo * 86_400))
-                memory.items["license"] = try? JSONEncoder().encode(stored)
-                license.refresh()
-                lines.append("licensed, last checked \(Int(daysAgo)) days ago: \(license.summary) · can start \(license.canStartTransfers)")
-            }
-            memory.items["license"] = nil
-            setTrial(daysAgo: 1)
-            license.refresh()
-            // Error wording
-            for e in ["license_key not found.", "This license key has reached the activation limit.", "license_key is disabled."] {
-                lines.append("explain \"\(e)\" → \(LicenseManager.explain(e))")
-            }
-            // One real request with a key that doesn't exist.
-            let problem = await license.activate("BLIT-TEST-0000-0000-NOT-A-REAL-KEY", instanceName: "Blit test")
-            lines.append("live API, made-up key: \(problem ?? "activated?!") · state \(license.summary)")
-            // Which products' keys unlock Blit: the live one; the test-mode one in debug builds only;
-            // never another product in the same store (Rune's).
-            for (label, product) in [("Blit live", 1_423_615), ("Blit test mode", 1_390_732), ("Rune", 1_423_364)] {
-                let problem = LicenseManager.mismatch(LicenseManager.APIResponse.Meta(store_id: 484_060, product_id: product))
-                lines.append("a key for \(label) (\(product)): \(problem ?? "accepted")")
-            }
-            // A real test-mode key (-BlitLicenseTestKey): activate, check, then free the activation.
-            if let real = UserDefaults.standard.string(forKey: "BlitLicenseTestKey") {
-                memory.items["license"] = nil
-                let problem = await license.activate(real, instanceName: "Blit test")
-                lines.append("real test key: \(problem ?? "activated") · \(license.summary) · can start \(license.canStartTransfers)")
-                if var stored = license.license {
-                    stored.lastValidated = .distantPast   // force the weekly check now
-                    memory.items["license"] = try? JSONEncoder().encode(stored)
-                    await license.revalidateIfDue()
-                    lines.append("weekly check: \(license.summary)")
-                }
-                let freed = await license.deactivate()
-                lines.append("deactivate: \(freed ?? "ok") · \(license.summary)")
-            }
-            try? (lines + ["done"]).joined(separator: "\n").write(toFile: logPath, atomically: true, encoding: .utf8)
-        }
-    }
-
     /// `-BlitRenderProductImage out.png` (with -BlitIsolatedQueue YES): a 1600×1200
     /// product image for the store: icon, name, tagline and the real HUD.
     static func renderProductImageIfRequested(transfers: TransferManager) {
@@ -4652,57 +4583,27 @@ enum UITestHarness {
         }
     }
 
-    /// `-BlitEnterLicenseTest <log>`: Blit › Enter License… opens Settings on
-    /// the License tab (the key field the receipt sends buyers to), from
-    /// another tab and with Settings already open. The user's tab is put back.
-    static func runEnterLicenseTestIfRequested() {
-        guard let logPath = UserDefaults.standard.string(forKey: "BlitEnterLicenseTest") else { return }
-        var lines: [String] = [] {
-            didSet { try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8) }
-        }
+    /// `-BlitSupportMenuTest <log>`: the Blit menu has Support Blit… (to the
+    /// site's pay-what-you-want section) and nothing left from the license
+    /// keys and trial that Blit had before it was open source.
+    static func runSupportMenuTestIfRequested() {
+        guard let logPath = UserDefaults.standard.string(forKey: "BlitSupportMenuTest") else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
-            let saved = SettingsView.tabStore.string(forKey: SettingsView.tabKey)
-            let item = NSApp.mainMenu?.items.first?.submenu?.items.first { $0.title == "Enter License…" }
-            lines.append("Blit menu has Enter License…: \(item != nil)")
-            @MainActor func settingsTitle() -> String {
-                NSApp.windows.first { $0.isVisible && ["General", "Transfers", "Watch", "Updates", "License"].contains($0.title) }?.title ?? "no Settings window"
+            guard let menu = NSApp.mainMenu?.items.first?.submenu else {
+                try? "no Blit menu\n".write(toFile: logPath, atomically: true, encoding: .utf8); return
             }
-            for label in ["from General, Settings closed", "Settings open on Watch"] {
-                SettingsView.tabStore.set(label.contains("Watch") ? "watch" : "general", forKey: SettingsView.tabKey)
-                try? await Task.sleep(for: .seconds(0.8))
-                if label.contains("Watch") { lines.append("  before: \(settingsTitle())") }
-                if let item, let menu = item.menu, let index = menu.items.firstIndex(of: item) { menu.performActionForItem(at: index) }
-                try? await Task.sleep(for: .seconds(1.2))
-                lines.append("\(label): Settings shows \(settingsTitle())")
-            }
-            NSApp.windows.first { $0.title == "License" }?.close()
-            // The test copies' own tab back, once the window has let go.
-            try? await Task.sleep(for: .seconds(0.5))
-            if let saved { SettingsView.tabStore.set(saved, forKey: SettingsView.tabKey) } else { SettingsView.tabStore.removeObject(forKey: SettingsView.tabKey) }
-            lines.append("the installed Blit's tab untouched: \(UserDefaults.standard.string(forKey: SettingsView.tabKey) ?? "none set")")
-            // Once licensed, License… in place of Buy Blit… and Enter License…; back again without a key.
-            // Only in an isolated copy, whose license is in memory, never the Keychain's.
-            if TransferManager.isIsolated {
-                @MainActor func appMenu() -> [String] {
-                    guard let menu = NSApp.mainMenu?.items.first?.submenu else { return [] }
-                    menu.delegate?.menuNeedsUpdate?(menu)   // SwiftUI brings a menu up to date as it opens
-                    menu.update()
-                    return menu.items.map(\.title).filter { $0.contains("Buy") || $0.contains("License") }
-                }
-                let license = LicenseManager.shared
-                let saved = license.storage.read("license")
-                let fake = StoredLicense(key: "TEST-0000", instanceID: "i", email: "buyer@example.com", name: nil, lastValidated: Date())
-                license.storage.write(try? JSONEncoder().encode(fake), "license")
-                license.refresh()
-                try? await Task.sleep(for: .seconds(0.5))
-                lines.append("licensed: Blit menu has \(appMenu())")
-                license.storage.write(saved, "license")
-                license.refresh()
-                try? await Task.sleep(for: .seconds(0.5))
-                lines.append("without a key again: Blit menu has \(appMenu())")
-            }
-            lines.append("done")
+            menu.delegate?.menuNeedsUpdate?(menu)   // SwiftUI brings a menu up to date as it opens
+            menu.update()
+            let titles = menu.items.map(\.title).filter { !$0.isEmpty }
+            let lines = [
+                "Blit menu: \(titles)",
+                "has Support Blit…: \(titles.contains("Support Blit…"))",
+                "license items left: \(titles.filter { $0.contains("Buy") || $0.contains("License") })",
+                "opens: \(Support.url.absoluteString)",
+                "done",
+            ]
+            try? lines.joined(separator: "\n").appending("\n").write(toFile: logPath, atomically: true, encoding: .utf8)
         }
     }
 
