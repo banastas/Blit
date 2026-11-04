@@ -4,7 +4,7 @@
      (site/index.html), at a fixed size, for scripts/make-brand.sh to render with WebKit:
      #product, 1600×1200, Lemon Squeezy's product image (checkout, the receipt email, sharing);
      #card, 1200×630, the site's link preview (og:image); #github, 1280×640, the repository's
-     social preview, everything inside GitHub's 80-pixel border; #ph, 1270×760, the first image of
+     social preview, everything inside GitHub's 80-pixel border, with an OPEN SOURCE · MIT badge; #ph, 1270×760, the first image of
      the Product Hunt gallery (launch/product-hunt.md), laid out as Rune's. Icon, name, tagline, the
      subline, then the expanded HUD with a simulated download: the product image has the tall
      HUD (the six-line log in a panel), the card and the GitHub preview the compact one. Made-up
@@ -108,6 +108,10 @@ body.card { width: 1200px; height: 630px; }
    (40 pt at 2×): everything here is inside 1120×480, centred, as on the card. */
 body.github { width: 1280px; height: 640px; }
 .github .frame { padding: 112px 80px 0; gap: 26px; }
+/* The GitHub preview only: a badge at the head's right edge, inside the border. */
+.badge { display: none; }
+.github .badge { display: block; margin-left: auto; font-family: var(--label); font-size: 14px; line-height: 14px;
+  letter-spacing: 0.06em; color: var(--bright); border: 1px solid var(--panel-line); padding: 11px 14px 9px; white-space: nowrap; }
 .card .head, .github .head { gap: 24px; }
 .card .tile, .github .tile { width: 104px; height: 104px; border-radius: 22px; }
 .card .tile svg, .github .tile svg { width: 70px; height: 70px; }
@@ -139,6 +143,7 @@ body.ph { width: 1270px; height: 760px; }
       </div>
       <p class="sub">SFTP · DRIVES · NAS  —  EVERY FILE SHA-256 VERIFIED AT ITS DESTINATION</p>
     </div>
+    <div class="badge">OPEN SOURCE · MIT</div>
   </div>
   <div class="hud-box"><div class="hud" id="hud"></div></div>
 </div>
