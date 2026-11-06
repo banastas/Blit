@@ -3,7 +3,7 @@
 // itself; artwork drawn with its own rounded rect and margins gets placed in a grey container instead. The glitch
 // treatment is Repertory's (below).
 //
-//   swift scripts/make-icon.swift Blit/AppIcon.icon [preview.png]
+//   swift scripts/make-icon.swift Blit/AppIcon.icon [preview.png] [--site site]
 import AppKit
 
 let name = "blit"
@@ -36,7 +36,12 @@ let slice = 5.3..<5.8
 let ink = (8.0, 8.0, 10.0)                                  // the fill; the ground layer lifts its top towards 22
 let paperTop = (251.0, 250.0, 246.0), paperBottom = (228.0, 226.0, 220.0)
 let cyan = (0.0, 237.0, 255.0), magenta = (255.0, 43.0, 204.0)
-let bundle = CommandLine.arguments[1]
+var args = Array(CommandLine.arguments.dropFirst())
+/// `--site <dir>` also writes the website's icon.svg (the whole icon) and favicon.svg (the art filling a 16-cell tile).
+var site: String?
+if let i = args.firstIndex(of: "--site"), i + 1 < args.count { site = args[i + 1]; args.removeSubrange(i...i + 1) }
+let bundle = args[0]
+let preview = args.count > 1 ? args[1] : nil
 let canvas = 1024
 let cols = art[0].count, rows = art.count
 let cell = Double(Int(Double(canvas) * 0.56) / cols)       // whole pixels per cell (40: half a cell is whole too)
@@ -189,14 +194,58 @@ let json = """
 """
 try! json.write(toFile: bundle + "/icon.json", atomically: true, encoding: .utf8)
 print("wrote \(bundle)")
-if CommandLine.arguments.count > 2 {
+if let preview {
     // The preview, as macOS draws the icon (Icon Composer's renderer).
     let ictool = "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
     let p = Process()
     p.executableURL = URL(fileURLWithPath: ictool)
-    p.arguments = [bundle, "--export-image", "--output-file", CommandLine.arguments[2], "--platform", "macOS",
+    p.arguments = [bundle, "--export-image", "--output-file", preview, "--platform", "macOS",
                    "--rendition", "Default", "--width", "1024", "--height", "1024", "--scale", "1"]
+    p.standardOutput = FileHandle.nullDevice
     try! p.run()
     p.waitUntilExit()
-    print(p.terminationStatus == 0 ? "wrote \(CommandLine.arguments[2])" : "ictool failed (\(p.terminationStatus))")
+    print(p.terminationStatus == 0 ? "wrote \(preview)" : "ictool failed (\(p.terminationStatus))")
+}
+
+/// The same icon as SVG for the website, in the canvas's pixels (y down), cropped to `box` with corners of `corner`.
+func svg(box: CGRect, corner: Double, scanlines: Bool) -> String {
+    func hex(_ c: (Double, Double, Double)) -> String { String(format: "#%02x%02x%02x", Int(c.0), Int(c.1), Int(c.2)) }
+    func n(_ v: Double) -> String { String(format: "%g", (v * 100).rounded() / 100) }
+    func rect(_ r: CGRect, _ attrs: String = "") -> String {
+        "<rect x=\"\(n(r.minX))\" y=\"\(n(Double(canvas) - r.maxY))\" width=\"\(n(r.width))\" height=\"\(n(r.height))\"\(attrs)/>"
+    }
+    let s = box.width, (bx, by) = (box.minX, box.minY)
+    let glyph = cells(glyphOnly: true), all = cells(glyphOnly: false), lit = cells(glyphOnly: false, lit: true)
+    var o = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"\(n(bx)) \(n(by)) \(n(s)) \(n(s))\">\n<defs>\n"
+    o += "<clipPath id=\"tile\"><rect x=\"\(n(bx))\" y=\"\(n(by))\" width=\"\(n(s))\" height=\"\(n(s))\" rx=\"\(n(corner))\"/></clipPath>\n"
+    o += "<linearGradient id=\"lift\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0\" stop-color=\"#fff\" stop-opacity=\"0.057\"/><stop offset=\"1\" stop-color=\"#fff\" stop-opacity=\"0\"/></linearGradient>\n"
+    for (id, c, cx, cy, r, k) in [("cyan", cyan, bx + s, by, 1.1, 0.17), ("magenta", magenta, bx, by + s, 1.0, 0.16)] {
+        let stops = (0...6).map { i -> String in let t = Double(i) / 6; return "<stop offset=\"\(n(t))\" stop-color=\"\(hex(c))\" stop-opacity=\"\(String(format: "%.4f", k * (1 - t) * (1 - t)))\"/>" }
+        o += "<radialGradient id=\"\(id)\" gradientUnits=\"userSpaceOnUse\" cx=\"\(n(cx))\" cy=\"\(n(cy))\" r=\"\(n(r * s))\">\(stops.joined())</radialGradient>\n"
+    }
+    let step = Double(canvas / 110) * s / Double(canvas)
+    o += "<pattern id=\"scan\" patternUnits=\"userSpaceOnUse\" width=\"\(n(s))\" height=\"\(n(step))\"><rect width=\"\(n(s))\" height=\"\(n(step / 3))\" fill=\"#fff\" fill-opacity=\"0.035\"/></pattern>\n"
+    o += "<linearGradient id=\"paper\" gradientUnits=\"userSpaceOnUse\" x1=\"0\" y1=\"\(n(y0))\" x2=\"0\" y2=\"\(n(Double(canvas) - y0))\"><stop offset=\"0\" stop-color=\"\(hex(paperTop))\"/><stop offset=\"1\" stop-color=\"\(hex(paperBottom))\"/></linearGradient>\n"
+    o += "<filter id=\"shadow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\"><feGaussianBlur stdDeviation=\"\(n(cell * 0.45))\"/></filter>\n"
+    o += "<filter id=\"glow\" x=\"-100%\" y=\"-100%\" width=\"300%\" height=\"300%\"><feGaussianBlur stdDeviation=\"\(n(cell * 0.55))\"/></filter>\n"
+    o += "</defs>\n<g clip-path=\"url(#tile)\">\n"
+    let tile = "x=\"\(n(bx))\" y=\"\(n(by))\" width=\"\(n(s))\" height=\"\(n(s))\""
+    o += "<rect \(tile) fill=\"\(hex(ink))\"/><rect \(tile) fill=\"url(#lift)\"/><rect \(tile) fill=\"url(#cyan)\"/><rect \(tile) fill=\"url(#magenta)\"/>\n"
+    if scanlines { o += "<rect \(tile) fill=\"url(#scan)\"/>\n" }
+    o += "<g filter=\"url(#shadow)\" fill=\"#000\" fill-opacity=\"0.55\" transform=\"translate(0 \(n(cell * 0.45)))\">\(glyph.map { rect($0) }.joined())</g>\n"
+    o += "<g shape-rendering=\"crispEdges\">\n"
+    for (c, dx) in [(cyan, -split), (magenta, split)] {
+        o += "<g fill=\"\(hex(c))\" fill-opacity=\"0.85\">\(glyph.map { rect($0.offsetBy(dx: dx, dy: 0)) }.joined())</g>\n"
+    }
+    o += "</g>\n<g filter=\"url(#glow)\" fill=\"\(hex(cyan))\">\(lit.map { rect($0) }.joined())</g>\n"
+    o += "<g shape-rendering=\"crispEdges\"><g fill=\"url(#paper)\">\(all.map { rect($0) }.joined())</g><g fill=\"\(hex(cyan))\">\(lit.map { rect($0) }.joined())</g></g>\n"
+    return o + "</g>\n</svg>\n"
+}
+if let site {
+    // icon.svg: the whole canvas, in the shape macOS gives it. favicon.svg: a 16-cell tile around the 14×12 grid.
+    try! svg(box: CGRect(x: 0, y: 0, width: canvas, height: canvas), corner: Double(canvas) * 0.225, scanlines: true)
+        .write(toFile: site + "/icon.svg", atomically: true, encoding: .utf8)
+    let fav = CGRect(x: x0 - cell, y: y0 - 2 * cell, width: 16 * cell, height: 16 * cell)
+    try! svg(box: fav, corner: 3.5 * cell, scanlines: false).write(toFile: site + "/favicon.svg", atomically: true, encoding: .utf8)
+    print("wrote \(site)/icon.svg, \(site)/favicon.svg")
 }

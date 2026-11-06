@@ -30,7 +30,8 @@ body { font-family: var(--term); -webkit-font-smoothing: subpixel-antialiased; }
 .frame { display: flex; flex-direction: column; align-items: stretch; }
 .head { display: flex; align-items: center; }
 .tile { flex: none; display: grid; place-items: center; background: var(--tile); box-shadow: inset 0 0 0 1px var(--border); }
-.tile svg { display: block; shape-rendering: crispEdges; }
+.tile { overflow: hidden; }
+.tile img { display: block; width: 100%; height: 100%; }
 .titles { display: flex; flex-direction: column; white-space: nowrap; }
 h1 { font-family: var(--label); font-weight: normal; }
 .sub { font-family: var(--label); color: var(--dim); white-space: pre; }
@@ -135,7 +136,7 @@ body.ph { width: 1270px; height: 760px; }
 <body data-ready="no">
 <div class="frame">
   <div class="head">
-    <div class="tile"><svg viewBox="0 0 14 14" data-art="icon"></svg></div>
+    <div class="tile"><img src="../../site/icon.svg" alt=""></div>
     <div class="titles">
       <div class="row">
         <h1>BLIT</h1>
@@ -166,12 +167,6 @@ function rects(rows, colors = {}, dy = 0) {
   }));
   return out;
 }
-// The app icon (scripts/make-icon.swift, as site/index.html draws it).
-document.querySelector('[data-art="icon"]').innerHTML = rects([
-  "......##......", "......##......", "......##......", "......##......",
-  "..##########..", "...########...", "....######....", ".....####.....",
-  "......##......", "..............", "..............", "##.##.##.##.::",
-], { "#": "#f0f0f0", ":": "#4a4a4a" }, 1);
 // PixelGlyphs.swift, 7×7: Silkscreen and VT323 have no ✓ ▼ →, so the HUD draws them.
 const GLYPHS = {
   "✓": [".......", "......#", ".....#.", "#...#..", ".#.#...", "..#....", "......."],

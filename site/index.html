@@ -97,7 +97,8 @@ a:hover { border-bottom-color: var(--bright); }
   box-shadow: inset 0 0 0 1px var(--border), 0 20px 60px rgba(0,0,0,0.6);
   display: grid; place-items: center;
 }
-.icon-tile svg { width: 66%; height: 66%; }
+.icon-tile { overflow: hidden; }
+.icon-tile img { display: block; width: 100%; height: 100%; }
 h1 {
   font-family: var(--label); font-weight: normal;
   font-size: clamp(56px, 11vw, 112px); line-height: 0.9; letter-spacing: 0.04em;
@@ -320,7 +321,7 @@ body.checkout-open { overflow: hidden; }
 <main>
   <section class="hero">
     <div class="wrap hero-grid">
-      <div class="icon-tile"><svg class="px" width="112" height="112" viewBox="0 0 14 14" role="img" aria-label="Blit icon" data-art="icon"></svg></div>
+      <div class="icon-tile"><img src="icon.svg" width="168" height="168" alt="Blit icon"></div>
       <div>
         <h1>BLIT</h1>
         <p class="tagline">Big files, moved fast, proven intact.<span class="cursor" aria-hidden="true"></span></p>
