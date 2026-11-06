@@ -6,13 +6,13 @@
     <description>Updates for Blit</description>
     <language>en</language>
     <item>
-      <title>Blit 1.1</title>
-      <pubDate>Wed, 04 Nov 2026 15:39:42 +0000</pubDate>
-      <sparkle:version>65</sparkle:version>
-      <sparkle:shortVersionString>1.1</sparkle:shortVersionString>
+      <title>Blit 1.1.1</title>
+      <pubDate>Fri, 06 Nov 2026 05:53:06 +0000</pubDate>
+      <sparkle:version>66</sparkle:version>
+      <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<p>Blit is now free and open source under the MIT license. No trial and no license key: every feature works on every Mac. If you'd like to support it, Blit › Support Blit… lets you pay what you want.</p>]]></description>
-      <enclosure url="https://blit.banast.as/downloads/Blit-1.1.zip" type="application/octet-stream" sparkle:edSignature="h5O3ARyyXWZJATipgVkQ+Q3V35jOxkcRpioGPFviznNjGC9WLvDn3e3+rjHDup/v/YLNzWv4lbUcQ6R3PueJDg==" length="6576181" />
+      <description><![CDATA[<p>A new app icon, in the family's new look.</p>]]></description>
+      <enclosure url="https://blit.banast.as/downloads/Blit-1.1.1.zip" type="application/octet-stream" sparkle:edSignature="34Plu1oYqZUWobVIWVg4A2gYmhhOvyBL7wWhW8xfgR+qNGtA+CHrKST17aNX8m1VAat07frwjGcYYkwqUF5bCQ==" length="8128539" />
     </item>
   </channel>
 </rss>
