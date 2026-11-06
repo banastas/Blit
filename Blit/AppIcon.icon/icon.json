@@ -1,6 +1,6 @@
 {
   "fill" : {
-    "solid" : "extended-srgb:0.04500,0.04500,0.04500,1.00000"
+    "solid" : "extended-srgb:0.03137,0.03137,0.03922,1.00000"
   },
   "groups" : [
     {
@@ -9,8 +9,28 @@
           "glass" : false,
           "image-name" : "blit.png",
           "name" : "blit"
+        },
+        {
+          "glass" : false,
+          "hidden-specializations" : [
+            { "appearance" : "tinted", "value" : true }
+          ],
+          "image-name" : "glitch.png",
+          "name" : "glitch"
+        },
+        {
+          "glass" : false,
+          "hidden-specializations" : [
+            { "appearance" : "tinted", "value" : true }
+          ],
+          "image-name" : "ground.png",
+          "name" : "ground"
         }
-      ]
+      ],
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0
+      }
     }
   ],
   "supported-platforms" : {
